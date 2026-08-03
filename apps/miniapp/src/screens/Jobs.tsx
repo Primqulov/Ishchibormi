@@ -16,23 +16,29 @@ import { MapView } from "./MapView";
 import { BriefcaseIcon, ListIcon, MapIcon, SearchIcon, SlidersIcon } from "@/components/icons";
 import { EmptyState, ErrorState, ListSkeleton, Spinner } from "@/components/ui";
 import {
-  fetchCategories,
+  countFilters,
   fetchFeed,
   FEED_PAGE_SIZE,
   type APIError,
-  type Category,
   type Elon,
+  type FeedFilters,
 } from "@/lib/api";
 import { haptic } from "@/lib/telegram";
 
-export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
+export function Jobs({
+  onOpenJob,
+  filters,
+  onOpenFilters,
+}: {
+  onOpenJob: (id: string) => void;
+  /** Filtrlar ekranida tanlangan shartlar. */
+  filters: FeedFilters;
+  onOpenFilters: () => void;
+}) {
   const [mode, setMode] = useState<"list" | "map">("list");
 
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [showFilters, setShowFilters] = useState(true);
 
   const [items, setItems] = useState<Elon[]>([]);
   const [page, setPage] = useState(1);
@@ -48,16 +54,10 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
   }, [q]);
 
   useEffect(() => {
-    fetchCategories()
-      .then((cs) => setCategories(cs.filter((c) => c.isActive)))
-      .catch(() => setCategories([]));
-  }, []);
-
-  useEffect(() => {
     let ignore = false;
     setLoading(true);
     setError(null);
-    fetchFeed({ q: debouncedQ, categoryId, page: 1 })
+    fetchFeed({ ...filters, q: debouncedQ, page: 1 })
       .then((res) => {
         if (ignore) return;
         setItems(res.items || []);
@@ -69,7 +69,7 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
     return () => {
       ignore = true;
     };
-  }, [debouncedQ, categoryId, reload]);
+  }, [debouncedQ, filters, reload]);
 
   const hasMore = items.length < total;
 
@@ -77,7 +77,7 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
     if (loadingMore || loading || !hasMore) return;
     setLoadingMore(true);
     const next = page + 1;
-    fetchFeed({ q: debouncedQ, categoryId, page: next })
+    fetchFeed({ ...filters, q: debouncedQ, page: next })
       .then((res) => {
         setItems((prev) => {
           const seen = new Set(prev.map((x) => x.id));
@@ -88,7 +88,7 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
       })
       .catch(() => {})
       .finally(() => setLoadingMore(false));
-  }, [categoryId, debouncedQ, hasMore, loading, loadingMore, page]);
+  }, [filters, debouncedQ, hasMore, loading, loadingMore, page]);
 
   const sentinel = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -100,6 +100,8 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
     io.observe(el);
     return () => io.disconnect();
   }, [loadMore, mode]);
+
+  const activeFilters = countFilters(filters);
 
   return (
     <div className="flex flex-col gap-4 px-4 pb-4 pt-4">
@@ -164,36 +166,19 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
             </button>
           </div>
 
-          {/* Filtrlar va turkum chiplari */}
-          <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
-            <button
-              type="button"
-              onClick={() => {
-                haptic.select();
-                setShowFilters((v) => !v);
-              }}
-              className={`chip shrink-0 ${showFilters ? "" : "chip-active"}`}
-              aria-pressed={!showFilters}
-            >
-              <SlidersIcon size={14} />
-              Filtrlar
-            </button>
-
-            {showFilters &&
-              categories.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => {
-                    haptic.select();
-                    setCategoryId((prev) => (prev === c.id ? "" : c.id));
-                  }}
-                  className={`chip shrink-0 ${categoryId === c.id ? "chip-active" : ""}`}
-                >
-                  {c.name}
-                </button>
-              ))}
-          </div>
+          {/* Filtrlar tugmasi — sahifa alohida (maketdagi "Filtrlar sahifasi"). */}
+          <button
+            type="button"
+            onClick={() => {
+              haptic.select();
+              onOpenFilters();
+            }}
+            className={`chip self-start ${activeFilters > 0 ? "chip-active" : ""}`}
+          >
+            <SlidersIcon size={14} />
+            Filtrlar
+            {activeFilters > 0 && ` (${activeFilters})`}
+          </button>
 
           {loading ? (
             <ListSkeleton count={4} />
@@ -204,7 +189,7 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
               icon={<BriefcaseIcon size={26} />}
               title="E'lon topilmadi"
               hint={
-                debouncedQ || categoryId
+                debouncedQ || activeFilters > 0
                   ? "Qidiruv shartlarini o'zgartirib ko'ring."
                   : "Hozircha faol e'lonlar yo'q."
               }

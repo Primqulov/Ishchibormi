@@ -21,6 +21,10 @@ import { AppHeader, ScreenHeader } from "@/components/AppHeader";
 import { ErrorState, Spinner } from "@/components/ui";
 import { Feed } from "@/screens/Feed";
 import { Candidates } from "@/screens/Candidates";
+import { Filters } from "@/screens/Filters";
+import { HelpCenter } from "@/screens/HelpCenter";
+import { Legal } from "@/screens/Legal";
+import { Settings } from "@/screens/Settings";
 import { History } from "@/screens/History";
 import { JobDetail } from "@/screens/JobDetail";
 import { Jobs } from "@/screens/Jobs";
@@ -36,7 +40,9 @@ import {
   fetchNotifications,
   getAccess,
   loginWithInitData,
+  EMPTY_FILTERS,
   type APIError,
+  type FeedFilters,
   type User,
 } from "@/lib/api";
 import { isTelegram, showBackButton } from "@/lib/telegram";
@@ -54,6 +60,11 @@ type Overlay =
   | { kind: "edit" }
   | { kind: "applications" }
   | { kind: "candidates" }
+  | { kind: "filters" }
+  | { kind: "settings" }
+  | { kind: "help" }
+  | { kind: "privacy" }
+  | { kind: "terms" }
   | { kind: "myElons" }
   | { kind: "history" };
 
@@ -63,6 +74,11 @@ const OVERLAY_TITLE: Record<Overlay["kind"], string> = {
   edit: "Profilni tahrirlash",
   applications: "Arizalarim",
   candidates: "Nomzodlar",
+  filters: "Filtrlar",
+  settings: "Sozlamalar",
+  help: "Yordam markazi",
+  privacy: "Maxfiylik siyosati",
+  terms: "Foydalanish shartlari",
   myElons: "E'lonlarim",
   history: "Ish tarixi",
 };
@@ -78,6 +94,9 @@ export default function App() {
   const [notifVersion, setNotifVersion] = useState(0);
 
   const [unread, setUnread] = useState(0);
+  // Filtrlar "Ishlar" tabida yashaydi, lekin alohida ekranda tanlanadi —
+  // shuning uchun holat App'da turadi (ekran yopilganda yo'qolmasin).
+  const [filters, setFilters] = useState<FeedFilters>(EMPTY_FILTERS);
 
   // ── Kirish ────────────────────────────────────────────────────────
   const authenticate = useCallback(async () => {
@@ -242,6 +261,14 @@ export default function App() {
               close();
             }}
             onPost={openPost}
+            filters={filters}
+            onFilters={(f) => {
+              setFilters(f);
+              close();
+            }}
+            onTerms={() => push({ kind: "terms" })}
+            onPrivacy={() => push({ kind: "privacy" })}
+            onHelp={() => push({ kind: "help" })}
             appsVersion={appsVersion}
             elonsVersion={elonsVersion}
           />
@@ -259,7 +286,13 @@ export default function App() {
             />
           )}
 
-          {tab === "jobs" && <Jobs onOpenJob={openJob} />}
+          {tab === "jobs" && (
+            <Jobs
+              onOpenJob={openJob}
+              filters={filters}
+              onOpenFilters={() => push({ kind: "filters" })}
+            />
+          )}
 
           {tab === "notifications" && (
             <Notifications
@@ -277,6 +310,7 @@ export default function App() {
               onCandidates={() => push({ kind: "candidates" })}
               onMyElons={() => push({ kind: "myElons" })}
               onHistory={() => push({ kind: "history" })}
+              onSettings={() => push({ kind: "settings" })}
             />
           )}
         </>
@@ -300,6 +334,11 @@ function Overlays({
   onCreated,
   onSaved,
   onPost,
+  filters,
+  onFilters,
+  onTerms,
+  onPrivacy,
+  onHelp,
   appsVersion,
   elonsVersion,
 }: {
@@ -310,6 +349,11 @@ function Overlays({
   onCreated: () => void;
   onSaved: (u: User) => void;
   onPost: () => void;
+  filters: FeedFilters;
+  onFilters: (f: FeedFilters) => void;
+  onTerms: () => void;
+  onPrivacy: () => void;
+  onHelp: () => void;
   appsVersion: number;
   elonsVersion: number;
 }) {
@@ -324,6 +368,16 @@ function Overlays({
       return <MyApplications onOpenJob={onOpenJob} reloadKey={appsVersion} />;
     case "candidates":
       return <Candidates onOpenJob={onOpenJob} />;
+    case "filters":
+      return <Filters value={filters} onApply={onFilters} />;
+    case "settings":
+      return <Settings onTerms={onTerms} onPrivacy={onPrivacy} onHelp={onHelp} />;
+    case "help":
+      return <HelpCenter />;
+    case "privacy":
+      return <Legal kind="privacy" />;
+    case "terms":
+      return <Legal kind="terms" />;
     case "myElons":
       return <MyElons onOpenJob={onOpenJob} onPost={onPost} reloadKey={elonsVersion} />;
     case "history":

@@ -328,17 +328,56 @@ export interface Paged<T> {
 
 export const FEED_PAGE_SIZE = 12;
 
-export function fetchFeed(params: {
+/**
+ * Feed filtrlari — backend qabul qiladigan paramlar bilan bir xil
+ * (apps/api → elon.Feed): q, categoryId, gender, minPrice, maxPrice,
+ * region, sort.
+ */
+export interface FeedFilters {
   q?: string;
   categoryId?: string;
-  page?: number;
-}): Promise<Paged<Elon>> {
+  gender?: Gender | "";
+  minPrice?: number;
+  maxPrice?: number;
+  region?: string;
+  sort?: "" | "new" | "price_desc" | "price_asc";
+}
+
+export function fetchFeed(params: FeedFilters & { page?: number }): Promise<Paged<Elon>> {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
   if (params.categoryId) qs.set("categoryId", params.categoryId);
+  // "mixed" — filtr emas, standart holat: uni yuborish natijani
+  // ataylab toraytirib qo'yardi (aralash e'lonlar hammaga ochiq).
+  if (params.gender && params.gender !== "mixed") qs.set("gender", params.gender);
+  if (params.minPrice) qs.set("minPrice", String(params.minPrice));
+  if (params.maxPrice) qs.set("maxPrice", String(params.maxPrice));
+  if (params.region) qs.set("region", params.region);
+  if (params.sort) qs.set("sort", params.sort);
   qs.set("page", String(params.page ?? 1));
   qs.set("limit", String(FEED_PAGE_SIZE));
   return api.get<Paged<Elon>>(`/api/elons?${qs}`);
+}
+
+/** Bo'sh filtr — "hech narsa tanlanmagan" holati. */
+export const EMPTY_FILTERS: FeedFilters = {
+  categoryId: "",
+  gender: "",
+  minPrice: undefined,
+  maxPrice: undefined,
+  region: "",
+  sort: "",
+};
+
+/** Nechta filtr yoqilgan — "Filtrlar" tugmasidagi belgini ko'rsatish uchun. */
+export function countFilters(f: FeedFilters): number {
+  let n = 0;
+  if (f.categoryId) n++;
+  if (f.gender) n++;
+  if (f.minPrice || f.maxPrice) n++;
+  if (f.region) n++;
+  if (f.sort) n++;
+  return n;
 }
 
 export const fetchCategories = () => api.get<Category[]>("/api/categories");

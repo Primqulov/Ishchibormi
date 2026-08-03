@@ -306,6 +306,22 @@ export const DoubleCheckIcon = svg(
   </>,
 );
 
+export const GlobeIcon = svg(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z" />
+  </>,
+);
+
+export const ChevronDownIcon = svg(<path d="m6 9 6 6 6-6" />);
+
+export const ExternalIcon = svg(
+  <>
+    <path d="M15 3h6v6M10 14 21 3" />
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+  </>,
+);
+
 export const MoneyIcon = svg(
   <>
     <rect width="20" height="13" x="2" y="6" rx="2" />

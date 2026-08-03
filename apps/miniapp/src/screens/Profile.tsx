@@ -24,6 +24,7 @@ import {
   BriefcaseIcon,
   UsersIcon,
   HistoryIcon,
+  SettingsIcon,
   HelpIcon,
   ChevronRightIcon,
 } from "@/components/icons";
@@ -41,6 +42,7 @@ export function Profile({
   onCandidates,
   onMyElons,
   onHistory,
+  onSettings,
 }: {
   me: User;
   onEdit: () => void;
@@ -48,6 +50,7 @@ export function Profile({
   onCandidates: () => void;
   onMyElons: () => void;
   onHistory: () => void;
+  onSettings: () => void;
 }) {
   const fullName = [me.firstName, me.lastName].filter(Boolean).join(" ") || "Foydalanuvchi";
   const place = [me.district, me.region].filter(Boolean).join(", ");
@@ -125,6 +128,7 @@ export function Profile({
         <MenuRow icon={<UsersIcon size={18} />} label="Nomzodlar" onClick={onCandidates} />
         <MenuRow icon={<HistoryIcon size={18} />} label="Ish tarixi" onClick={onHistory} />
         <MenuRow icon={<EditIcon size={18} />} label="Shaxsiy ma'lumotlar" onClick={onEdit} />
+        <MenuRow icon={<SettingsIcon size={18} />} label="Sozlamalar" onClick={onSettings} />
         <MenuRow
           icon={<HelpIcon size={18} />}
           label="Yordam markazi"
