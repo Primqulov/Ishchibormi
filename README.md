@@ -1,8 +1,8 @@
-# Ishchi Bormi — Web ilova (Backend / Bot / Frontend)
+# Ishchi Bormi — server tomoni (API / Web / Mini App / botlar)
 
 O'zbekiston uchun kunlik ish (mardikor) bozori platformasi. Telegram orqali parolsiz
 (OTP) kirish, MongoDB'ga asoslangan Go API, Next.js (App Router + TypeScript +
-Tailwind) veb-panel va OTP/murojaat uchun Go Telegram botlari.
+Tailwind) veb-panel, Telegram Mini App va Go Telegram botlari.
 
 ---
 
@@ -21,32 +21,51 @@ Tailwind) veb-panel va OTP/murojaat uchun Go Telegram botlari.
 
 ## 2. Papka tuzilmasi
 
+Har bir ishga tushiriladigan birlik `apps/` ostida alohida papkada; ildizda
+faqat butun tizimga tegishli fayllar (compose, `.env`, CI) turadi.
+
 ```
 .
-├── backend/              # Go API server + seed
-│   ├── cmd/api/main.go   # kirish nuqtasi: router, middleware, barcha route'lar
-│   ├── config/           # env'dan konfiguratsiya (Config.Load)
-│   ├── internal/         # domenlar (har biri handler.go)
-│   ├── pkg/              # umumiy yordamchi paketlar
-│   └── seed/main.go      # demo ma'lumot to'ldirish
-├── bot/                  # Go Telegram bot
-│   ├── cmd/bot/          # OTP yetkazuvchi bot
-│   └── internal/envfile/ # .env yuklovchi
-├── frontend/             # Next.js veb-panel
-│   ├── app/             # sahifalar (App Router)
-│   ├── components/       # UI komponentlar
-│   └── lib/             # API klient, i18n, format, xarita
-├── design/               # dizayn skrinshotlari (namuna)
-├── .github/workflows/    # CI/CD pipeline (test + AWS deploy)
-├── docker-compose.yml    # mongo + backend + bot + frontend
+├── apps/
+│   ├── api/                  # Go API server + seed
+│   │   ├── cmd/api/main.go   # kirish nuqtasi: router, middleware, route'lar
+│   │   ├── config/           # env'dan konfiguratsiya (Config.Load)
+│   │   ├── internal/         # domenlar (har biri handler.go)
+│   │   ├── pkg/              # umumiy yordamchi paketlar
+│   │   └── seed/main.go      # demo ma'lumot to'ldirish
+│   ├── web/                  # Next.js veb-panel
+│   │   ├── app/              # sahifalar (App Router)
+│   │   ├── components/       # UI komponentlar
+│   │   └── lib/              # API klient, i18n, format, xarita
+│   ├── miniapp/              # Telegram Mini App (Vite + React) → docs/miniapp.md
+│   │   └── src/{lib,components,screens}
+│   └── bots/
+│       ├── otp/              # OTP yetkazuvchi bot (Mongo'ga yozadi)
+│       └── miniapp/          # Mini App oynasini ochadi (bazaga TEGMAYDI)
+├── deploy/                   # dev overlay + ishga tushirish hujjati
+├── docs/                     # miniapp.md va boshqalar
+├── scripts/                  # play-preflight.sh
+├── .github/workflows/        # CI/CD pipeline (test + AWS deploy)
+├── docker-compose.yml        # mongo + backend + bot + frontend (+miniapp profili)
 ├── Makefile
-├── .env.example
+├── .env.example              # BITTA .env — barcha servislar shundan o'qiydi
 └── README.md
 ```
 
+**Nega bitta repo.** Bu servislar bitta serverda, bitta `docker compose`
+bilan, bitta Mongo ustida ishlaydi va birga deploy qilinadi — ya'ni bitta
+yetkazish birligi. Mustaqil deploy kerak bo'lganda yechim repo bo'lish emas,
+CI'da yo'l filtri (`paths:`) — har servis faqat o'zi o'zgarganda quriladi.
+Repo'ga bo'lish faqat **alohida jamoalar** paydo bo'lganda mantiqiy
+(`git subtree split -P apps/api` bilan tarixi saqlanib ajratiladi).
+
+Mobil ilova (Flutter) bu repoda emas — u alohida, chunki toolchain'i
+(Xcode/Gradle), CI runner'i va reliz tezligi (store review) butunlay boshqa
+va u serverga deploy qilinmaydi.
+
 ---
 
-## 3. Backend — `backend/`
+## 3. Backend — `apps/api/`
 
 ### 3.1 Kirish nuqtasi
 - **`cmd/api/main.go`** — server ishga tushishi. Mongo ulanadi, indekslar
@@ -160,13 +179,20 @@ Bazaviy prefiks: `/api`. Autentifikatsiya: `Authorization: Bearer <accessToken>`
 
 ---
 
-## 5. Bot — `bot/`
+## 5. Botlar — `apps/bots/`
 
-- **`cmd/bot/main.go` (OTP boti)** — foydalanuvchi `t.me/<bot>?start=<token>`
+- **`otp/cmd/bot/main.go` (OTP boti)** — foydalanuvchi `t.me/<bot>?start=<token>`
   orqali `/start` bosadi, kontaktini ulashadi. Bot 6 xonali kodni yaratib
   Mongo'ning OTP kolleksiyasiga (TTL) yozadi; shu kod bilan
   `/api/auth/otp/verify` orqali kirish yakunlanadi.
-- **`bot/internal/envfile/`** — `.env` yuklovchi.
+- **`otp/internal/envfile/`** — `.env` yuklovchi.
+- **`miniapp/cmd/bot/main.go` (Mini App boti)** — faqat menyu tugmasiga
+  `MINIAPP_URL` ni qo'yadi va oynani ochadi. **Bazaga ulanmaydi**, shu sababli
+  tokeni sizsa ham hujumchi qo'liga na Mongo, na JWT siri tushadi.
+  Batafsil: [docs/miniapp.md](docs/miniapp.md).
+
+Ikkala bot ham alohida Go moduli va bir-birini import qilmaydi; API bilan
+aloqasi faqat Mongo (OTP boti) yoki umuman yo'q (Mini App boti).
 
 > Eslatma: qo'llab-quvvatlash endi shaxsiy Telegram akkaunti orqali — avvalgi
 > taklif/shikoyat botlari (`cmd/feedbackbot`, `bot_feedback`/`support_admins`
@@ -174,7 +200,7 @@ Bazaviy prefiks: `/api`. Autentifikatsiya: `Authorization: Bearer <accessToken>`
 
 ---
 
-## 6. Frontend — `frontend/`
+## 6. Frontend — `apps/web/`
 
 Next.js App Router. Uch guruh: ochiq `(public)`, kabinet `(cabinet)`, admin `admin/`.
 
@@ -206,10 +232,14 @@ Skeleton, Tabs).
 ```bash
 cp .env.example .env
 # .env'da TELEGRAM_BOT_TOKEN, JWT sirlari, AWS S3 (ixtiyoriy) to'ldiring
-docker compose up --build -d
+make dev                                # yoki: docker compose up --build -d
 docker compose exec backend /app/seed   # demo ma'lumot
 # frontend: http://localhost:3000 | API: http://localhost:8080
 ```
+
+> Barcha compose buyruqlari **repo ildizidan** ishlatilishi kerak. Sabab va
+> `deploy/docker-compose.dev.yml` ning to'g'ri chaqirilishi:
+> [deploy/README.md](deploy/README.md).
 
 ### Portlar (docker-compose)
 | Xizmat | Port |
@@ -218,6 +248,11 @@ docker compose exec backend /app/seed   # demo ma'lumot
 | backend | 8080 |
 | mongo | 27018 → 27017 |
 | bot | (tashqi port yo'q) |
+| miniapp | 5173 (`miniapp` profili) |
+| miniapp-bot | (tashqi port yo'q, `miniapp` profili) |
+
+`miniapp` profilidagi servislar oddiy `docker compose up` bilan
+ko'tarilmaydi — `make miniapp` ishlating (sabab: hali prod'ga chiqarilmagan).
 
 ### Kirish oqimi
 `/login` → "Telegram botga o'tish" → botda `/start` + kontakt → 6 xonali kod →
@@ -229,10 +264,20 @@ qaytadi (botsiz test uchun).
 ## 8. CI/CD → AWS
 
 `.github/workflows/ci-cd.yml`:
-- **test** (har push/PR): backend `go vet` + `go test`, bot `go vet` + `go test`,
-  frontend `npm ci` + `lint` + `build`.
+- **test** (har push/PR): `apps/api` va ikkala bot uchun `go vet` + `go test`,
+  `apps/web` uchun `npm ci` + `lint` + `build`, `apps/miniapp` uchun
+  `tsc --noEmit` + `vite build`.
 - **deploy** (faqat `main`'ga push, test o'tgach): AWS EC2'ga SSH orqali
   `git reset --hard origin/main` + `docker compose up --build`.
   ⚠️ `main`'ga push = **production deploy (AWS)**.
 
 Kerakli GitHub secrets: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `PROJECT_DIR`.
+
+### Rejalashtirilgan yaxshilanishlar
+1. **Image'larni CI'da qurish** (GHCR) — hozir build EC2'ning o'zida ketadi,
+   ya'ni prod mashinaning RAM/CPU'sida (Next.js build "Killed" bo'lishi
+   mumkin). Registry'ga o'tilsa deploy `pull` ga aylanadi va **rollback**
+   paydo bo'ladi. Batafsil: [deploy/README.md](deploy/README.md).
+2. **Yo'l filtri** (`paths:`) — har servis faqat o'zi o'zgarganda qurilishi.
+   Buni (1) dan keyin qilgan ma'qul, chunki mustaqil deploy uchun baribir
+   servis-bo'yicha image kerak.

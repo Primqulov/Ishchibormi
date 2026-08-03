@@ -5,7 +5,7 @@ qanday ma'lumot yig'adi, uni qancha saqlaydi, kimga uzatadi va qanday
 o'chiradi. Har bir qator manba kodidagi aniq joyga havola qilingan.
 
 > **Qoida:** bu yerdagi biror qator o'zgarsa, quyidagilar ham birga o'zgarishi
-> shart — `frontend/lib/retention.ts`, `/maxfiylik-siyosati`,
+> shart — `apps/web/lib/retention.ts`, `/maxfiylik-siyosati`,
 > `/delete-account`, ilovadagi `privacy_policy_page.dart` va Play Console'dagi
 > **Data safety** formasi. Kod bilan e'lon qilingan siyosat bir-biriga mos
 > kelmasligi — Google Play siyosatining to'g'ridan-to'g'ri buzilishi.
@@ -74,7 +74,7 @@ Quyidagilar **kodda umuman yo'q**. Maxfiylik siyosatida ham yo'q bo'lishi shart:
 
 ## 2. Saqlash muddatlari
 
-Muddatlarning **yagona manbai** — `frontend/lib/retention.ts`. Backend tomonda
+Muddatlarning **yagona manbai** — `apps/web/lib/retention.ts`. Backend tomonda
 ular quyidagicha bajariladi:
 
 | Ma'lumot | Muddat | Qanday bajariladi |
@@ -241,7 +241,7 @@ uchun Google ishlaydigan kredensial talab qiladi. Oddiy login Telegram bot OTP's
 orqali — reviewer buni bajara olmaydi (Telegram hisobi ham, O'zbekiston raqami
 ham yo'q). Shu sabab **review login** mexanizmi qo'shilgan.
 
-Mexanizm: `backend/internal/auth/review.go` (u yerdagi izohda to'liq asoslash).
+Mexanizm: `apps/api/internal/auth/review.go` (u yerdagi izohda to'liq asoslash).
 
 **Qisqacha:** yoqilgan paytda `/auth/otp/verify` bitta qo'shimcha 6 xonali kodni
 qabul qiladi va uni bitta oldindan yaratilgan, sandbox'langan hisobga bog'laydi.

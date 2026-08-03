@@ -1,35 +1,56 @@
-.PHONY: up dev down logs seed lint test be-run fe-run bot-run
+.PHONY: up dev miniapp down logs seed lint test api-run web-run bot-run miniapp-run miniapp-bot-run
+
+# DIQQAT: barcha compose chaqiruvlari repo ILDIZIDAN va prod compose birinchi
+# -f bo'lib turishi kerak — aks holda loyiha nomi o'zgarib, volume'lar
+# (uploads/avatars) yangi va bo'sh bo'lib qoladi. Sabab: deploy/README.md
+COMPOSE_DEV = docker compose -f docker-compose.yml -f deploy/docker-compose.dev.yml
 
 up:
 	docker compose up --build -d
 
 # Lokal dev rejim (APP_ENV=dev, OTP_DEV_RETURN=true, localhost CORS).
 # Prod compose fayli ataylab production literallariga mixlangan — dev faqat
-# shu overlay orqali yoqiladi (docker-compose.dev.yml dagi izohga qarang).
+# shu overlay orqali yoqiladi (deploy/docker-compose.dev.yml dagi izohga qarang).
 dev:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+	$(COMPOSE_DEV) up --build -d
+
+# Dev + Telegram Mini App (webapp :5173 va uning boti). Mini App compose
+# profile ortida — `make dev` uni ko'tarmaydi, chunki u hali prod'ga
+# chiqarilmagan (docker-compose.yml dagi izohga qarang).
+miniapp:
+	$(COMPOSE_DEV) --profile miniapp up --build -d
 
 down:
-	docker compose down
+	docker compose --profile miniapp down
 
 logs:
 	docker compose logs -f --tail=200
 
 seed:
-	cd backend && go run ./seed
+	cd apps/api && go run ./seed
 
-be-run:
-	cd backend && go run ./cmd/api
+api-run:
+	cd apps/api && go run ./cmd/api
 
-fe-run:
-	cd frontend && npm run dev
+web-run:
+	cd apps/web && npm run dev
 
 bot-run:
-	cd bot && go run ./cmd/bot
+	cd apps/bots/otp && go run ./cmd/bot
+
+miniapp-run:
+	cd apps/miniapp && npm run dev
+
+miniapp-bot-run:
+	cd apps/bots/miniapp && go run ./cmd/bot
 
 lint:
-	cd backend && go vet ./... && (command -v golangci-lint && golangci-lint run ./... || true)
-	cd frontend && npm run lint || true
+	cd apps/api && go vet ./... && (command -v golangci-lint && golangci-lint run ./... || true)
+	cd apps/bots/otp && go vet ./...
+	cd apps/bots/miniapp && go vet ./...
+	cd apps/web && npm run lint || true
 
 test:
-	cd backend && go test ./...
+	cd apps/api && go test ./...
+	cd apps/bots/otp && go test ./...
+	cd apps/bots/miniapp && go test ./...

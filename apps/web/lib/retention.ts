@@ -6,11 +6,11 @@
 // (Google Play uchun bu to'g'ridan-to'g'ri siyosat buzilishi).
 //
 // Manbalar:
-//   backend/internal/account/retention.go   — DefaultRetentionDays, Purger
-//   backend/config/config.go                — OTP_TTL_SECONDS, JWT_*_TTL_*
-//   backend/internal/account/delete.go      — deleteCodeTTL
-//   backend/internal/elon/handler.go        — Delete (butunlay o'chiradi)
-//   backend/pkg/db/indexes.go               — otp_codes / delete_codes TTL
+//   apps/api/internal/account/retention.go   — DefaultRetentionDays, Purger
+//   apps/api/config/config.go                — OTP_TTL_SECONDS, JWT_*_TTL_*
+//   apps/api/internal/account/delete.go      — deleteCodeTTL
+//   apps/api/internal/elon/handler.go        — Delete (butunlay o'chiradi)
+//   apps/api/pkg/db/indexes.go               — otp_codes / delete_codes TTL
 
 /** O'chirilgan hisob butunlay yo'q qilinishidan oldingi muhlat (kun). */
 export const RETENTION_DAYS = 90;

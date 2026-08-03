@@ -1,0 +1,235 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Dizayn tokenlari ─────────────────────────────────────────────────
+   Web/frontend/app/globals.css dan ko'chirilgan (Figma "Ishchi Bormi —
+   Web Dizayn"). Mini App saytdan farq qilmasligi kerak, shuning uchun bu
+   qiymatlar shu yerda "qaytadan o'ylab topilmaydi".
+
+   Farqi bitta: Telegram o'z mavzusini beradi va foydalanuvchi kun/tun
+   rejimini Telegram sozlamalaridan boshqaradi — shuning uchun .dark
+   klassini src/lib/telegram.ts o'rnatadi, sayt kabi tugma orqali emas.   */
+:root {
+  --bg:           #EEF0FA;
+  --bg-subtle:    #F8F9FF;
+  --card:         #FFFFFF;
+  --border:       rgba(195, 198, 215, 0.30);
+  --border-strong:rgba(195, 198, 215, 0.60);
+  --text:         #0B1C30;
+  --text-muted:   #434655;
+  --text-subtle:  #737686;
+  --heading:      #0B1C30;
+
+  --ring:         rgba(0, 56, 216, 0.18);
+  --accent:       #FF9500;
+  --accent-soft:  #FFEED4;
+  --accent-text:  #8A5300;
+  --brand:        #0038D8;
+  --brand-light:  #2F6BFF;
+  --brand-soft:   #E5EEFF;
+  --brand-tint:   #DCE9FF;
+  --brand-100:    #D3E4FE;
+
+  --shadow-card:  0 2px 4px rgba(10, 28, 48, 0.05);
+  --shadow-pop:   0 12px 28px -10px rgba(10, 28, 48, 0.18), 0 2px 6px rgba(10, 28, 48, 0.06);
+  --shadow-blue:  0 6px 16px -6px rgba(0, 56, 216, 0.45);
+
+  --hero-grad: linear-gradient(100deg, #0038D8 0%, #2F6BFF 100%);
+
+  /* Telegram oynasining barqaror balandligi. telegram.ts uni haqiqiy
+     qiymatga yangilaydi; bu yerdagisi — SDK yuklanmagunicha zaxira. */
+  --tg-vh: 100dvh;
+  /* Pastki tab bar balandligi — sahifa mazmuni uning ostiga kirib
+     ketmasligi uchun. */
+  --tabbar-h: 60px;
+}
+
+.dark {
+  --bg:           #070C1C;
+  --bg-subtle:    #101736;
+  --card:         #0E1430;
+  --border:       rgba(148, 163, 220, 0.14);
+  --border-strong:rgba(148, 163, 220, 0.24);
+  --text:         #E9EDF9;
+  --text-muted:   #A8AEC6;
+  --text-subtle:  #7C8298;
+  --heading:      #FFFFFF;
+
+  --ring:         rgba(90, 140, 255, 0.35);
+  --accent:       #FFA928;
+  --accent-soft:  rgba(255, 149, 0, 0.16);
+  --accent-text:  #FFC670;
+  --brand:        #4C7CFF;
+  --brand-light:  #6E96FF;
+  --brand-soft:   rgba(76, 124, 255, 0.14);
+  --brand-tint:   rgba(76, 124, 255, 0.18);
+  --brand-100:    rgba(76, 124, 255, 0.24);
+
+  --shadow-card:  0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-pop:   0 24px 48px -16px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-blue:  0 6px 16px -6px rgba(0, 0, 0, 0.6);
+
+  --hero-grad: linear-gradient(135deg, #16255E 0%, #1E3A8A 100%);
+}
+
+/* ── Baza — mobil uchun sozlangan ─────────────────────────────────── */
+html, body, #root {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+               Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  /* Telefonni yon tomonga burganda iOS matnni o'zicha kattalashtiradi va
+     layout buziladi. */
+  -webkit-text-size-adjust: 100%;
+  /* Ro'yxat oxiriga yetganda butun sahifa "cho'zilib" ketmasin — Telegram'da
+     bu harakat ilovani yopib yuborishi mumkin. */
+  overscroll-behavior-y: none;
+  overflow-x: hidden;
+}
+
+/* Uzun bosishda chiqadigan ko'k tanlash fonini olib tashlaymiz — nativ ilova
+   hissi shundan boshlanadi. Matn tanlash kerak joylarda ataylab qaytariladi. */
+* {
+  -webkit-tap-highlight-color: transparent;
+  border-color: var(--border);
+}
+input, textarea { -webkit-user-select: text; user-select: text; }
+
+:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); border-radius: 0.625rem; }
+
+::selection { background: var(--brand-tint); color: var(--brand); }
+
+/* ── Komponent primitivlari (saytdagi bilan bir xil nomlar) ───────── */
+@layer components {
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-card);
+    color: var(--text);
+  }
+  .surface {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+  }
+
+  .input {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-subtle);
+    color: var(--text);
+    border-radius: 0.625rem;
+    padding: 0.75rem 1rem;
+    /* 16px dan kichik shrift iOS Safari'da inputga bosilganda sahifani
+       avtomatik kattalashtiradi (zoom) — mobilda bu juda yoqimsiz. */
+    font-size: 1rem;
+    line-height: 1.4;
+    transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--brand);
+    background: var(--card);
+    box-shadow: 0 0 0 3px var(--ring);
+  }
+  .input::placeholder { color: var(--text-subtle); }
+
+  .btn, .btn-primary, .btn-soft, .btn-outline, .btn-ghost, .btn-danger {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.375rem;
+    padding: 0.75rem 1.375rem; border-radius: 0.625rem; font-weight: 700;
+    font-size: 0.875rem; line-height: 1.15;
+    /* Teginish uchun minimal 44px — Apple HIG va Material'ning umumiy tavsiyasi. */
+    min-height: 44px;
+    transition: all 160ms cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none; white-space: nowrap;
+  }
+  .btn:active, .btn-primary:active, .btn-soft:active,
+  .btn-outline:active, .btn-ghost:active, .btn-danger:active { transform: scale(0.98); }
+  .btn[disabled], .btn-primary[disabled], .btn-soft[disabled],
+  .btn-outline[disabled], .btn-ghost[disabled], .btn-danger[disabled] {
+    opacity: 0.5; transform: none;
+  }
+
+  .btn-primary { background: var(--brand); color: #fff; }
+  .btn-soft    { background: var(--brand-soft); color: var(--brand); }
+  .btn-outline { background: transparent; color: var(--brand); border: 1.5px solid rgba(0, 56, 216, 0.25); }
+  .btn-ghost   { background: transparent; color: var(--text-muted); font-weight: 600; }
+  .btn-danger  { background: #D92D20; color: #fff; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.375rem;
+    padding: 0.5rem 0.875rem; border-radius: 9999px;
+    border: 1px solid var(--border-strong);
+    background: var(--card);
+    color: var(--text-muted);
+    font-size: 0.8125rem; font-weight: 600;
+    white-space: nowrap;
+    transition: all 150ms ease;
+  }
+  .chip-active { background: var(--brand); color: #fff; border-color: var(--brand); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    padding: 0.3125rem 0.75rem; border-radius: 9999px;
+    font-size: 0.71875rem; font-weight: 700; line-height: 1;
+  }
+  .badge-success { @apply badge; background: #DFF5E5; color: #1A7F3C; }
+  .badge-pending { @apply badge; background: #FFEED4; color: #8A5300; }
+  .badge-danger  { @apply badge; background: #FEE4E2; color: #B42318; }
+  .badge-info    { @apply badge; background: var(--brand-soft); color: var(--brand); }
+  .badge-neutral { @apply badge; background: var(--bg-subtle); color: var(--text-muted); border: 1px solid var(--border); }
+
+  .tag-cat {
+    display: inline-flex; align-items: center;
+    padding: 0.25rem 0.625rem; border-radius: 9999px;
+    background: var(--brand-tint); color: var(--brand);
+    font-size: 0.625rem; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; line-height: 1.4;
+  }
+
+  .heading { color: var(--heading); }
+  .muted   { color: var(--text-muted); }
+  .subtle  { color: var(--text-subtle); }
+
+  .section-title { font-size: 1.125rem; font-weight: 700; color: var(--heading); letter-spacing: -0.2px; }
+  .divider { height: 1px; background: var(--border); width: 100%; }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--bg-subtle) 0%, rgba(127,127,127,0.06) 50%, var(--bg-subtle) 100%);
+    background-size: 200% 100%;
+    border-radius: 0.625rem;
+    animation: shimmer 1.4s linear infinite;
+  }
+}
+
+/* ── Yordamchilar ─────────────────────────────────────────────────── */
+
+/* Gorizontal scroll qilinadigan qatorlar (kategoriya chip'lari, rasm
+   karuseli) — scrollbar ko'rinmasin, lekin barmoq bilan surish ishlasin. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Rasm karuseli: har bir slayd ekranga "yopishadi". */
+.snap-x-mandatory { scroll-snap-type: x mandatory; }
+.snap-center { scroll-snap-align: center; }
+
+/* Pastki tab bar iPhone'ning home indikatori ostida qolmasligi uchun. */
+.pb-safe { padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
+
+/* Sahifa mazmuni tab bar ostiga kirib ketmasin. */
+.pb-tabbar { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 1rem); }
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

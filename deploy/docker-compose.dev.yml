@@ -1,6 +1,13 @@
 # Lokal dev overlay. Ishlatish:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.dev.yml up --build -d
 # (yoki: make dev)
+#
+# DIQQAT: birinchi -f HAR DOIM ildizdagi docker-compose.yml bo'lishi kerak.
+# Compose loyiha papkasini (project directory) birinchi fayl turgan joydan
+# oladi; ildizdan boshlansa .env o'sha yerdan o'qiladi va volume nomlari
+# o'zgarmaydi. Agar bu fayl birinchi bo'lsa loyiha nomi "deploy" bo'lib
+# qoladi va compose YANGI, BO'SH volume'lar yaratadi (uploads/avatars
+# yo'qolgandek ko'rinadi). Batafsil: deploy/README.md
 #
 # docker-compose.yml dagi backend ataylab APP_ENV=production +
 # OTP_DEV_RETURN=false literallariga mixlangan — prod server diskida eski dev
@@ -14,7 +21,10 @@ services:
     environment:
       APP_ENV: "dev"
       OTP_DEV_RETURN: "true"
-      CORS_ORIGINS: "http://localhost:3000"
+      # Mini App boshqa origin'dan (5173) so'rov yuboradi — allowlist'da
+      # bo'lmasa brauzer uni to'sadi va kirish jimgina ishlamaydi.
+      # Tunnel (cloudflared/ngrok) manzilini ham shu yerga qo'shing.
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
       TRUST_PROXY_HEADERS: "false"
 
   frontend:
@@ -25,3 +35,8 @@ services:
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8080
       NEXT_PUBLIC_WS_BASE: ws://localhost:8080
+
+  miniapp:
+    build:
+      args:
+        VITE_API_BASE: http://localhost:8080

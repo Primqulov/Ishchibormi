@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="uz">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Ishchi Bormi</title>
+
+    <!-- viewport-fit=cover — iPhone'ning "notch"/home indikatori zonalari
+         env(safe-area-inset-*) orqali o'qilishi uchun shart.
+         maximum-scale=1 — inputga bosilganda sahifa sakrab kattalashmasin. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Ishchi Bormi — yaqin atrofdagi kunlik ishlar" />
+
+    <!-- Telegram Mini App SDK. Rasmiy manzildan yuklanadi va WebApp
+         obyektini (window.Telegram.WebApp) beradi: mavzu, tugmalar,
+         haptika, viewport. Bu yagona tashqi skript. -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

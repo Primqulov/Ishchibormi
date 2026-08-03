@@ -8,10 +8,13 @@ node_modules/
 dist/
 out/
 build/
+.vite/
 **/bin/
 **/build/
 
 # ── Go ─────────────────────────────────────────
+*.exe
+*.exe~
 *.test
 *.out
 **/coverage.txt
@@ -22,14 +25,15 @@ build/
 .env.local
 .env.production
 .env.*.local
-backend/.env
-bot/.env
-frontend/.env*.local
+apps/**/.env
+apps/**/.env*.local
+*.pem
+*.key
 # Firebase service-account kaliti (FCM push) va boshqa server sirlari
 secrets/
 
 # ── Data / runtime ─────────────────────────────
-/backend/data/
+/apps/api/data/
 **/data/avatars/
 mongo_data/
 *.log

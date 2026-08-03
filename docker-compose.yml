@@ -19,7 +19,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ./apps/api
       dockerfile: Dockerfile
     container_name: ib_backend
     restart: unless-stopped
@@ -40,12 +40,13 @@ services:
       # faylidan parse vaqtida oladi, ya'ni diskda eski dev .env qolgan bo'lsa
       # prod'da APP_ENV=dev + OTP_DEV_RETURN=true (OTP kodini API javobida
       # qaytaradi!) yoqilib qolardi. Bu fayl bilan prod'ni dev rejimga o'tkazib
-      # BO'LMAYDI — lokal dev uchun docker-compose.dev.yml overlay'ini ishlating.
+      # BO'LMAYDI — lokal dev uchun deploy/docker-compose.dev.yml overlay'ini
+      # ishlating (yoki oddiygina `make dev`).
       APP_ENV: "production"
       OTP_DEV_RETURN: "false"
       # Google Play review login — .env yo'q bo'lsa HAR DOIM o'chiq.
       # Yoqish faqat ataylab qilingan amal bo'lishi kerak; batafsil izoh
-      # .env.example va backend/internal/auth/review.go da.
+      # .env.example va apps/api/internal/auth/review.go da.
       REVIEW_LOGIN_ENABLED: ${REVIEW_LOGIN_ENABLED:-false}
       REVIEW_LOGIN_CODE: ${REVIEW_LOGIN_CODE:-}
       REVIEW_LOGIN_EXPIRES_AT: ${REVIEW_LOGIN_EXPIRES_AT:-}
@@ -57,7 +58,7 @@ services:
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       # O'chirilgan hisoblar shuncha kundan keyin butunlay yo'q qilinadi.
       # Foydalanuvchiga /delete-account va /maxfiylik-siyosati sahifalarida
-      # aytiladigan muddat bilan bir xil bo'lishi SHART (frontend/lib/retention.ts).
+      # aytiladigan muddat bilan bir xil bo'lishi SHART (apps/web/lib/retention.ts).
       ACCOUNT_RETENTION_DAYS: ${ACCOUNT_RETENTION_DAYS:-90}
       # Mobil push (FCM). Yoqish uchun: serverda ./secrets/fcm-service-account.json
       # faylini qo'ying (Firebase Console -> Service accounts -> Generate new
@@ -79,7 +80,7 @@ services:
 
   bot:
     build:
-      context: ./bot
+      context: ./apps/bots/otp
       dockerfile: Dockerfile
     container_name: ib_bot
     restart: unless-stopped
@@ -93,7 +94,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ./apps/web
       dockerfile: Dockerfile
       # MUHIM: NEXT_PUBLIC_* qiymatlari build vaqtida kodga yoziladi, shuning
       # uchun ularni build args sifatida uzatamiz (aks holda localhost qoladi).
@@ -116,6 +117,52 @@ services:
       NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-https://ishchibormi.uz}
       NEXT_PUBLIC_WS_BASE: ${NEXT_PUBLIC_WS_BASE:-wss://ishchibormi.uz}
       NEXT_PUBLIC_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-Ishchi_bormi_auth_bot}
+
+  # ── Telegram Mini App ───────────────────────────────────────────────────
+  # Statik webapp (nginx) + oynani ochadigan bot. Ikkalasi ham bazaga
+  # TEGMAYDI: webapp backend API'ga brauzerdan so'rov yuboradi, bot esa faqat
+  # menyu tugmasini qo'yadi. Shu sababli mongo'ga depends_on ham yo'q.
+  #
+  # PROFILE ORTIDA: `docker compose up` ularni ishga TUSHIRMAYDI va BUILD
+  # QILMAYDI. Sabab — Mini App hozircha prod'ga chiqarilmagan (tunnel bilan
+  # lokal sinovda). Profilsiz qoldirilsa EC2 deploy'i uni ham qurishga
+  # urinardi (RAM tanqis) va tokensiz bot cheksiz qayta ishga tushardi.
+  #
+  # Lokal ishga tushirish:  make miniapp   (yoki --profile miniapp)
+  # Prod'ga chiqarish vaqti kelganda: deploy skriptiga
+  # TELEGRAM_MINIAPP_BOT_TOKEN + MINIAPP_URL secretlarini qo'shing va
+  # `docker compose --profile miniapp up -d` ga o'ting.
+  miniapp:
+    profiles: ["miniapp"]
+    build:
+      context: ./apps/miniapp
+      args:
+        # DIQQAT: VITE_* qiymatlari BUILD vaqtida bundle ichiga yoziladi
+        # (frontend'dagi NEXT_PUBLIC_* bilan bir xil xatti-harakat).
+        # O'zgartirgandan keyin: docker compose build --no-cache miniapp
+        VITE_API_BASE: ${VITE_API_BASE:-https://api.ishchibormi.uz}
+        VITE_AUTH_BOT_USERNAME: ${VITE_AUTH_BOT_USERNAME:-Ishchi_bormi_auth_bot}
+    container_name: ib_miniapp
+    restart: unless-stopped
+    ports:
+      # Telegram HTTPS talab qiladi -> oldida tunnel yoki reverse-proxy turadi.
+      - "5173:80"
+
+  miniapp-bot:
+    profiles: ["miniapp"]
+    build:
+      context: ./apps/bots/miniapp
+      dockerfile: Dockerfile
+    container_name: ib_miniapp_bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Imzo tekshiruvi backend'da shu token bilan bajariladi — qiymat bitta
+      # .env dan kelgani uchun ikkovi hech qachon farq qila olmaydi.
+      TELEGRAM_MINIAPP_BOT_TOKEN: ${TELEGRAM_MINIAPP_BOT_TOKEN}
+      MINIAPP_URL: ${MINIAPP_URL}
+    depends_on:
+      - miniapp
 
 volumes:
   mongo_data:
