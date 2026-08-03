@@ -20,6 +20,7 @@ import { TabBar, type Tab } from "@/components/TabBar";
 import { AppHeader, ScreenHeader } from "@/components/AppHeader";
 import { ErrorState, Spinner } from "@/components/ui";
 import { Feed } from "@/screens/Feed";
+import { Candidates } from "@/screens/Candidates";
 import { History } from "@/screens/History";
 import { JobDetail } from "@/screens/JobDetail";
 import { Jobs } from "@/screens/Jobs";
@@ -52,6 +53,7 @@ type Overlay =
   | { kind: "post" }
   | { kind: "edit" }
   | { kind: "applications" }
+  | { kind: "candidates" }
   | { kind: "myElons" }
   | { kind: "history" };
 
@@ -60,6 +62,7 @@ const OVERLAY_TITLE: Record<Overlay["kind"], string> = {
   post: "Yangi e'lon",
   edit: "Profilni tahrirlash",
   applications: "Arizalarim",
+  candidates: "Nomzodlar",
   myElons: "E'lonlarim",
   history: "Ish tarixi",
 };
@@ -271,6 +274,7 @@ export default function App() {
               me={me}
               onEdit={() => push({ kind: "edit" })}
               onApplications={() => push({ kind: "applications" })}
+              onCandidates={() => push({ kind: "candidates" })}
               onMyElons={() => push({ kind: "myElons" })}
               onHistory={() => push({ kind: "history" })}
             />
@@ -318,6 +322,8 @@ function Overlays({
       return <ProfileEdit me={me} onSaved={onSaved} />;
     case "applications":
       return <MyApplications onOpenJob={onOpenJob} reloadKey={appsVersion} />;
+    case "candidates":
+      return <Candidates onOpenJob={onOpenJob} />;
     case "myElons":
       return <MyElons onOpenJob={onOpenJob} onPost={onPost} reloadKey={elonsVersion} />;
     case "history":

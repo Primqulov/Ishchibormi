@@ -10,9 +10,10 @@ import { useCallback, useEffect, useState } from "react";
 import { FileTextIcon } from "@/components/icons";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/ui";
 import { fmtSum, fromNow } from "@/lib/format";
-import { alertUser, haptic } from "@/lib/telegram";
+import { alertUser, confirmUser, haptic } from "@/lib/telegram";
 import {
   cancelApplication,
+  confirmDone,
   fetchMyApplications,
   type APIError,
   type Application,
@@ -61,6 +62,24 @@ export function MyApplications({
   }, []);
 
   useEffect(load, [load, reloadKey, tick]);
+
+  // Ishni yakunlash. Ikkala tomon ham tasdiqlashi kerak — backend ishchi va
+  // ish beruvchi tasdig'ini alohida saqlaydi va faqat ikkalasi bo'lgach ariza
+  // "completed" bo'ladi hamda baho qoldirish ochiladi.
+  async function markDone(a: Application) {
+    if (!(await confirmUser("Ishni bajarganingizni tasdiqlaysizmi?"))) return;
+    setBusyId(a.id);
+    try {
+      await confirmDone(a.id);
+      haptic.success();
+      load();
+    } catch (e) {
+      haptic.error();
+      alertUser((e as APIError).message || "Tasdiqlanmadi.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function cancel(a: Application) {
     setBusyId(a.id);
@@ -133,6 +152,23 @@ export function MyApplications({
 
             {a.status === "rejected" && a.cancelReason && (
               <p className="text-[12.5px] muted">Sabab: {a.cancelReason}</p>
+            )}
+
+            {a.status === "accepted" && !a.workerConfirmedDone && (
+              <button
+                type="button"
+                onClick={() => markDone(a)}
+                disabled={busyId === a.id}
+                className="btn-soft w-full !min-h-[42px]"
+              >
+                {busyId === a.id ? "..." : "Ishni bajardim"}
+              </button>
+            )}
+
+            {a.status === "accepted" && a.workerConfirmedDone && !a.employerConfirmedDone && (
+              <p className="text-[12.5px] subtle">
+                Siz tasdiqladingiz — ish beruvchining tasdig'i kutilmoqda.
+              </p>
             )}
 
             {canCancel && (

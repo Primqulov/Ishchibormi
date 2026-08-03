@@ -354,6 +354,72 @@ export function cancelApplication(id: string) {
   return api.post<Application>(`/api/applications/${id}/cancel`, {});
 }
 
+// ── Ish beruvchi tomoni: nomzodlar ───────────────────────────────────
+
+/**
+ * E'lonlarimga kelgan arizalar.
+ *
+ * DIQQAT: backend massiv emas, `{elonId: [ariza...]}` obyektini qaytaradi
+ * (apps/api → application.MyElonsApplications). Klientga qulay bo'lishi
+ * uchun uni e'lon bo'yicha guruhlar ro'yxatiga aylantiramiz.
+ */
+export async function fetchMyElonsApplications(): Promise<
+  { elonId: ID; elonTitle: string; apps: Application[] }[]
+> {
+  const grouped = await api.get<Record<string, Application[]>>("/api/my/elons/applications");
+  return Object.entries(grouped || {}).map(([elonId, apps]) => ({
+    elonId,
+    elonTitle: apps[0]?.elonTitle || "E'lon",
+    apps,
+  }));
+}
+
+/** Nomzodni qabul qilish. Qaytarib bo'lmaydi — tasdiqlash bilan chaqiriladi. */
+export const acceptApplication = (id: string) =>
+  api.post<Application>(`/api/applications/${id}/accept`, {});
+
+/** Nomzodni rad etish. */
+export const rejectApplication = (id: string) =>
+  api.post<Application>(`/api/applications/${id}/reject`, {});
+
+/**
+ * Ish bajarilganini tasdiqlash.
+ *
+ * Ikki tomon ham tasdiqlashi kerak (backend employerConfirmedDone va
+ * workerConfirmedDone ni alohida saqlaydi) — shundan keyingina ariza
+ * "completed" bo'ladi va baho qoldirish ochiladi.
+ */
+export const confirmDone = (id: string) =>
+  api.post<Application>(`/api/applications/${id}/confirm-done`, {});
+
+/** Ish yakunlangach baho va izoh qoldirish (1–5). */
+export const reviewApplication = (id: string, rating: number, comment?: string) =>
+  api.post<{ ok?: boolean }>(`/api/applications/${id}/review`, { rating, comment });
+
+// ── Ochiq profil ─────────────────────────────────────────────────────
+
+export const fetchPublicUser = (id: string) => api.get<User>(`/api/users/${id}`);
+
+export interface Review {
+  id: ID;
+  rating: number;
+  comment?: string;
+  authorName?: string;
+  authorAvatarUrl?: string;
+  createdAt: string;
+}
+
+export const fetchUserReviews = (id: string) =>
+  api.get<Review[]>(`/api/users/${id}/reviews`);
+
+// ── Shikoyat va murojaat ─────────────────────────────────────────────
+
+export const reportElon = (elonId: string, reason: string) =>
+  api.post<{ ok?: boolean }>("/api/reports", { targetType: "elon", targetId: elonId, reason });
+
+export const sendFeedback = (subject: string, message: string) =>
+  api.post<{ ok?: boolean }>("/api/feedback", { type: "suggestion", subject, message });
+
 // ── Bildirishnomalar ──────────────────────────────────────────────────
 
 export interface RelatedEntity {

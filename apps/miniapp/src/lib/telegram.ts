@@ -70,6 +70,7 @@ export type TelegramWebApp = {
   openLink(url: string, options?: { try_instant_view?: boolean }): void;
   openTelegramLink(url: string): void;
   showAlert?(message: string, cb?: () => void): void;
+  showConfirm?(message: string, cb?: (ok: boolean) => void): void;
   onEvent(event: string, cb: () => void): void;
   offEvent(event: string, cb: () => void): void;
 
@@ -233,4 +234,22 @@ export function openExternal(url: string) {
 export function alertUser(message: string) {
   if (tg?.showAlert) tg.showAlert(message);
   else window.alert(message);
+}
+
+/**
+ * Tasdiqlash oynasi — qaytarib bo'lmaydigan amallar oldidan.
+ *
+ * Telegram'ning nativ oynasi callback bilan ishlaydi, shuning uchun uni
+ * va'daga o'raymiz. `showConfirm` eski klientlarda yo'q — u holda brauzer
+ * `confirm` iga tushamiz, ya'ni tasdiqlash HAR DOIM so'raladi (jimgina
+ * o'tkazib yuborilmaydi: bu qabul qilish/rad etish kabi qaytmas amallar
+ * uchun yagona to'siq).
+ */
+export function confirmUser(message: string): Promise<boolean> {
+  if (tg?.showConfirm) {
+    return new Promise((resolve) => {
+      tg.showConfirm!(message, (ok) => resolve(Boolean(ok)));
+    });
+  }
+  return Promise.resolve(window.confirm(message));
 }

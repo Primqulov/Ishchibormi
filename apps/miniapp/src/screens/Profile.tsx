@@ -22,6 +22,7 @@ import {
   MapPinIcon,
   EditIcon,
   BriefcaseIcon,
+  UsersIcon,
   HistoryIcon,
   HelpIcon,
   ChevronRightIcon,
@@ -37,12 +38,14 @@ export function Profile({
   me,
   onEdit,
   onApplications,
+  onCandidates,
   onMyElons,
   onHistory,
 }: {
   me: User;
   onEdit: () => void;
   onApplications: () => void;
+  onCandidates: () => void;
   onMyElons: () => void;
   onHistory: () => void;
 }) {
@@ -119,6 +122,7 @@ export function Profile({
       <div className="card overflow-hidden">
         <MenuRow icon={<FileTextIcon size={18} />} label="Arizalarim" onClick={onApplications} />
         <MenuRow icon={<BriefcaseIcon size={18} />} label="E'lonlarim" onClick={onMyElons} />
+        <MenuRow icon={<UsersIcon size={18} />} label="Nomzodlar" onClick={onCandidates} />
         <MenuRow icon={<HistoryIcon size={18} />} label="Ish tarixi" onClick={onHistory} />
         <MenuRow icon={<EditIcon size={18} />} label="Shaxsiy ma'lumotlar" onClick={onEdit} />
         <MenuRow
