@@ -17,7 +17,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LocationPicker } from "@/components/LocationPicker";
-import { ImageIcon, TrashIcon, PlusIcon, XIcon } from "@/components/icons";
+import { ImageIcon, TrashIcon, PlusIcon } from "@/components/icons";
 import { Spinner } from "@/components/ui";
 import { fmtSum, fmtPhone, onlyDigits } from "@/lib/format";
 import { alertUser, haptic, showMainButton } from "@/lib/telegram";
@@ -46,12 +46,10 @@ const PRICING_LABEL: Record<Pricing, string> = {
 export function PostJob({
   myPhone,
   onCreated,
-  onClose,
 }: {
   /** Aloqa raqami sifatida oldindan to'ldiriladi. */
   myPhone?: string;
   onCreated: (e: Elon) => void;
-  onClose: () => void;
 }) {
   const [categories, setCategories] = useState<Category[] | null>(null);
 
@@ -167,27 +165,9 @@ export function PostJob({
 
   return (
     <div className="flex flex-col gap-5 px-4 pb-6 pt-4 animate-fade-in">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[22px] font-black leading-tight tracking-[-0.4px] heading">
-            Yangi e'lon
-          </h1>
-          <p className="mt-0.5 text-[12.5px] subtle">
-            Ish {MAX_SCHEDULE_DAYS} kun ichida boshlanishi kerak
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            haptic.tap();
-            onClose();
-          }}
-          aria-label="Yopish"
-          className="btn-ghost !min-h-[36px] shrink-0 !px-2"
-        >
-          <XIcon size={20} />
-        </button>
-      </div>
+      <p className="text-[13px] subtle">
+        Ish {MAX_SCHEDULE_DAYS} kun ichida boshlanishi kerak — bugun, ertaga yoki indinga.
+      </p>
 
       {/* ── Rasmlar ─────────────────────────────────────────────── */}
       <Field label="Rasmlar" hint={`ixtiyoriy, ${MAX_IMAGES} tagacha`}>

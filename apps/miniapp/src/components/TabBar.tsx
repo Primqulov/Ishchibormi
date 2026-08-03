@@ -14,14 +14,19 @@
  * pb-safe — iPhone'ning home indikatori ustidan qo'shimcha bo'shliq.
  */
 
-import { BriefcaseIcon, FileTextIcon, BellIcon, UserIcon } from "./icons";
+import { HomeIcon, BriefcaseIcon, BellIcon, UserIcon } from "./icons";
 import { haptic } from "@/lib/telegram";
 
-export type Tab = "feed" | "applications" | "notifications" | "profile";
+/**
+ * Tablar maketdagi tartibda: Asosiy · Ishlar · [E'lon] · Xabarlar · Profil.
+ * "Arizalarim" alohida tab emas — u Profil ichida, chunki maketda ham
+ * "Mening e'lonlarim va arizalarim" profildan ochiladigan ekran.
+ */
+export type Tab = "home" | "jobs" | "notifications" | "profile";
 
 const TABS: { id: Tab; label: string; Icon: (p: { size?: number }) => JSX.Element }[] = [
-  { id: "feed", label: "Ishlar", Icon: BriefcaseIcon },
-  { id: "applications", label: "Arizalarim", Icon: FileTextIcon },
+  { id: "home", label: "Asosiy", Icon: HomeIcon },
+  { id: "jobs", label: "Ishlar", Icon: BriefcaseIcon },
   { id: "notifications", label: "Xabarlar", Icon: BellIcon },
   { id: "profile", label: "Profil", Icon: UserIcon },
 ];
@@ -31,7 +36,6 @@ export function TabBar({
   onChange,
   onPost,
   unread,
-  pendingCount,
 }: {
   active: Tab;
   onChange: (t: Tab) => void;
@@ -39,23 +43,21 @@ export function TabBar({
   onPost: () => void;
   /** "Xabarlar" ustidagi nuqta — o'qilmagan bildirishnomalar soni. */
   unread?: number;
-  /** "Arizalarim" ustidagi nuqta — javob kutilayotgan arizalar soni. */
-  pendingCount?: number;
 }) {
   return (
     <nav
-      className="pb-safe fixed inset-x-0 bottom-0 z-30 backdrop-blur-md"
+      className="pb-safe fixed inset-x-0 bottom-0 z-30"
       style={{
-        borderTop: "1px solid var(--border)",
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        background: "color-mix(in srgb, var(--card) 94%, transparent)",
-        boxShadow: "0 -6px 24px rgba(10, 28, 48, 0.08)",
+        // Maketdan: yarim shaffof fon + blur, ustidan yengil soya.
+        borderTop: "1px solid color-mix(in srgb, var(--border) 35%, transparent)",
+        background: "color-mix(in srgb, var(--bg) 80%, transparent)",
+        backdropFilter: "blur(6px)",
+        boxShadow: "0 -8px 24px rgba(0, 0, 0, 0.08)",
       }}
     >
       <div className="relative mx-auto flex max-w-md items-stretch">
         <TabItem tab={TABS[0]} active={active} onChange={onChange} badge={undefined} />
-        <TabItem tab={TABS[1]} active={active} onChange={onChange} badge={pendingCount} />
+        <TabItem tab={TABS[1]} active={active} onChange={onChange} badge={undefined} />
 
         {/* O'rtadagi slot: yozuv shu yerda, doira esa ustida "suzadi". */}
         <div className="relative flex flex-1 flex-col items-center justify-end pb-1.5">
@@ -92,7 +94,7 @@ function TabItem({
       }}
       // min-h-[52px]: teginish maydoni barmoq uchun yetarli bo'lsin.
       className="relative flex min-h-[52px] flex-1 flex-col items-center justify-center gap-1 pt-1.5 transition"
-      style={{ color: on ? "var(--brand)" : "var(--text-subtle)" }}
+      style={{ color: on ? "var(--brand)" : "var(--text-muted)" }}
       aria-current={on ? "page" : undefined}
     >
       <span className="relative">

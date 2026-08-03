@@ -15,6 +15,7 @@ import {
   MapPinIcon,
   EditIcon,
   BriefcaseIcon,
+  FileTextIcon,
   HistoryIcon,
   ChevronRightIcon,
 } from "@/components/icons";
@@ -28,11 +29,13 @@ const SUPPORT = "Ishchi_bormi_support";
 export function Profile({
   me,
   onEdit,
+  onApplications,
   onMyElons,
   onHistory,
 }: {
   me: User;
   onEdit: () => void;
+  onApplications: () => void;
   onMyElons: () => void;
   onHistory: () => void;
 }) {
@@ -91,6 +94,12 @@ export function Profile({
 
       {/* Bo'limlar */}
       <div className="card flex flex-col divide-y" style={{ borderColor: "var(--border)" }}>
+        <MenuRow
+          icon={<FileTextIcon size={18} />}
+          label="Arizalarim"
+          hint="Yuborgan arizalaringiz va ularning holati"
+          onClick={onApplications}
+        />
         <MenuRow
           icon={<BriefcaseIcon size={18} />}
           label="E'lonlarim"

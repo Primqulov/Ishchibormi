@@ -58,6 +58,12 @@ export const SearchIcon = svg(
   </>,
 );
 
+export const HomeIcon = svg(
+  <>
+    <path d="M3 10.2 12 3l9 7.2V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.8Z" />
+  </>,
+);
+
 export const BriefcaseIcon = svg(
   <>
     <rect width="20" height="14" x="2" y="7" rx="2" />
@@ -185,6 +191,70 @@ export const CrosshairIcon = svg(
     <circle cx="12" cy="12" r="2.5" />
     <path d="M12 1v3M12 20v3M1 12h3M20 12h3" />
   </>,
+);
+
+/** Qidiruv maydonidagi filtr tugmasi (maketda dumaloq ko'k fonda). */
+export const SlidersIcon = svg(
+  <>
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+    <path d="M1 14h6M9 8h6M17 16h6" />
+  </>,
+);
+
+export const ShareIcon = svg(
+  <>
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" />
+  </>,
+);
+
+export const MessageIcon = svg(
+  <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 4 11.5a8.4 8.4 0 0 1 8.5-8.4 8.4 8.4 0 0 1 8.5 8.4Z" />,
+);
+
+// ── Kategoriya glifi ─────────────────────────────────────────────────
+// Maketda har turkum o'z ikonkasi bilan plitkada turadi. Kutubxona
+// o'rniga yana qo'lda — bu yerda kerak bo'lgani atigi bir nechtasi.
+
+/** Tozalash — supurgi. */
+export const BroomIcon = svg(
+  <>
+    <path d="M19 3 12 10" />
+    <path d="M8.5 10.5h7l1.5 5c.2.7-.3 1.5-1.1 1.5H8.1c-.8 0-1.3-.8-1.1-1.5l1.5-5Z" />
+    <path d="M9 17v4M12 17v4M15 17v4" />
+  </>,
+);
+
+/** Yuk tashish — yuk mashinasi. */
+export const TruckIcon = svg(
+  <>
+    <path d="M2 7h11v9H2zM13 10h4l3 3v3h-7z" />
+    <circle cx="6" cy="18" r="2" />
+    <circle cx="17" cy="18" r="2" />
+  </>,
+);
+
+/** Qurilish — asboblar. */
+export const ToolsIcon = svg(
+  <>
+    <path d="M14.7 6.3a4 4 0 0 0 5 5L15 16l-2-2 1.7-7.7Z" />
+    <path d="m9 11-6 6a2 2 0 0 0 3 3l6-6" />
+  </>,
+);
+
+/** Yetkazish — quti. */
+export const PackageIcon = svg(
+  <>
+    <path d="m21 8-9-5-9 5v8l9 5 9-5V8Z" />
+    <path d="m3 8 9 5 9-5M12 13v8" />
+  </>,
+);
+
+/** Santexnika — kalit. */
+export const WrenchIcon = svg(
+  <path d="M14.7 6.3a4 4 0 1 0-5.4 5.4l-6 6a2 2 0 1 0 3 3l6-6a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-2.4 2.6-2.2Z" />,
 );
 
 export const MoneyIcon = svg(

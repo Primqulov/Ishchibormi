@@ -8,8 +8,8 @@
  * tushadi).
  *
  * Tuzilishi ikki qavatli:
- *   - pastda TAB (ro'yxat, arizalar, xabarlar, profil) — TabBar bilan;
- *   - ustida OVERLAY STEKI (e'lon, e'lon berish, profil tahriri, ...).
+ *   - pastda TAB (Asosiy, Ishlar, Xabarlar, Profil) — TabBar bilan;
+ *   - ustida OVERLAY STEKI (e'lon, e'lon berish, arizalarim, ...).
  * Har overlay bitta tarix yozuvi ochadi, "orqaga" esa bittasini yopadi —
  * shu bir-birga moslik tufayli foydalanuvchi hech qachon ilovadan tasodifan
  * chiqib ketmaydi.
@@ -17,12 +17,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { TabBar, type Tab } from "@/components/TabBar";
+import { AppHeader, ScreenHeader } from "@/components/AppHeader";
 import { ErrorState, Spinner } from "@/components/ui";
-import { ListIcon, MapIcon } from "@/components/icons";
 import { Feed } from "@/screens/Feed";
 import { History } from "@/screens/History";
 import { JobDetail } from "@/screens/JobDetail";
-import { MapView } from "@/screens/MapView";
+import { Jobs } from "@/screens/Jobs";
 import { MyApplications } from "@/screens/MyApplications";
 import { MyElons } from "@/screens/MyElons";
 import { Notifications } from "@/screens/Notifications";
@@ -32,14 +32,13 @@ import { ProfileEdit } from "@/screens/ProfileEdit";
 import { Register } from "@/screens/Register";
 import {
   fetchMe,
-  fetchMyApplications,
   fetchNotifications,
   getAccess,
   loginWithInitData,
   type APIError,
   type User,
 } from "@/lib/api";
-import { haptic, isTelegram, showBackButton } from "@/lib/telegram";
+import { isTelegram, showBackButton } from "@/lib/telegram";
 
 type Gate =
   | { state: "loading" }
@@ -52,21 +51,23 @@ type Overlay =
   | { kind: "job"; id: string }
   | { kind: "post" }
   | { kind: "edit" }
+  | { kind: "applications" }
   | { kind: "myElons" }
   | { kind: "history" };
 
-const TAB_TITLE: Record<Tab, string> = {
-  feed: "Ishlar",
+const OVERLAY_TITLE: Record<Overlay["kind"], string> = {
+  job: "Ish tafsilotlari",
+  post: "Yangi e'lon",
+  edit: "Profilni tahrirlash",
   applications: "Arizalarim",
-  notifications: "Xabarlar",
-  profile: "Profil",
+  myElons: "E'lonlarim",
+  history: "Ish tarixi",
 };
 
 export default function App() {
   const [gate, setGate] = useState<Gate>({ state: "loading" });
-  const [tab, setTab] = useState<Tab>("feed");
+  const [tab, setTab] = useState<Tab>("home");
   const [stack, setStack] = useState<Overlay[]>([]);
-  const [feedMode, setFeedMode] = useState<"list" | "map">("list");
 
   // Ro'yxatlarni tashqaridan yangilashga majburlovchi hisoblagichlar.
   const [appsVersion, setAppsVersion] = useState(0);
@@ -74,7 +75,6 @@ export default function App() {
   const [notifVersion, setNotifVersion] = useState(0);
 
   const [unread, setUnread] = useState(0);
-  const [pending, setPending] = useState(0);
 
   // ── Kirish ────────────────────────────────────────────────────────
   const authenticate = useCallback(async () => {
@@ -127,17 +127,15 @@ export default function App() {
     void authenticate();
   }, [authenticate]);
 
-  // Tab bar belgilari. Xatosi jimgina yutiladi — belgi ko'rinmasligi
-  // ilovaning ishlashiga to'sqinlik qilmaydi.
+  // O'qilmagan bildirishnomalar soni — tepadagi qo'ng'iroq va tab belgisi
+  // uchun. Xatosi jimgina yutiladi: belgi ko'rinmasligi ilovaning ishlashiga
+  // to'sqinlik qilmaydi.
   useEffect(() => {
     if (gate.state !== "ready") return;
     fetchNotifications()
       .then((list) => setUnread((list || []).filter((n) => !n.isRead).length))
       .catch(() => {});
-    fetchMyApplications()
-      .then((list) => setPending((list || []).filter((a) => a.status === "pending").length))
-      .catch(() => {});
-  }, [gate.state, notifVersion, appsVersion]);
+  }, [gate.state, notifVersion]);
 
   // ── Navigatsiya ───────────────────────────────────────────────────
 
@@ -161,6 +159,7 @@ export default function App() {
   }, []);
 
   const openJob = useCallback((id: string) => push({ kind: "job", id }), [push]);
+  const openPost = useCallback(() => push({ kind: "post" }), [push]);
 
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
@@ -224,44 +223,40 @@ export default function App() {
   return (
     <Screen>
       {top ? (
-        <Overlays
-          top={top}
-          me={me}
-          onOpenJob={openJob}
-          onClose={close}
-          onApplied={() => setAppsVersion((n) => n + 1)}
-          onCreated={() => {
-            setElonsVersion((n) => n + 1);
-            close();
-          }}
-          onSaved={(u) => {
-            setGate({ state: "ready", me: u });
-            close();
-          }}
-          onPost={() => push({ kind: "post" })}
-          elonsVersion={elonsVersion}
-        />
+        <>
+          <ScreenHeader title={OVERLAY_TITLE[top.kind]} />
+          <Overlays
+            top={top}
+            me={me}
+            onOpenJob={openJob}
+            onApplied={() => setAppsVersion((n) => n + 1)}
+            onCreated={() => {
+              setElonsVersion((n) => n + 1);
+              close();
+            }}
+            onSaved={(u) => {
+              setGate({ state: "ready", me: u });
+              close();
+            }}
+            onPost={openPost}
+            appsVersion={appsVersion}
+            elonsVersion={elonsVersion}
+          />
+        </>
       ) : (
         <>
-          <Header
-            title={TAB_TITLE[tab]}
-            action={
-              tab === "feed" ? (
-                <ModeToggle mode={feedMode} onChange={setFeedMode} />
-              ) : undefined
-            }
-          />
+          <AppHeader unread={unread} onBell={() => changeTab("notifications")} />
 
-          {tab === "feed" &&
-            (feedMode === "map" ? (
-              <MapView onOpenJob={openJob} />
-            ) : (
-              <Feed onOpenJob={openJob} />
-            ))}
-
-          {tab === "applications" && (
-            <MyApplications onOpenJob={openJob} reloadKey={appsVersion} />
+          {tab === "home" && (
+            <Feed
+              me={me}
+              onOpenJob={openJob}
+              onPost={openPost}
+              onShowAll={() => changeTab("jobs")}
+            />
           )}
+
+          {tab === "jobs" && <Jobs onOpenJob={openJob} />}
 
           {tab === "notifications" && (
             <Notifications
@@ -275,6 +270,7 @@ export default function App() {
             <Profile
               me={me}
               onEdit={() => push({ kind: "edit" })}
+              onApplications={() => push({ kind: "applications" })}
               onMyElons={() => push({ kind: "myElons" })}
               onHistory={() => push({ kind: "history" })}
             />
@@ -285,13 +281,7 @@ export default function App() {
       {/* Overlay ochiq bo'lganda tab bar yashiriladi: pastda Telegram'ning
           MainButton'i turadi va ikkalasi bir joyga to'g'ri kelib qolardi. */}
       {!top && (
-        <TabBar
-          active={tab}
-          onChange={changeTab}
-          onPost={() => push({ kind: "post" })}
-          unread={unread}
-          pendingCount={pending}
-        />
+        <TabBar active={tab} onChange={changeTab} onPost={openPost} unread={unread} />
       )}
     </Screen>
   );
@@ -302,44 +292,36 @@ function Overlays({
   top,
   me,
   onOpenJob,
-  onClose,
   onApplied,
   onCreated,
   onSaved,
   onPost,
+  appsVersion,
   elonsVersion,
 }: {
   top: Overlay;
   me: User;
   onOpenJob: (id: string) => void;
-  onClose: () => void;
   onApplied: () => void;
   onCreated: () => void;
   onSaved: (u: User) => void;
   onPost: () => void;
+  appsVersion: number;
   elonsVersion: number;
 }) {
   switch (top.kind) {
     case "job":
       return <JobDetail id={top.id} onApplied={onApplied} />;
     case "post":
-      return <PostJob myPhone={me.phone} onCreated={onCreated} onClose={onClose} />;
+      return <PostJob myPhone={me.phone} onCreated={onCreated} />;
     case "edit":
-      return <ProfileEdit me={me} onSaved={onSaved} onClose={onClose} />;
+      return <ProfileEdit me={me} onSaved={onSaved} />;
+    case "applications":
+      return <MyApplications onOpenJob={onOpenJob} reloadKey={appsVersion} />;
     case "myElons":
-      return (
-        <>
-          <Header title="E'lonlarim" />
-          <MyElons onOpenJob={onOpenJob} onPost={onPost} reloadKey={elonsVersion} />
-        </>
-      );
+      return <MyElons onOpenJob={onOpenJob} onPost={onPost} reloadKey={elonsVersion} />;
     case "history":
-      return (
-        <>
-          <Header title="Ish tarixi" />
-          <History myId={me.id} onOpenJob={onOpenJob} />
-        </>
-      );
+      return <History myId={me.id} onOpenJob={onOpenJob} />;
   }
 }
 
@@ -358,54 +340,6 @@ function Screen({ children }: { children: React.ReactNode }) {
       style={{ minHeight: "var(--tg-vh)" }}
     >
       {children}
-    </div>
-  );
-}
-
-function Header({ title, action }: { title: string; action?: React.ReactNode }) {
-  return (
-    <header className="flex items-center justify-between gap-3 px-4 pt-5">
-      <h1 className="text-[26px] font-black leading-tight tracking-[-0.5px] heading">
-        {title}
-      </h1>
-      {action}
-    </header>
-  );
-}
-
-/** Ro'yxat ↔ xarita almashtirgichi. */
-function ModeToggle({
-  mode,
-  onChange,
-}: {
-  mode: "list" | "map";
-  onChange: (m: "list" | "map") => void;
-}) {
-  return (
-    <div className="surface flex shrink-0 items-center gap-0.5 p-1">
-      {(["list", "map"] as const).map((m) => {
-        const on = mode === m;
-        return (
-          <button
-            key={m}
-            type="button"
-            onClick={() => {
-              if (!on) haptic.select();
-              onChange(m);
-            }}
-            aria-label={m === "list" ? "Ro'yxat" : "Xarita"}
-            aria-pressed={on}
-            className="grid h-8 w-9 place-items-center rounded-md transition"
-            style={
-              on
-                ? { background: "var(--brand)", color: "#fff" }
-                : { color: "var(--text-subtle)" }
-            }
-          >
-            {m === "list" ? <ListIcon size={16} /> : <MapIcon size={16} />}
-          </button>
-        );
-      })}
     </div>
   );
 }

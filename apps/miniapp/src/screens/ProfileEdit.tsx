@@ -26,11 +26,9 @@ const MAX_SKILLS = 10;
 export function ProfileEdit({
   me,
   onSaved,
-  onClose,
 }: {
   me: User;
   onSaved: (u: User) => void;
-  onClose: () => void;
 }) {
   const [firstName, setFirstName] = useState(me.firstName || "");
   const [lastName, setLastName] = useState(me.lastName || "");
@@ -115,23 +113,6 @@ export function ProfileEdit({
 
   return (
     <div className="flex flex-col gap-5 px-4 pb-6 pt-4 animate-fade-in">
-      <div className="flex items-start justify-between gap-3">
-        <h1 className="text-[22px] font-black leading-tight tracking-[-0.4px] heading">
-          Profilni tahrirlash
-        </h1>
-        <button
-          type="button"
-          onClick={() => {
-            haptic.tap();
-            onClose();
-          }}
-          aria-label="Yopish"
-          className="btn-ghost !min-h-[36px] shrink-0 !px-2"
-        >
-          <XIcon size={20} />
-        </button>
-      </div>
-
       {/* Avatar */}
       <div className="flex flex-col items-center gap-3">
         <button

@@ -1,18 +1,30 @@
 /**
- * Ishlar ro'yxati — ilovaning bosh ekrani.
+ * Bosh sahifa — Figma maketidagi "Bosh sahifa".
  *
- * Mobil uchun muhim tafsilotlar:
- *  - qidiruv 300 ms debounce bilan (har harfda so'rov yubormaslik uchun —
- *    sekin tarmoqda bu sezilarli farq);
- *  - cheksiz scroll IntersectionObserver orqali ("Yana" tugmasini bosishdan
- *    ko'ra tabiiyroq va bir qo'lda qulay);
+ * Tartibi maketdan: salomlashuv → qidiruv → promo banner → turkumlar →
+ * "Yangi e'lonlar" ro'yxati. Ishchi ilovani ochganda birinchi ko'radigan
+ * narsa o'z ismi va qidiruv bo'ladi, e'lonlar esa darhol pastda.
+ *
+ * Mobil uchun muhim tafsilotlar (maketda ko'rinmaydi, lekin kerak):
+ *  - qidiruv 300 ms debounce bilan — har harfda so'rov yubormaslik uchun;
+ *  - cheksiz scroll IntersectionObserver orqali ("Yana" tugmasidan tabiiyroq);
  *  - birinchi yuklashda skeletonlar, keyingi sahifalarda pastda spinner.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { JobCard } from "@/components/JobCard";
-import { SearchIcon, BriefcaseIcon } from "@/components/icons";
+import {
+  BriefcaseIcon,
+  BroomIcon,
+  PackageIcon,
+  SearchIcon,
+  SlidersIcon,
+  ToolsIcon,
+  TruckIcon,
+  WrenchIcon,
+} from "@/components/icons";
 import { EmptyState, ErrorState, ListSkeleton, Spinner } from "@/components/ui";
+import { catTone } from "@/lib/cat-color";
 import {
   fetchCategories,
   fetchFeed,
@@ -20,10 +32,38 @@ import {
   type APIError,
   type Category,
   type Elon,
+  type User,
 } from "@/lib/api";
 import { haptic } from "@/lib/telegram";
 
-export function Feed({ onOpenJob }: { onOpenJob: (id: string) => void }) {
+/**
+ * Turkum → glif. Nomi ro'yxatda bo'lmasa portfel ishlatiladi — yangi turkum
+ * qo'shilganda ilova buzilmaydi, shunchaki umumiy ikonka bilan chiqadi.
+ */
+const CAT_ICON: Record<string, (p: { size?: number }) => JSX.Element> = {
+  tozalash: BroomIcon,
+  "yuk tashish": TruckIcon,
+  qurilish: ToolsIcon,
+  yetkazish: PackageIcon,
+  santexnika: WrenchIcon,
+};
+
+function catIcon(name: string) {
+  return CAT_ICON[name.trim().toLowerCase()] || BriefcaseIcon;
+}
+
+export function Feed({
+  me,
+  onOpenJob,
+  onPost,
+  onShowAll,
+}: {
+  me: User;
+  onOpenJob: (id: string) => void;
+  onPost: () => void;
+  /** "Barchasi" / "Barcha e'lonlarni ko'rish" — filtrsiz to'liq ro'yxatga. */
+  onShowAll: () => void;
+}) {
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
@@ -123,82 +163,165 @@ export function Feed({ onOpenJob }: { onOpenJob: (id: string) => void }) {
     return () => io.disconnect();
   }, [loadMore]);
 
+  const filtering = Boolean(debouncedQ || categoryId);
+
   return (
-    <div className="flex flex-col gap-4 px-4 pt-4">
-      {/* Qidiruv */}
-      <div className="relative">
-        <SearchIcon
-          size={17}
-          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 subtle"
-        />
+    <div className="flex flex-col gap-6 px-4 pb-4 pt-4">
+      {/* ── Salomlashuv ─────────────────────────────────────────── */}
+      <div className="flex flex-col gap-1">
+        <h2 className="text-[24px] font-bold leading-8 tracking-[-0.24px] heading">
+          Assalomu alaykum, {me.firstName || "do'stim"}!
+        </h2>
+        <p className="text-[16px] leading-6 muted">Bugun qanday ishlar bor?</p>
+      </div>
+
+      {/* ── Qidiruv ─────────────────────────────────────────────── */}
+      <div className="search-pill">
+        <SearchIcon size={18} className="shrink-0 subtle" />
         <input
-          className="input !pl-11"
           placeholder="Ish qidirish..."
           value={q}
           onChange={(e) => setQ(e.target.value)}
           type="search"
           enterKeyHint="search"
           autoComplete="off"
+          aria-label="Ish qidirish"
         />
+        <button
+          type="button"
+          onClick={() => {
+            haptic.select();
+            onShowAll();
+          }}
+          aria-label="Filtrlar"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full transition active:scale-90"
+          style={{ background: "var(--brand-100)", color: "var(--brand)" }}
+        >
+          <SlidersIcon size={14} />
+        </button>
       </div>
 
-      {/* Turkumlar — gorizontal surilib ketadigan qator */}
-      {categories.length > 0 && (
-        <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+      {/* ── Promo banner ────────────────────────────────────────── */}
+      <section className="promo">
+        {/* Burchakdagi bezak doira (maketda 128px, 20% shaffof). */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-4 -right-4 h-32 w-32 rounded-full"
+          style={{ background: "rgba(255,255,255,.2)" }}
+        />
+        <div className="relative flex max-w-[210px] flex-col gap-3">
+          <h3 className="text-[20px] font-semibold leading-[25px] text-white">
+            Yangi vazifangiz bormi?
+          </h3>
+          <p className="text-[14px] leading-5" style={{ color: "#EAF1FF" }}>
+            Tez va oson ishchi toping.
+          </p>
           <button
             type="button"
             onClick={() => {
-              haptic.select();
-              setCategoryId("");
+              haptic.tap();
+              onPost();
             }}
-            className={`chip ${categoryId === "" ? "chip-active" : ""}`}
+            className="self-start rounded-lg bg-white px-4 py-2 text-[16px] font-semibold leading-5 transition active:scale-95"
+            style={{ color: "var(--brand)", boxShadow: "0 1px 1px rgba(0,0,0,.05)" }}
           >
-            Hammasi
+            E'lon berish
           </button>
-          {categories.map((c) => (
+        </div>
+      </section>
+
+      {/* ── Turkumlar ───────────────────────────────────────────── */}
+      {categories.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-[20px] font-semibold leading-7 heading">Kategoriyalar</h3>
             <button
-              key={c.id}
               type="button"
               onClick={() => {
                 haptic.select();
-                setCategoryId((prev) => (prev === c.id ? "" : c.id));
+                setCategoryId("");
+                onShowAll();
               }}
-              className={`chip ${categoryId === c.id ? "chip-active" : ""}`}
+              className="text-[16px] font-semibold leading-5"
+              style={{ color: "var(--brand)" }}
             >
-              {c.name}
+              Barchasi
             </button>
-          ))}
-        </div>
+          </div>
+
+          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-2">
+            {categories.map((c) => {
+              const Icon = catIcon(c.name);
+              const tone = catTone(c.name);
+              const on = categoryId === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    haptic.select();
+                    setCategoryId((prev) => (prev === c.id ? "" : c.id));
+                  }}
+                  className="flex w-[72px] shrink-0 flex-col items-center gap-2"
+                  aria-pressed={on}
+                >
+                  <span
+                    className="cat-tile"
+                    style={
+                      on
+                        ? { background: "var(--brand)", color: "#fff" }
+                        : { background: tone.bg, color: tone.fg }
+                    }
+                  >
+                    <Icon size={26} />
+                  </span>
+                  <span className="text-center text-[12px] font-semibold leading-[15px] tracking-[0.6px] heading">
+                    {c.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       )}
 
-      {/* Ro'yxat */}
-      {loading ? (
-        <ListSkeleton count={4} />
-      ) : error ? (
-        <ErrorState error={error} onRetry={() => setReload((n) => n + 1)} />
-      ) : items.length === 0 ? (
-        <EmptyState
-          icon={<BriefcaseIcon size={26} />}
-          title="E'lon topilmadi"
-          hint={
-            debouncedQ || categoryId
-              ? "Qidiruv shartlarini o'zgartirib ko'ring."
-              : "Hozircha faol e'lonlar yo'q. Birozdan keyin qayta kiring."
-          }
-        />
-      ) : (
-        <div className="flex flex-col gap-3">
-          {items.map((e) => (
-            <JobCard key={e.id} e={e} onOpen={onOpenJob} />
-          ))}
+      {/* ── E'lonlar ────────────────────────────────────────────── */}
+      <section className="flex flex-col gap-4">
+        <h3 className="px-1 text-[20px] font-semibold leading-7 heading">
+          {filtering ? "Topilgan e'lonlar" : "Yangi e'lonlar"}
+        </h3>
 
-          <div ref={sentinel} aria-hidden="true" />
-          {loadingMore && <Spinner />}
-          {!hasMore && items.length > FEED_PAGE_SIZE && (
-            <p className="py-4 text-center text-[12.5px] subtle">Barcha e'lonlar ko'rsatildi</p>
-          )}
-        </div>
-      )}
+        {loading ? (
+          <ListSkeleton count={3} />
+        ) : error ? (
+          <ErrorState error={error} onRetry={() => setReload((n) => n + 1)} />
+        ) : items.length === 0 ? (
+          <EmptyState
+            icon={<BriefcaseIcon size={26} />}
+            title="E'lon topilmadi"
+            hint={
+              filtering
+                ? "Qidiruv shartlarini o'zgartirib ko'ring."
+                : "Hozircha faol e'lonlar yo'q. Birozdan keyin qayta kiring."
+            }
+          />
+        ) : (
+          <div className="flex flex-col gap-3">
+            {items.map((e) => (
+              <JobCard key={e.id} e={e} onOpen={onOpenJob} />
+            ))}
+
+            <div ref={sentinel} aria-hidden="true" />
+            {loadingMore && <Spinner />}
+
+            {!hasMore && items.length > FEED_PAGE_SIZE && (
+              <p className="py-2 text-center text-[12.5px] subtle">
+                Barcha e'lonlar ko'rsatildi
+              </p>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
