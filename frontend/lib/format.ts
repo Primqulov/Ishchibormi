@@ -1,9 +1,11 @@
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import "dayjs/locale/uz";
+import "dayjs/locale/uz-latn";
 
 dayjs.extend(relativeTime);
-dayjs.locale("uz");
+// Interfeys lotin yozuvida bo'lgani uchun nisbiy vaqt ham lotinda ko'rsatiladi
+// (dayjs'ning "uz" lokali kirillcha matn qaytaradi).
+dayjs.locale("uz-latn");
 
 // fmtSum minglik xonalarni probel bilan ajratadi: 150000 -> "150 000".
 // toLocaleString muhitga bog'liq bo'lgani uchun qo'lda guruhlaymiz.
@@ -54,4 +56,29 @@ export function fromNow(iso: string): string {
 export function fmtDate(iso?: string): string {
   if (!iso) return "";
   return dayjs(iso).format("D MMMM YYYY");
+}
+
+// Xarita pinlari uchun qisqa narx: 200000 -> "200k", 1500000 -> "1.5mln".
+export function fmtCompactSum(n: number): string {
+  if (!n || n < 0) return "—";
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `${m % 1 === 0 ? m : m.toFixed(1)}mln`;
+  }
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+// Ish qachon boshlanishi: "Bugun 14:00", "Ertaga 09:00", "12 avgust 09:00".
+export function fmtWhen(startDate?: string, timeFrom?: string): string {
+  if (!startDate) return timeFrom || "";
+  const d = dayjs(startDate).startOf("day");
+  const diff = d.diff(dayjs().startOf("day"), "day");
+  const day = diff === 0 ? "Bugun" : diff === 1 ? "Ertaga" : dayjs(startDate).format("D MMMM");
+  return timeFrom ? `${day} ${timeFrom}` : day;
+}
+
+// Masofa: 0.84 -> "840 m", 3.42 -> "3.4 km".
+export function fmtKm(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 }

@@ -14,19 +14,18 @@ const ts = { xs: 11, sm: 12, md: 14, lg: 18, xl: 24 } as const;
 
 function initials(name?: string) {
   if (!name) return "?";
-  const parts = name.trim().split(/\s+/);
-  const a = parts[0]?.[0] || "";
-  const b = parts[1]?.[0] || "";
-  return (a + b).toUpperCase() || a.toUpperCase() || "?";
+  // Ism o'rniga telefon raqami kelib qolsa ("+998…"), undan "+9" kabi bosh
+  // harf yasamaymiz — faqat harflarni hisobga olamiz.
+  const parts = name.trim().split(/\s+/).filter((p) => /\p{L}/u.test(p));
+  const a = parts[0]?.match(/\p{L}/u)?.[0] || "";
+  const b = parts[1]?.match(/\p{L}/u)?.[0] || "";
+  return (a + b).toUpperCase() || "?";
 }
 
-// Deterministic color based on name — gives users a consistent color identity.
-function colorFor(name?: string) {
-  if (!name) return { bg: "var(--brand)", fg: "#fff" };
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  const hue = h % 360;
-  return { bg: `hsl(${hue}, 55%, 38%)`, fg: "#fff" };
+// Figma dizaynida avatar doim bir xil: ochiq ko'k fon (bg/blue-100) va
+// primary/blue harflar. Shuning uchun rang nomga qarab o'zgarmaydi.
+function colorFor(_name?: string) {
+  return { bg: "var(--brand-100)", fg: "var(--brand)" };
 }
 
 export function Avatar({ name, src, size = "md", online }: Props) {
@@ -45,7 +44,7 @@ export function Avatar({ name, src, size = "md", online }: Props) {
         />
       ) : (
         <div
-          className="rounded-full grid place-items-center font-semibold tracking-wide"
+          className="rounded-full grid place-items-center font-bold"
           style={{ width: px, height: px, background: bg, color: fg, fontSize: fs }}
         >
           {initials(name)}

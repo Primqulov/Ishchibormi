@@ -10,6 +10,18 @@ export const CONTACT = {
 
 export type SocialLink = { label: string; href: string };
 
+// Ro'yxatdan o'tish (OTP) boti — foydalanuvchi Telegramga yo'naltiriladigan
+// barcha joylar (login, landing, bildirishnomalar) shu yagona manbadan oladi.
+// Zaxira qiymat — HAQIQIY produksiya boti; NEXT_PUBLIC_BOT_USERNAME orqali
+// (masalan test botga) qayta yo'naltirish mumkin.
+export const AUTH_BOT_USERNAME =
+  process.env.NEXT_PUBLIC_BOT_USERNAME || "Ishchi_bormi_auth_bot";
+
+export const AUTH_BOT: SocialLink = {
+  label: `@${AUTH_BOT_USERNAME}`,
+  href: `https://t.me/${AUTH_BOT_USERNAME}`,
+};
+
 export const SOCIAL = {
   // Rasmiy Telegram kanali
   telegram: { label: "@Ishchibormi", href: "https://t.me/Ishchibormi" },

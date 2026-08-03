@@ -6,10 +6,11 @@ import {
   Mail, Instagram, Youtube, LifeBuoy,
 } from "lucide-react";
 import { CONTACT, SOCIAL } from "@/lib/contact";
-import { ScriptToggle } from "@/components/ScriptToggle";
+import { LangMenu } from "@/components/LangMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { T } from "@/components/T";
 import { getAccess } from "@/lib/api";
+import { Logo } from "@/components/Logo";
 
 const HERO_BG =
   "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1600&q=70";
@@ -22,9 +23,9 @@ export default function AboutPage() {
       {/* ── Top nav ─────────────────────── */}
       <header className="border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
         <div className="mx-auto max-w-6xl flex items-center justify-between px-4 py-3">
-          <Link href="/" className="font-extrabold text-xl heading">Ishchi Bormi</Link>
+          <Logo />
           <div className="flex items-center gap-3">
-            <ScriptToggle />
+            <LangMenu />
             <ThemeToggle />
             <Link href={ctaHref} className="btn-primary"><T>Kirish</T></Link>
           </div>

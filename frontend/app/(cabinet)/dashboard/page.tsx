@@ -2,228 +2,296 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { MapPin, Clock, Share2, ArrowUpRight, Briefcase, SlidersHorizontal, X } from "lucide-react";
-import { api, Category, Elon, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
-import { Shell, ShellSearch } from "@/components/Shell";
+import { useRouter } from "next/navigation";
+import { ArrowRight, Briefcase, MapPin, Search } from "lucide-react";
+import { api, Application, Category, Elon, User } from "@/lib/api";
+import { Shell } from "@/components/Shell";
+import { JobCard } from "@/components/JobCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CardSkeleton } from "@/components/ui/Skeleton";
-import { Select, TextInput } from "@/components/ui/Input";
-import { Avatar } from "@/components/ui/Avatar";
-import { ShareModal } from "@/components/ShareModal";
 import { T, useT } from "@/components/T";
-import { fmtSumSom, fromNow, onlyDigits, fmtThousands } from "@/lib/format";
+import { fmtSum } from "@/lib/format";
 import { REGIONS } from "@/lib/regions";
 
+/** Figma "03 · Bosh sahifa": ko'k hero + statistika + kategoriyalar + yangi e'lonlar. */
 export default function Dashboard() {
   const t = useT();
+  const router = useRouter();
   const [q, setQ] = useState("");
-  const [cat, setCat] = useState<string>("");
-  const [gender, setGender] = useState<string>(""); // "" = barchasi
-  const [sort, setSort] = useState<string>("time");
-  const [region, setRegion] = useState<string>("");
-  const [minPrice, setMinPrice] = useState<string>("");
-  const [maxPrice, setMaxPrice] = useState<string>("");
-  const [showFilters, setShowFilters] = useState(false);
+  const [region, setRegion] = useState("");
 
-  // Faol (bo'sh bo'lmagan) filtrlar soni — "Filtr" tugmasidagi belgi uchun.
-  const activeFilters = [region, minPrice, maxPrice].filter(Boolean).length;
-
+  const { data: me } = useQuery<User>({ queryKey: ["me"], queryFn: () => api.get<User>("/api/me") });
   const { data: cats } = useQuery<Category[]>({
     queryKey: ["categories"],
     queryFn: () => api.get<Category[]>("/api/categories"),
   });
-  const { data, isLoading } = useQuery<{ items: Elon[] }>({
-    queryKey: ["feed", q, cat, gender, sort, region, minPrice, maxPrice],
-    queryFn: () => {
-      const p = new URLSearchParams();
-      if (q) p.set("q", q);
-      if (cat) p.set("categoryId", cat);
-      if (gender) p.set("gender", gender);
-      if (sort) p.set("sort", sort);
-      if (region) p.set("region", region);
-      if (minPrice) p.set("minPrice", onlyDigits(minPrice));
-      if (maxPrice) p.set("maxPrice", onlyDigits(maxPrice));
-      return api.get<{ items: Elon[] }>(`/api/elons?${p.toString()}`);
-    },
+  const { data: feed, isLoading } = useQuery<{ items: Elon[] }>({
+    queryKey: ["feed-latest"],
+    queryFn: () => api.get<{ items: Elon[] }>("/api/elons?sort=time&limit=6"),
+  });
+  const { data: mine } = useQuery<Application[]>({
+    queryKey: ["my-applications"],
+    queryFn: () => api.get<Application[]>("/api/my/applications"),
+  });
+  const { data: received } = useQuery<Record<string, Application[]>>({
+    queryKey: ["my-elons-applications"],
+    queryFn: () => api.get<Record<string, Application[]>>("/api/my/elons/applications"),
+  });
+  const { data: myElons } = useQuery<{ active: Elon[]; archived: Elon[] }>({
+    queryKey: ["my-elons"],
+    queryFn: () => api.get<{ active: Elon[]; archived: Elon[] }>("/api/my/elons"),
   });
 
-  const items = data?.items || [];
-  const search = <ShellSearch value={q} onChange={setQ} placeholder={t("Xizmatlar yoki ishchilarni qidiring…")} />;
+  const items = feed?.items || [];
+  const myApps = mine || [];
+  const receivedList = Object.values(received || {}).flat();
+  const waiting = myApps.filter((a) => a.status === "pending").length;
 
-  function resetFilters() {
-    setRegion(""); setMinPrice(""); setMaxPrice(""); setCat("");
+  // Profil to'ldirilganligi — real maydonlar asosida.
+  const checks = me
+    ? [!!me.firstName, !!me.lastName, !!me.phone, me.isPhoneVerified, !!me.avatarUrl, !!me.region, !!me.bio, !!(me.skills && me.skills.length)]
+    : [];
+  const filled = checks.filter(Boolean).length;
+  const percent = checks.length ? Math.round((filled / checks.length) * 100) : 0;
+
+  // "Siz uchun tavsiya" — foydalanuvchi viloyatidagi so'nggi e'lonlar.
+  const suggestions = items
+    .filter((e) => (me?.region ? e.region === me.region : true))
+    .slice(0, 3);
+
+  function goSearch() {
+    const p = new URLSearchParams();
+    if (q) p.set("q", q);
+    if (region) p.set("region", region);
+    router.push(`/elonlar${p.toString() ? `?${p.toString()}` : ""}`);
   }
 
   return (
-    <Shell title="Bosh sahifa" search={search}>
-      {/* Categories */}
-      <div className="card p-3 flex items-center gap-2 overflow-x-auto scroll-y-auto">
-        <Chip active={cat === ""} onClick={() => setCat("")}><T>Barchasi</T></Chip>
-        {(cats || []).slice(0, 12).map((c) => (
-          <Chip key={c.id} active={cat === c.id} onClick={() => setCat(c.id)}>
-            {c.icon && <span>{c.icon}</span>}<T>{c.name}</T>
-          </Chip>
-        ))}
-      </div>
+    <Shell wide>
+      <div className="py-6 flex flex-col gap-6">
+        {/* ── Hero ─────────────────────────────────────── */}
+        <section className="gradient-hero rounded-[20px] p-6 sm:p-8 text-white grid lg:grid-cols-[1fr_300px] gap-6 items-center">
+          <div className="min-w-0">
+            <div className="text-[11.5px] font-bold tracking-[1.2px] uppercase text-white/70">
+              <T>Assalomu alaykum</T>{me?.firstName ? `, ${me.firstName}` : ""}
+            </div>
+            <h1 className="mt-2 text-[26px] sm:text-[30px] font-black tracking-[-0.8px] leading-tight">
+              <T>Bugun qanday ish qidiryapsiz?</T>
+            </h1>
 
-      {/* Jins bo'yicha bo'limlar: ishchi o'ziga mos ishlarni tez topsin. */}
-      <div className="card p-3 flex items-center gap-2 overflow-x-auto scroll-y-auto">
-        <Chip active={gender === ""} onClick={() => setGender("")}><T>Hammasi</T></Chip>
-        {GENDER_OPTIONS.map((g) => (
-          <Chip key={g} active={gender === g} onClick={() => setGender(g)}>
-            <T>{GENDER_LABEL[g]}</T>
-          </Chip>
-        ))}
-      </div>
-
-      {/* Header strip */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-base font-semibold heading"><T>Ish e'lonlari</T></h2>
-          <p className="text-xs muted mt-0.5">
-            <T>Topildi</T>: <b className="heading">{items.length}</b> <T>ta e'lon</T>
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowFilters((s) => !s)}
-            className={`btn btn-secondary gap-2 ${showFilters || activeFilters > 0 ? "ring-1 ring-[color:var(--brand)]" : ""}`}
-          >
-            <SlidersHorizontal size={16} /><T>Filtr</T>
-            {activeFilters > 0 && (
-              <span className="grid place-items-center min-w-[18px] h-[18px] px-1 rounded-full bg-brand-navy text-white text-[10px] font-bold">
-                {activeFilters}
-              </span>
-            )}
-          </button>
-          <div className="w-44">
-            <Select value={sort} onChange={(e) => setSort(e.target.value)}>
-              <option value="time">{t("Eng yangilari")}</option>
-              <option value="price">{t("Yuqori narx")}</option>
-            </Select>
-          </div>
-        </div>
-      </div>
-
-      {/* Filtr paneli */}
-      {showFilters && (
-        <div className="card p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 animate-fade-in">
-          <Select label={t("Joylashuv")} value={region} onChange={(e) => setRegion(e.target.value)}>
-            <option value="">{t("Barcha viloyatlar")}</option>
-            {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-          </Select>
-          <Select label={t("Kategoriya")} value={cat} onChange={(e) => setCat(e.target.value)}>
-            <option value="">{t("Barcha kategoriyalar")}</option>
-            {(cats || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
-          <TextInput
-            label={t("Narx (dan), so'm")} inputMode="numeric" placeholder="0"
-            value={minPrice}
-            onChange={(e) => setMinPrice(fmtThousands(onlyDigits(e.target.value)))}
-          />
-          <TextInput
-            label={t("Narx (gacha), so'm")} inputMode="numeric" placeholder={t("Cheklovsiz")}
-            value={maxPrice}
-            onChange={(e) => setMaxPrice(fmtThousands(onlyDigits(e.target.value)))}
-          />
-          {activeFilters > 0 && (
-            <div className="sm:col-span-2 lg:col-span-4">
-              <button onClick={resetFilters} className="btn-ghost gap-1.5 text-sm">
-                <X size={14} /><T>Filtrlarni tozalash</T>
+            {/* Qidiruv paneli */}
+            <div className="mt-5 bg-white rounded-[14px] p-1.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 shadow-pop">
+              <div className="relative flex-1 min-w-0">
+                <Search size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 subtle pointer-events-none" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && goSearch()}
+                  placeholder={t("Ish nomi yoki kalit so'z…")}
+                  className="w-full bg-transparent pl-11 pr-3 py-3 text-sm outline-none"
+                  style={{ color: "var(--text)" }}
+                />
+              </div>
+              <div className="relative sm:border-l sm:pl-2" style={{ borderColor: "var(--border)" }}>
+                <MapPin size={15} className="absolute left-4 sm:left-5 top-1/2 -translate-y-1/2 subtle pointer-events-none" />
+                <select
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  className="appearance-none bg-transparent pl-9 sm:pl-10 pr-8 py-2.5 text-sm font-semibold outline-none cursor-pointer w-full"
+                  style={{ color: "var(--text)" }}
+                >
+                  <option value="">{t("Barcha hududlar")}</option>
+                  {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <button onClick={goSearch} className="btn btn-primary !rounded-[10px] sm:!px-7 !py-3">
+                <T>Qidirish</T>
               </button>
             </div>
-          )}
-        </div>
-      )}
 
-      {/* Grid */}
-      {isLoading ? (
-        <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
-        </div>
-      ) : items.length === 0 ? (
-        <EmptyState
-          icon={<Briefcase size={22} />}
-          title={t("Hozircha e'lonlar yo'q")}
-          body={t("Filtrlarni o'zgartirib qaytadan urinib ko'ring yoki o'zingiz birinchi e'lonni joylashtiring.")}
-          action={<Link href="/elon/create" className="btn btn-primary"><T>E'lon yaratish</T></Link>}
-        />
-      ) : (
-        <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {items.map((e) => <JobCard key={e.id} e={e} />)}
-        </div>
-      )}
+            {/* Ommabop kategoriyalar */}
+            {(cats || []).length > 0 && (
+              <div className="mt-4 flex items-center gap-2 flex-wrap">
+                <span className="text-[13px] text-white/70"><T>Ommabop</T>:</span>
+                {(cats || []).slice(0, 4).map((c) => (
+                  <Link
+                    key={c.id}
+                    href={`/elonlar?categoryId=${c.id}`}
+                    className="rounded-full bg-white/15 hover:bg-white/25 transition px-3.5 py-1.5 text-[13px] font-semibold"
+                  >
+                    <T>{c.name}</T>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Ishchi kerakmi? */}
+          <div className="rounded-2xl bg-white/15 p-5 text-center">
+            <div className="font-bold text-[17px]"><T>Ishchi kerakmi?</T></div>
+            <p className="mt-2 text-[13px] text-white/80 leading-relaxed">
+              <T>E'lon joylang — bir necha daqiqada birinchi arizalar keladi.</T>
+            </p>
+            <Link href="/elon/create" className="btn mt-4 w-full bg-white hover:opacity-90" style={{ color: "var(--brand)" }}>
+              <T>E'lon berish</T>
+            </Link>
+          </div>
+        </section>
+
+        {/* ── Statistika ───────────────────────────────── */}
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard value={myApps.length}          label="Yuborgan arizalarim"   href="/process"   tone="blue" />
+          <StatCard value={receivedList.length}    label="E'lonlarimga arizalar" href="/process"   tone="green" />
+          <StatCard value={me?.completedJobsCount || 0} label="Bajarilgan ishlar" href="/history"  tone="amber" />
+          <StatCard value={myElons?.active.length || 0} label="Faol e'lonlarim"   href="/my-elons" tone="pink" />
+        </section>
+
+        {/* ── Kategoriyalar ────────────────────────────── */}
+        {(cats || []).length > 0 && (
+          <section>
+            <SectionHead title="Kategoriyalar" href="/elonlar" linkLabel="Barchasi" />
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+              {(cats || []).slice(0, 6).map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/elonlar?categoryId=${c.id}`}
+                  className="card p-4 flex flex-col items-center gap-2.5 text-center transition hover:-translate-y-0.5 hover:shadow-pop"
+                >
+                  <span className="grid h-11 w-11 place-items-center rounded-xl text-xl"
+                        style={{ background: "var(--brand-soft)" }}>
+                    {c.icon || "🧰"}
+                  </span>
+                  <div>
+                    <div className="text-[13.5px] font-bold heading leading-tight"><T>{c.name}</T></div>
+                    <div className="text-[11.5px] subtle mt-0.5">{c.usageCount} <T>ta</T></div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Yangi e'lonlar + yon panel ───────────────── */}
+        <section className="grid lg:grid-cols-[1fr_320px] gap-5 items-start">
+          <div className="min-w-0">
+            <SectionHead title="Yangi e'lonlar" href="/elonlar" linkLabel="Barchasini ko'rish" />
+            <div className="mt-4 flex flex-col gap-4">
+              {isLoading ? (
+                Array.from({ length: 3 }).map((_, i) => <CardSkeleton key={i} />)
+              ) : items.length === 0 ? (
+                <EmptyState
+                  icon={<Briefcase size={22} />}
+                  title={t("Hozircha e'lonlar yo'q")}
+                  body={t("Birinchi e'lonni o'zingiz joylashtiring — u shu yerda ko'rinadi.")}
+                  action={<Link href="/elon/create" className="btn btn-primary"><T>E'lon yaratish</T></Link>}
+                />
+              ) : (
+                items.slice(0, 5).map((e) => <JobCard key={e.id} e={e} />)
+              )}
+            </div>
+            {items.length > 0 && (
+              <Link href="/elonlar" className="btn btn-soft w-full mt-4 gap-2">
+                <T>Barcha e'lonlarni ko'rish</T><ArrowRight size={16} />
+              </Link>
+            )}
+          </div>
+
+          {/* Yon panel */}
+          <aside className="flex flex-col gap-4 lg:sticky lg:top-[92px]">
+            <div className="card p-5">
+              <h3 className="section-title mb-3.5"><T>Arizalar holati</T></h3>
+              <Row label="Yuborgan arizalarim" value={myApps.length} />
+              <Row label="E'lonlarimga kelgan" value={receivedList.length} />
+              <Row label="Javob kutayotganlar" value={waiting} />
+              <Link href="/process" className="btn btn-soft w-full mt-4"><T>Mening arizalarim</T></Link>
+            </div>
+
+            <div className="card p-5">
+              <h3 className="section-title"><T>Profil to'ldirilgani</T></h3>
+              <div className="mt-3 flex items-center justify-between text-[13px]">
+                <span className="muted">{percent}% <T>to'ldirilgan</T></span>
+                <span className="font-bold" style={{ color: "var(--brand)" }}>{percent}%</span>
+              </div>
+              <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ background: "var(--bg-subtle)" }}>
+                <div className="h-full rounded-full transition-all" style={{ width: `${percent}%`, background: "var(--brand)" }} />
+              </div>
+              <p className="mt-3 text-[12.5px] subtle leading-relaxed">
+                <T>Profil to'liq bo'lsa, ish beruvchilar sizga ko'proq ishonadi.</T>
+              </p>
+              {percent < 100 && (
+                <Link href="/profile" className="btn btn-outline w-full mt-3 btn-sm"><T>Profilni to'ldirish</T></Link>
+              )}
+            </div>
+
+            {suggestions.length > 0 && (
+              <div className="card p-5">
+                <h3 className="section-title mb-3"><T>Siz uchun tavsiya</T></h3>
+                <div className="flex flex-col gap-2">
+                  {suggestions.map((e) => (
+                    <Link key={e.id} href={`/elon/${e.id}`} className="surface p-3 transition hover:shadow-card block">
+                      <div className="text-[13.5px] font-bold heading line-clamp-1"><T>{e.title}</T></div>
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="text-[11.5px] subtle inline-flex items-center gap-1 truncate">
+                          <MapPin size={12} />{e.locationText || e.region || "—"}
+                        </span>
+                        <span className="text-[12.5px] font-bold shrink-0" style={{ color: "var(--brand)" }}>
+                          {e.pricingType === "negotiable" ? t("Kelishiladi") : `${fmtSum(e.perWorkerAmount || e.priceAmount)} so'm`}
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+          </aside>
+        </section>
+      </div>
     </Shell>
   );
 }
 
-function Chip({ active, onClick, children }: { active?: boolean; onClick: () => void; children: React.ReactNode }) {
+/* ── helpers ─────────────────────────────────────────── */
+
+const TONE: Record<string, { bg: string; fg: string }> = {
+  blue:  { bg: "var(--brand-soft)", fg: "var(--brand)" },
+  green: { bg: "#DFF5E5", fg: "#1A7F3C" },
+  amber: { bg: "#FFEED4", fg: "#8A5300" },
+  pink:  { bg: "#FDE8EF", fg: "#BE185D" },
+};
+
+function StatCard({ value, label, href, tone }: { value: number; label: string; href: string; tone: keyof typeof TONE }) {
+  const c = TONE[tone];
   return (
-    <button onClick={onClick} className={`chip shrink-0 ${active ? "chip-active" : ""}`}>{children}</button>
+    <Link href={href} className="card p-4 flex items-center gap-3.5 transition hover:-translate-y-0.5 hover:shadow-pop">
+      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-[17px] font-bold"
+            style={{ background: c.bg, color: c.fg }}>
+        {value}
+      </span>
+      <div className="min-w-0">
+        <div className="text-[13.5px] font-bold heading leading-tight"><T>{label}</T></div>
+        <div className="text-[11.5px] subtle mt-0.5"><T>Oxirgi 30 kun</T></div>
+      </div>
+    </Link>
   );
 }
 
-function JobCard({ e }: { e: Elon }) {
-  const neg = e.pricingType === "negotiable";
-  const [shareOpen, setShareOpen] = useState(false);
+function SectionHead({ title, href, linkLabel }: { title: string; href: string; linkLabel: string }) {
   return (
-    <>
-    <Link href={`/elon/${e.id}`} className="card p-5 block transition hover:-translate-y-0.5 hover:shadow-pop animate-fade-in">
-      <div className="flex items-start gap-3">
-        <Avatar name={e.ownerName} src={e.ownerAvatarUrl} size="md" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="font-semibold heading leading-tight line-clamp-1"><T>{e.title}</T></h3>
-            <button
-              onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); setShareOpen(true); }}
-              className="muted hover:text-accent-amber transition"
-            >
-              <Share2 size={16} />
-            </button>
-          </div>
-          <div className="mt-0.5 flex items-center gap-2 text-xs muted">
-            <span className="truncate">{e.ownerName || "—"}</span>
-          </div>
-        </div>
-      </div>
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="text-[19px] font-bold heading tracking-[-0.3px]"><T>{title}</T></h2>
+      <Link href={href} className="inline-flex items-center gap-1.5 text-[13.5px] font-semibold transition hover:opacity-80"
+            style={{ color: "var(--brand)" }}>
+        <T>{linkLabel}</T><ArrowRight size={15} />
+      </Link>
+    </div>
+  );
+}
 
-      <div className="mt-3 flex flex-wrap gap-2 text-xs muted">
-        <span className="inline-flex items-center gap-1 surface px-2 py-1">
-          <MapPin size={12} />{e.locationText || e.region || "—"}
-        </span>
-        {e.publishedAt && (
-          <span className="inline-flex items-center gap-1 surface px-2 py-1">
-            <Clock size={12} />{fromNow(e.publishedAt)}
-          </span>
-        )}
-        <span className="badge-neutral"><T>{e.categoryName}</T></span>
-        {(e.gender === "male" || e.gender === "female") && (
-          <span className="badge-neutral"><T>{GENDER_LABEL[e.gender]}</T></span>
-        )}
-        {/* A single-slot job showing "1 joy qoldi" is noise, not information —
-            only multi-worker listings get this badge. */}
-        {e.workersNeeded > 1 && (
-          (e.acceptedCount || 0) >= e.workersNeeded ? (
-            <span className="badge-success"><T>Joy to'ldi</T></span>
-          ) : (
-            <span className="badge-amber">{e.workersNeeded - (e.acceptedCount || 0)} <T>joy qoldi</T></span>
-          )
-        )}
-      </div>
-
-      <div className="mt-4 pt-3 border-t flex items-end justify-between" style={{ borderColor: "var(--border)" }}>
-        <div>
-          <div className="text-[11px] uppercase tracking-wide muted"><T>Narxi</T></div>
-          <div className="text-lg font-bold text-accent-amber leading-none mt-0.5">
-            {fmtSumSom(e.perWorkerAmount || e.priceAmount, neg)}
-          </div>
-        </div>
-        <span className="inline-flex items-center gap-1 text-xs font-medium heading group">
-          <T>Ko'rish</T><ArrowUpRight size={14} className="transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-        </span>
-      </div>
-    </Link>
-    <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} path={`/elon/${e.id}`} title={e.title} />
-    </>
+function Row({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between py-2 text-[13.5px]">
+      <span className="muted"><T>{label}</T></span>
+      <span className="font-bold" style={{ color: "var(--brand)" }}>{value}</span>
+    </div>
   );
 }

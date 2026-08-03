@@ -7,8 +7,9 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { SlotProgress } from "@/components/ui/SlotProgress";
 import { Avatar } from "@/components/ui/Avatar";
 import { Modal } from "@/components/Modal";
-import { Phone, MapPin, ChevronDown, ExternalLink } from "lucide-react";
+import { Phone, MapPin, ChevronDown, ExternalLink, Send, Inbox, Plus, Users, Clock } from "lucide-react";
 import { T, useT } from "@/components/T";
+import { fmtSum, fmtSumSom, fromNow } from "@/lib/format";
 import Link from "next/link";
 
 // Bekor qilish sababini ro'yxatda qisqa ko'rsatish uchun.
@@ -16,8 +17,19 @@ function shortReason(s: string, max = 60) {
   return s.length > max ? s.slice(0, max).trimEnd() + "…" : s;
 }
 
+// Chapdagi rangli chiziq — ariza holatiga qarab (Figma 07).
+const STRIPE: Record<string, string> = {
+  pending: "#FF9500",
+  accepted: "#1A7F3C",
+  rejected: "#D92D20",
+  cancelled: "#D92D20",
+  completed: "#0038D8",
+};
+
+/** Figma "07/09 · Mening arizalarim": ikki rejim — yuborgan arizalarim va menga kelgan arizalar. */
 export default function Process() {
   const [tab, setTab] = useState<"worker" | "employer">("worker");
+  const [status, setStatus] = useState<string>("");
   const [cancelId, setCancelId] = useState("");
   const [cancelReason, setCancelReason] = useState("");
   const [openElons, setOpenElons] = useState<Record<string, boolean>>({});
@@ -50,7 +62,7 @@ export default function Process() {
     return m;
   }, [myElons]);
 
-  // Qizil nuqtalar uchun: ariza bilan bog'liq o'qilmagan bildirishnomalardagi
+  // Nuqtalar uchun: ariza bilan bog'liq o'qilmagan bildirishnomalardagi
   // ariza id'lari. Karta/tab shu id'lar bilan solishtiriladi.
   const unreadAppIds = new Set(
     (notifs || []).filter((n) => !n.isRead && n.relatedEntity?.type === "application").map((n) => n.relatedEntity!.id)
@@ -91,138 +103,222 @@ export default function Process() {
     onSuccess: refreshLists,
   });
 
-  return (
-    <Shell title="Jarayonlar">
-      <div className="card p-2 flex gap-2">
-        <button onClick={() => setTab("worker")} className={`flex-1 rounded-lg px-3 py-2 text-sm ${tab === "worker" ? "bg-brand-navy text-white" : "hover:bg-black/5"}`}>
-          <span className="inline-flex items-center gap-1.5"><T>Ishlardagi jarayon</T>{workerDot && <span className="h-2 w-2 rounded-full bg-danger" />}</span>
-        </button>
-        <button onClick={() => setTab("employer")} className={`flex-1 rounded-lg px-3 py-2 text-sm ${tab === "employer" ? "bg-brand-navy text-white" : "hover:bg-black/5"}`}>
-          <span className="inline-flex items-center gap-1.5"><T>E'lonlardagi jarayon</T>{employerDot && <span className="h-2 w-2 rounded-full bg-danger" />}</span>
-        </button>
-      </div>
+  const myApps = mine || [];
+  const receivedCount = Object.values(received || {}).flat().length;
+  const filtered = status ? myApps.filter((a) => a.status === status) : myApps;
+  const countOf = (s: string) => myApps.filter((a) => a.status === s).length;
 
-      {tab === "worker" && (
+  return (
+    <Shell wide>
+      <div className="py-6 flex flex-col gap-5">
+        {/* Sarlavha */}
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="text-[26px] font-black heading tracking-[-0.6px] leading-tight"><T>Mening arizalarim</T></h1>
+            <p className="text-[13.5px] muted mt-1">
+              <T>Yuborgan arizalaringiz va e'lonlaringizga kelgan arizalar — bir joyda</T>
+            </p>
+          </div>
+          <Link href="/elon/create" className="btn btn-primary gap-1.5"><Plus size={16} /><T>E'lon berish</T></Link>
+        </div>
+
+        {/* Rejim kartalari — Figma: ikkita katta tanlov */}
         <div className="grid sm:grid-cols-2 gap-4">
-          {(mine || []).length === 0 && <div className="card p-8 text-center text-[color:var(--text-muted)] sm:col-span-2"><T>Sizda ariza yo'q.</T></div>}
-          {(mine || []).map((a) => (
-            <div key={a.id} className="card p-4">
-              <div className="flex items-center justify-between">
-                <Link href={`/elon/${a.elonId}`} onClick={() => markSeen(a.id)} className="font-semibold inline-flex items-center gap-2">
-                  {unreadAppIds.has(a.id) && <span className="h-2.5 w-2.5 rounded-full bg-danger shrink-0" />}
-                  <T>{a.elonTitle}</T>
-                </Link>
-                <StatusBadge status={a.status} />
-              </div>
-              <div className="text-xs text-[color:var(--text-muted)] mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                {a.ownerName && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Avatar name={a.ownerName} src={a.ownerAvatarUrl} size="xs" />
-                    <span><T>Ish beruvchi</T>: <span className="font-medium text-[color:var(--text)]">{a.ownerName}</span></span>
-                  </span>
-                )}
-                <span><T>Ariza</T>: {a.peopleCount || 1} <T>kishi</T></span>
-              </div>
-              {a.status === "pending" && <p className="text-sm text-[color:var(--text-muted)] mt-2"><T>Ariza ko'rib chiqilmoqda…</T></p>}
-              {a.status === "accepted" && (
-                <div className="mt-2 grid gap-2">
-                  <p className="text-sm text-success"><T>Ish beruvchi tomonidan qabul qilindi</T></p>
-                  <div className="flex flex-wrap gap-2">
-                    <a href={`tel:${a.workerPhone}`} className="btn-secondary gap-2"><Phone size={14} /><T>Qo'ng'iroq qilish</T></a>
-                    <Link href={`/elon/${a.elonId}`} className="btn-secondary gap-2"><MapPin size={14} /><T>Manzilni ko'rish</T></Link>
-                    <button onClick={() => done.mutate(a.id)} className="btn-primary"><T>Bajarildi</T></button>
-                    <button onClick={() => { setCancelReason(""); setCancelId(a.id); }} className="btn-danger"><T>Bekor qilish</T></button>
+          <ModeCard
+            active={tab === "worker"} onClick={() => { setTab("worker"); setStatus(""); }}
+            icon={<Send size={17} />} title="Ishga arizalarim" subtitle="Men yuborgan arizalar"
+            count={myApps.length} dot={workerDot}
+          />
+          <ModeCard
+            active={tab === "employer"} onClick={() => { setTab("employer"); setStatus(""); }}
+            icon={<Inbox size={17} />} title="Ish e'lonlarim" subtitle="Menga kelgan arizalar"
+            count={receivedCount} dot={employerDot}
+          />
+        </div>
+
+        {/* ── Ishga arizalarim ─────────────────────────────────── */}
+        {tab === "worker" && (
+          <>
+            <div className="card p-2.5 flex items-center gap-2 flex-wrap">
+              <Chip active={!status} onClick={() => setStatus("")} label="Barchasi" count={myApps.length} />
+              <Chip active={status === "pending"} onClick={() => setStatus("pending")} label="Kutilmoqda" count={countOf("pending")} />
+              <Chip active={status === "accepted"} onClick={() => setStatus("accepted")} label="Qabul qilingan" count={countOf("accepted")} />
+              <Chip active={status === "rejected"} onClick={() => setStatus("rejected")} label="Rad etilgan" count={countOf("rejected")} />
+              <Chip active={status === "completed"} onClick={() => setStatus("completed")} label="Bajarilgan" count={countOf("completed")} />
+            </div>
+
+            <div className="flex flex-col gap-4">
+              {filtered.length === 0 && (
+                <div className="card p-10 text-center muted text-sm"><T>Sizda ariza yo'q.</T></div>
+              )}
+              {filtered.map((a) => (
+                <div key={a.id} className="card relative overflow-hidden p-5 pl-6 flex flex-col sm:flex-row gap-4">
+                  <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: STRIPE[a.status] || "var(--brand)" }} />
+
+                  <div className="flex-1 min-w-0 flex flex-col gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <StatusBadge status={a.status} />
+                      <span className="text-[12px] subtle">{fromNow(a.appliedAt)} <T>yuborilgan</T></span>
+                      {unreadAppIds.has(a.id) && <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--brand)" }} />}
+                    </div>
+
+                    <Link href={`/elon/${a.elonId}`} onClick={() => markSeen(a.id)}
+                          className="text-[17px] font-bold heading leading-snug hover:opacity-80 transition">
+                      <T>{a.elonTitle}</T>
+                    </Link>
+
+                    <div className="flex items-center gap-4 flex-wrap text-[13px] muted">
+                      {a.ownerName && (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Avatar name={a.ownerName} src={a.ownerAvatarUrl} size="xs" />
+                          <T>E'lon beruvchi</T>: <span className="heading font-semibold">{a.ownerName}</span>
+                        </span>
+                      )}
+                      <span className="inline-flex items-center gap-1.5"><Users size={14} className="subtle" />{a.peopleCount || 1} <T>kishi</T></span>
+                    </div>
+
+                    {a.status === "cancelled" && a.cancelReason && (
+                      <div className="text-[12.5px] muted">
+                        <T>{a.cancelledBy === "worker" ? "Ishchi bekor qildi" : "Ish beruvchi bekor qildi"}</T> — <T>{shortReason(a.cancelReason)}</T>
+                        {a.cancelReason.length > 60 && (
+                          <button onClick={() => setReasonView(a)} className="ml-1.5 font-semibold" style={{ color: "var(--brand)" }}>
+                            <T>Batafsil</T>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="sm:text-right flex sm:flex-col items-center sm:items-end gap-3 justify-between">
+                    <div>
+                      <div className="text-[20px] font-bold leading-none" style={{ color: "var(--brand)" }}>
+                        {a.isNegotiable ? t("Kelishiladi") : fmtSum(a.amount)}
+                      </div>
+                      {!a.isNegotiable && <div className="text-[11.5px] muted mt-1">so'm / <T>kunlik</T></div>}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      {a.status === "accepted" && (
+                        <>
+                          <a href={`tel:${a.workerPhone}`} className="btn btn-outline btn-sm gap-1.5"><Phone size={13} /><T>Aloqa</T></a>
+                          <Link href={`/elon/${a.elonId}`} className="btn btn-outline btn-sm gap-1.5"><MapPin size={13} /><T>Manzil</T></Link>
+                          <button onClick={() => done.mutate(a.id)} className="btn btn-primary btn-sm"><T>Bajarildi</T></button>
+                        </>
+                      )}
+                      {(a.status === "pending" || a.status === "accepted") && (
+                        <button onClick={() => { setCancelReason(""); setCancelId(a.id); }}
+                                className="btn btn-sm !bg-transparent text-danger hover:!bg-[rgba(217,45,32,0.08)]">
+                          <T>Arizani bekor qilish</T>
+                        </button>
+                      )}
+                      <Link href={`/elon/${a.elonId}`} className="btn btn-soft btn-sm"><T>Batafsil</T></Link>
+                    </div>
                   </div>
                 </div>
-              )}
-              {a.status === "cancelled" && a.cancelReason && (
-                <div className="mt-2 text-sm">
-                  <span className="text-[color:var(--text-muted)]">
-                    <T>{a.cancelledBy === "worker" ? "Ishchi bekor qildi" : "Ish beruvchi bekor qildi"}</T> — <T>{shortReason(a.cancelReason)}</T>
-                  </span>
-                  {a.cancelReason.length > 60 && (
-                    <button onClick={() => setReasonView(a)} className="ml-1.5 text-tg-blue underline text-xs"><T>Batafsil</T></button>
-                  )}
-                </div>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          </>
+        )}
 
-      {tab === "employer" && (
-        <div className="grid gap-4">
-          {Object.keys(received || {}).length === 0 && <div className="card p-8 text-center text-[color:var(--text-muted)]"><T>Hozircha arizalar yo'q.</T></div>}
-          {Object.entries(received || {}).map(([elonId, apps]) => {
-            const open = !!openElons[elonId];
-            return (
-            <div key={elonId} className="card p-4">
-              {/* Sarlavha bosilganda sahifa ochilmaydi — pastidan arizachilar ro'yxati ochiladi. */}
-              <button
-                type="button"
-                onClick={() => {
-                  setOpenElons((s) => ({ ...s, [elonId]: !s[elonId] }));
-                  if (!open) markSeen(...apps.map((a) => a.id));
-                }}
-                className="w-full flex items-center justify-between gap-2 text-left"
-              >
-                <span className="font-semibold inline-flex items-center gap-2 min-w-0">
-                  {apps.some((a) => unreadAppIds.has(a.id)) && <span className="h-2.5 w-2.5 rounded-full bg-danger shrink-0" />}
-                  <span className="truncate"><T>{apps[0]?.elonTitle || "E'lon"}</T></span>
-                </span>
-                <span className="flex items-center gap-2 shrink-0">
-                  <span className="badge-amber">{apps.length} <T>ta ariza</T></span>
-                  <ChevronDown size={18} className={`transition-transform ${open ? "rotate-180" : ""}`} />
-                </span>
-              </button>
-              {elonById[elonId] && (
-                <div className="mt-3">
-                  <SlotProgress accepted={elonById[elonId].acceptedCount} needed={elonById[elonId].workersNeeded} />
-                </div>
-              )}
-              {open && (
-              <div className="grid gap-2 mt-3">
-                <Link href={`/elon/${elonId}`} className="text-xs text-tg-blue inline-flex items-center gap-1 w-fit">
-                  <ExternalLink size={12} /><T>E'lonni ochish</T>
-                </Link>
-                {apps.map((a) => (
-                  <div key={a.id} className="flex flex-wrap items-center gap-2 border-t pt-2" style={{ borderColor: "var(--border)" }}>
-                    <Avatar name={a.workerName?.trim() || a.workerPhone} src={a.workerAvatarUrl} size="sm" />
-                    <div className="mr-auto min-w-0">
-                      <div className="font-medium text-sm inline-flex items-center gap-1.5">
-                        {unreadAppIds.has(a.id) && <span className="h-2 w-2 rounded-full bg-danger shrink-0" />}
-                        <span className="truncate">{a.workerName?.trim() || a.workerPhone}</span>
-                      </div>
-                      <div className="text-xs text-[color:var(--text-muted)]">{a.workerPhone}</div>
-                      {a.status === "cancelled" && a.cancelReason && (
-                        <div className="text-xs text-[color:var(--text-muted)] mt-0.5">
-                          <T>{a.cancelledBy === "worker" ? "Ishchi bekor qildi" : "Siz bekor qildingiz"}</T> — <T>{shortReason(a.cancelReason, 40)}</T>
-                          {a.cancelReason.length > 40 && (
-                            <button onClick={() => setReasonView(a)} className="ml-1 text-tg-blue underline"><T>Batafsil</T></button>
+        {/* ── Menga kelgan arizalar ────────────────────────────── */}
+        {tab === "employer" && (
+          <div className="flex flex-col gap-4">
+            {Object.keys(received || {}).length === 0 && (
+              <div className="card p-10 text-center muted text-sm"><T>Hozircha arizalar yo'q.</T></div>
+            )}
+            {Object.entries(received || {}).map(([elonId, apps]) => {
+              const open = !!openElons[elonId];
+              const el = elonById[elonId];
+              return (
+                <div key={elonId} className="card p-5">
+                  {/* Sarlavha bosilganda sahifa ochilmaydi — pastidan arizachilar ro'yxati ochiladi. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenElons((s) => ({ ...s, [elonId]: !s[elonId] }));
+                      if (!open) markSeen(...apps.map((a) => a.id));
+                    }}
+                    className="w-full flex items-center justify-between gap-3 text-left"
+                  >
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2">
+                        {apps.some((a) => unreadAppIds.has(a.id)) && (
+                          <span className="h-2 w-2 rounded-full shrink-0" style={{ background: "var(--brand)" }} />
+                        )}
+                        <span className="text-[17px] font-bold heading truncate"><T>{apps[0]?.elonTitle || "E'lon"}</T></span>
+                      </span>
+                      {el && (
+                        <span className="mt-1 flex items-center gap-3 text-[12.5px] muted">
+                          <span className="inline-flex items-center gap-1.5"><Users size={13} className="subtle" />{el.workersNeeded} <T>ta ishchi</T></span>
+                          {el.publishedAt && (
+                            <span className="inline-flex items-center gap-1.5"><Clock size={13} className="subtle" />{fromNow(el.publishedAt)}</span>
+                          )}
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-2.5 shrink-0">
+                      <span className="badge-info">{apps.length} <T>ta ariza</T></span>
+                      <ChevronDown size={18} className={`transition-transform subtle ${open ? "rotate-180" : ""}`} />
+                    </span>
+                  </button>
+
+                  {el && (
+                    <div className="mt-3.5">
+                      <SlotProgress accepted={el.acceptedCount} needed={el.workersNeeded} />
+                    </div>
+                  )}
+
+                  {open && (
+                    <div className="mt-4 flex flex-col gap-2">
+                      <Link href={`/elon/${elonId}`} className="text-[12.5px] font-semibold inline-flex items-center gap-1.5 w-fit"
+                            style={{ color: "var(--brand)" }}>
+                        <ExternalLink size={12} /><T>E'lonni ochish</T>
+                      </Link>
+                      {apps.map((a) => (
+                        <div key={a.id} className="surface p-3.5 flex flex-wrap items-center gap-3">
+                          <Avatar name={a.workerName?.trim() || a.workerPhone} src={a.workerAvatarUrl} size="sm" />
+                          <div className="mr-auto min-w-0">
+                            <div className="text-[13.5px] font-bold heading flex items-center gap-1.5">
+                              {unreadAppIds.has(a.id) && <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: "var(--brand)" }} />}
+                              <span className="truncate">{a.workerName?.trim() || a.workerPhone}</span>
+                            </div>
+                            <div className="text-[11.5px] subtle">{a.workerPhone} · {a.peopleCount || 1} <T>kishi</T> · {fmtSumSom(a.amount, a.isNegotiable)}</div>
+                            {a.status === "cancelled" && a.cancelReason && (
+                              <div className="text-[11.5px] muted mt-0.5">
+                                <T>{a.cancelledBy === "worker" ? "Ishchi bekor qildi" : "Siz bekor qildingiz"}</T> — <T>{shortReason(a.cancelReason, 40)}</T>
+                                {a.cancelReason.length > 40 && (
+                                  <button onClick={() => setReasonView(a)} className="ml-1 font-semibold" style={{ color: "var(--brand)" }}>
+                                    <T>Batafsil</T>
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <StatusBadge status={a.status} />
+                          <a href={`tel:${a.workerPhone}`} className="btn btn-outline btn-sm gap-1.5"><Phone size={12} /><T>Qo'ng'iroq</T></a>
+                          {a.status === "pending" && (
+                            <>
+                              <button onClick={() => { markSeen(a.id); accept.mutate(a.id); }} className="btn btn-primary btn-sm"><T>Qabul qilish</T></button>
+                              <button onClick={() => { markSeen(a.id); reject.mutate(a.id); }}
+                                      className="btn btn-sm !bg-transparent text-danger hover:!bg-[rgba(217,45,32,0.08)]"><T>Rad etish</T></button>
+                            </>
+                          )}
+                          {a.status === "accepted" && (
+                            <>
+                              <button onClick={() => { markSeen(a.id); done.mutate(a.id); }} className="btn btn-primary btn-sm"><T>Bajarildi</T></button>
+                              <button onClick={() => { markSeen(a.id); setCancelReason(""); setCancelId(a.id); }}
+                                      className="btn btn-sm !bg-transparent text-danger hover:!bg-[rgba(217,45,32,0.08)]"><T>Bekor qilish</T></button>
+                            </>
                           )}
                         </div>
-                      )}
+                      ))}
                     </div>
-                    <span className="badge-amber">{a.peopleCount || 1} <T>kishi</T></span>
-                    <StatusBadge status={a.status} />
-                    <a href={`tel:${a.workerPhone}`} className="btn-secondary gap-1"><Phone size={12} /><T>Qo'ng'iroq</T></a>
-                    {a.status === "pending" && <>
-                      <button onClick={() => { markSeen(a.id); accept.mutate(a.id); }} className="btn-primary"><T>Qabul qilish</T></button>
-                      <button onClick={() => { markSeen(a.id); reject.mutate(a.id); }} className="btn-danger">×</button>
-                    </>}
-                    {a.status === "accepted" && <>
-                      <button onClick={() => { markSeen(a.id); done.mutate(a.id); }} className="btn-primary"><T>Bajarildi</T></button>
-                      <button onClick={() => { markSeen(a.id); setCancelReason(""); setCancelId(a.id); }} className="btn-danger"><T>Bekor qilish</T></button>
-                    </>}
-                  </div>
-                ))}
-              </div>
-              )}
-            </div>
-            );
-          })}
-        </div>
-      )}
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <Modal open={!!cancelId} onClose={() => setCancelId("")} title={t("Ishni bekor qilasizmi?")} footer={
         <>
@@ -258,5 +354,47 @@ export default function Process() {
         )}
       </Modal>
     </Shell>
+  );
+}
+
+/* ── helpers ─────────────────────────────────────────── */
+
+function ModeCard({
+  active, onClick, icon, title, subtitle, count, dot,
+}: {
+  active: boolean; onClick: () => void; icon: React.ReactNode;
+  title: string; subtitle: string; count: number; dot?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`card p-4 flex items-center gap-3.5 text-left transition ${active ? "!border-transparent" : "hover:shadow-pop"}`}
+      style={active ? { background: "var(--brand)", color: "#fff" } : undefined}
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl"
+            style={active ? { background: "rgba(255,255,255,0.2)", color: "#fff" } : { background: "var(--brand-soft)", color: "var(--brand)" }}>
+        {icon}
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className={`block text-[14.5px] font-bold ${active ? "" : "heading"}`}>
+          <T>{title}</T>
+          {dot && <span className="inline-block ml-2 h-1.5 w-1.5 rounded-full align-middle" style={{ background: active ? "#fff" : "var(--accent)" }} />}
+        </span>
+        <span className={`block text-[12.5px] mt-0.5 ${active ? "text-white/75" : "subtle"}`}><T>{subtitle}</T></span>
+      </span>
+      <span className="grid min-w-[30px] h-7 px-2 place-items-center rounded-full text-[12.5px] font-bold"
+            style={active ? { background: "rgba(255,255,255,0.2)", color: "#fff" } : { background: "var(--brand-soft)", color: "var(--brand)" }}>
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function Chip({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+  return (
+    <button onClick={onClick} className={`chip ${active ? "chip-active" : ""}`}>
+      <T>{label}</T>
+      <span className={`text-[11px] font-bold ${active ? "text-white/75" : "subtle"}`}>{count}</span>
+    </button>
   );
 }

@@ -6,7 +6,8 @@ import { api, User } from "@/lib/api";
 import { CheckCircle2 } from "lucide-react";
 import { T } from "@/components/T";
 import { Avatar } from "@/components/ui/Avatar";
-import { ScriptToggle } from "@/components/ScriptToggle";
+import { LangMenu } from "@/components/LangMenu";
+import { Logo } from "@/components/Logo";
 
 export default function PublicProfile() {
   const { id } = useParams<{ id: string }>();
@@ -18,8 +19,8 @@ export default function PublicProfile() {
   return (
     <div className="min-h-screen p-4 mx-auto max-w-3xl">
       <div className="flex items-center justify-between mb-4">
-        <Link href="/" className="heading font-extrabold text-xl">Ishchi Bormi</Link>
-        <ScriptToggle />
+        <Logo />
+        <LangMenu />
       </div>
       <div className="card p-6 flex gap-4">
         <Avatar name={`${u.firstName} ${u.lastName}`} src={u.avatarUrl || undefined} size="xl" />

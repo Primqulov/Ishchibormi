@@ -1,5 +1,7 @@
 import type { Config } from "tailwindcss";
 
+// Ranglar Figma "Ishchi Bormi — Web Dizayn" faylidagi o'zgaruvchilardan olingan
+// (primary/blue, action/blue-light, accent/orange, text/ink, surface/bg, ...).
 const config: Config = {
   darkMode: "class",
   content: [
@@ -12,45 +14,58 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          50:  "#EEF1FA",
-          100: "#D4DCF1",
-          200: "#A8B7E1",
-          300: "#7B91D0",
-          400: "#4F6CC0",
-          500: "#2347B0",
-          600: "#1B3990",
-          700: "#16245C", // main
-          800: "#0F1F56",
-          900: "#0A1542",
-          navy: "#0F1F56",
-          navy700: "#16245C",
+          50:  "#F2F6FF",
+          100: "#E5EEFF", // bg/blue-50
+          200: "#DCE9FF", // bg/blue-tint
+          300: "#D3E4FE", // bg/blue-100
+          400: "#5C8BFF",
+          500: "#2F6BFF", // action/blue-light
+          600: "#0038D8", // primary/blue
+          700: "#002FB4",
+          800: "#00248C",
+          900: "#001A66",
+          navy: "#0038D8",   // eski nom — Figma'dagi primary/blue
+          navy700: "#002FB4",
+          light: "#2F6BFF",
         },
         accent: {
-          50:  "#FEF6E7",
-          100: "#FDE9C0",
-          200: "#FBD589",
-          300: "#F8BE52",
-          400: "#F1A926",
-          500: "#E8920A",
-          600: "#C97A08",
-          amber: "#E8920A",
-          amberBg: "#FEF6E7",
+          50:  "#FFF6E9",
+          100: "#FFEED4", // status/warning-bg
+          200: "#FFDCA6",
+          300: "#FFC670",
+          400: "#FFB13D",
+          500: "#FF9500", // accent/orange
+          600: "#D97C00",
+          700: "#8A5300", // text/orange-dark
+          amber: "#FF9500",
+          amberBg: "#FFEED4",
+          amberText: "#8A5300",
         },
-        tg: { blue: "#229ED9", darkBlue: "#1A85B5" },
-        success: { DEFAULT: "#16A34A", bg: "#DCFCE7" },
-        pending: { DEFAULT: "#B45309", bg: "#FEF3C7" },
-        danger:  { DEFAULT: "#DC2626", bg: "#FEE2E2" },
-        info:    { DEFAULT: "#2563EB", bg: "#DBEAFE" },
+        ink: {
+          DEFAULT: "#0B1C30", // text/ink
+          muted:   "#434655", // text/muted
+          light:   "#737686", // text/muted-light
+        },
+        tg: { blue: "#2F6BFF", darkBlue: "#0038D8" },
+        success: { DEFAULT: "#1A7F3C", bg: "#DFF5E5" },
+        pending: { DEFAULT: "#8A5300", bg: "#FFEED4" },
+        danger:  { DEFAULT: "#D92D20", bg: "#FEE4E2" },
+        info:    { DEFAULT: "#0038D8", bg: "#E5EEFF" },
       },
       borderRadius: {
         xs: "0.25rem", sm: "0.375rem", DEFAULT: "0.5rem",
-        md: "0.625rem", lg: "0.75rem", xl: "1rem", "2xl": "1.25rem", "3xl": "1.5rem",
+        md: "0.5625rem",  // 9px  — nav item
+        lg: "0.625rem",   // 10px — tugma / input
+        xl: "0.75rem",    // 12px — panel
+        "2xl": "1rem",    // 16px — karta
+        "3xl": "1.25rem",
       },
       boxShadow: {
-        sm:   "0 1px 2px rgba(15,23,42,0.04)",
-        card: "0 1px 2px rgba(15,23,42,0.04), 0 0 0 1px rgba(15,23,42,0.03)",
-        pop:  "0 8px 24px -8px rgba(15,23,42,0.18), 0 2px 6px rgba(15,23,42,0.06)",
-        ring: "0 0 0 4px rgba(15,31,86,0.12)",
+        sm:   "0 1px 2px rgba(10,28,48,0.04)",
+        card: "0 2px 4px rgba(10,28,48,0.05)",
+        pop:  "0 12px 28px -10px rgba(10,28,48,0.18), 0 2px 6px rgba(10,28,48,0.06)",
+        blue: "0 6px 16px -6px rgba(0,56,216,0.45)",
+        ring: "0 0 0 4px rgba(0,56,216,0.12)",
       },
       transitionTimingFunction: {
         spring: "cubic-bezier(0.34, 1.56, 0.64, 1)",
@@ -75,6 +90,9 @@ const config: Config = {
       },
       fontSize: {
         "2xs": ["0.6875rem", { lineHeight: "1rem" }],
+      },
+      maxWidth: {
+        shell: "1360px",
       },
     },
   },

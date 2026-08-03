@@ -6,7 +6,7 @@ import { api, Category, Elon, User, Gender, GENDER_LABEL, GENDER_OPTIONS } from 
 import { Shell } from "@/components/Shell";
 import { MultiImageUploader } from "@/components/ui/ImageUpload";
 import { MapPicker, LatLng } from "@/components/ui/MapPicker";
-import { CheckCircle2, AlertTriangle } from "lucide-react";
+import { CheckCircle2, AlertTriangle, User2 } from "lucide-react";
 import { T, useT } from "@/components/T";
 import { fmtSum, fmtThousands, onlyDigits, fmtPhone, phoneDigits } from "@/lib/format";
 
@@ -42,7 +42,12 @@ export default function CreateElon() {
   // Eng erta joylashtirish vaqti — hozirgi vaqtdan 1 soat keyin (sahifa
   // ochilgan payt asos). Sana esa faqat 3 kun ichida: bugun, erta yoki indin.
   const startRef = useRef(new Date());
+  // Soniya/millisoniyani nolga tushiramiz: forma vaqtni faqat HH:MM aniqligida
+  // saqlaydi, shuning uchun taqqoslashda ular ham daqiqa aniqligida bo'lishi
+  // kerak. Aks holda standart (eng erta) vaqt tanlangan bo'lsa ham "kamida
+  // 1 soat keyin bo'lsin" tekshiruvi bir necha soniyaga yetmay yiqilardi.
   const minMoment = new Date(startRef.current.getTime() + 60 * 60 * 1000);
+  minMoment.setSeconds(0, 0);
   const MIN_DATE = ymd(minMoment);
   const MAX_DATE = ymd(new Date(startRef.current.getTime() + 2 * 86400000));
   const minH = minMoment.getHours();
@@ -137,88 +142,132 @@ export default function CreateElon() {
   if (state === "err") return <ErrorPage msg={errMsg} onRetry={() => setState("idle")} onSupport={() => router.push("/feedback")} />;
 
   return (
-    <Shell title="Yangi e'lon yaratish">
-      <form
-        onSubmit={(e) => { e.preventDefault(); submit(); }}
-        className="card p-6 grid gap-4 max-w-3xl"
-      >
-        <h2 className="font-semibold text-lg"><T>E'lon ma'lumotlari</T></h2>
+    <Shell wide>
+      <div className="py-6 max-w-[760px] mx-auto w-full">
+        <h1 className="text-[26px] font-black heading tracking-[-0.6px] leading-tight"><T>E'lon berish</T></h1>
+        <p className="text-[13.5px] muted mt-1"><T>Vazifa tafsilotlarini kiriting va malakali ishchilarni toping.</T></p>
 
-        <Field label="Ish nomi *">
-          <input className="input" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t("Masalan, Mebel tashish")} />
-        </Field>
+        <form
+          onSubmit={(e) => { e.preventDefault(); submit(); }}
+          className="card p-6 sm:p-7 grid gap-5 mt-5"
+        >
+          <Field label="Vazifa nomi *">
+            <input className="input" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t("Masalan: Hovlini tozalash")} />
+          </Field>
 
-        <Field label="Kategoriya *">
-          <div className="flex flex-wrap gap-2">
-            {(cats || []).map((c) => (
-              <button key={c.id} type="button"
-                onClick={() => setForm({ ...form, categoryId: c.id })}
-                className={`chip ${form.categoryId === c.id ? "chip-active" : ""}`}>
-                {c.icon}<T>{c.name}</T>
-              </button>
-            ))}
+          <Field label="Kategoriya *">
+            <div className="flex flex-wrap gap-2">
+              {(cats || []).map((c) => (
+                <button key={c.id} type="button"
+                  onClick={() => setForm({ ...form, categoryId: c.id })}
+                  className={`chip ${form.categoryId === c.id ? "chip-active" : ""}`}>
+                  {c.icon}<T>{c.name}</T>
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Vazifa tavsifi *">
+            <textarea className="input min-h-[110px]" required value={form.description}
+                      onChange={(e) => setForm({ ...form, description: e.target.value })}
+                      placeholder={t("Vazifa haqida batafsilroq ma'lumot bering…")} />
+          </Field>
+
+          {/* Ish joyi — xaritadan tanlanadi. Viloyat/tuman avtomatik aniqlanadi. */}
+          <Field label="Ish joyi (xaritadan belgilang) *">
+            <MapPicker value={form.loc} onChange={(loc) => setForm((f) => ({ ...f, loc }))} />
+          </Field>
+
+          {/* Kim kerak — Figma: uchta segment tugma */}
+          <Field label="Kim kerak?">
+            <div className="grid grid-cols-3 gap-2.5">
+              {GENDER_OPTIONS.map((g) => {
+                const on = form.gender === g;
+                return (
+                  <button key={g} type="button" onClick={() => setForm({ ...form, gender: g })}
+                    className="rounded-lg border py-3 text-[13.5px] font-semibold inline-flex items-center justify-center gap-2 transition"
+                    style={on
+                      ? { borderColor: "var(--brand)", background: "var(--brand-soft)", color: "var(--brand)", borderWidth: 1.5 }
+                      : { borderColor: "var(--border-strong)", background: "var(--bg-subtle)", color: "var(--text-muted)" }}>
+                    <User2 size={15} /><T>{GENDER_LABEL[g]}</T>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-2 text-[12px] subtle"><T>«Aralash» tanlansa, e'lon barcha ishchilarga ko'rinadi.</T></div>
+          </Field>
+
+          {/* Ish haqi + ishchilar soni */}
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label="Ish haqi (UZS)">
+              <input
+                type="text" inputMode="numeric" className="input"
+                placeholder={t("Masalan: 150 000")}
+                value={form.priceAmount === "" ? "" : fmtThousands(String(form.priceAmount))}
+                onChange={(e) => {
+                  const digits = onlyDigits(e.target.value);
+                  setForm({ ...form, priceAmount: digits === "" ? "" : Number(digits) });
+                }}
+              />
+            </Field>
+            <Field label="Ishchilar soni *">
+              <div className="input flex items-center justify-between !py-1.5">
+                <button type="button" aria-label="−"
+                  onClick={() => setForm((f) => ({ ...f, workersNeeded: Math.max(1, (typeof f.workersNeeded === "number" ? f.workersNeeded : 1) - 1) }))}
+                  className="grid h-8 w-8 place-items-center rounded-lg text-lg font-bold transition hover:bg-[color:var(--brand-soft)]"
+                  style={{ color: "var(--brand)" }}>−</button>
+                <span className="text-[15px] font-bold heading">{form.workersNeeded || 1}</span>
+                <button type="button" aria-label="+"
+                  onClick={() => setForm((f) => ({ ...f, workersNeeded: (typeof f.workersNeeded === "number" ? f.workersNeeded : 1) + 1 }))}
+                  className="grid h-8 w-8 place-items-center rounded-lg text-lg font-bold transition hover:bg-[color:var(--brand-soft)]"
+                  style={{ color: "var(--brand)" }}>+</button>
+              </div>
+            </Field>
           </div>
-          <div className="mt-1 text-xs muted"><T>Kategoriyalardan birini tanlang.</T></div>
-        </Field>
 
-        <Field label="Batafsil ma'lumot *">
-          <textarea className="input min-h-[100px]" required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-        </Field>
+          {/* Narx turi — Figma: ikkita radio karta */}
+          <Field label="Kiritilgan summa nimani bildiradi?">
+            <div className="grid sm:grid-cols-2 gap-2.5">
+              {([
+                ["per_worker", "Har bir ishchi uchun", `Har bir ishchiga alohida ${fmtSum(live.per || 0)} so'm to'lanadi`],
+                ["total", "Umumiy summa", `${fmtSum(live.total || 0)} so'm barcha ishchilarga bo'linadi`],
+              ] as const).map(([val, title, hint]) => {
+                const on = form.pricingType === val;
+                return (
+                  <button key={val} type="button" onClick={() => setForm({ ...form, pricingType: val })}
+                    className="rounded-lg border p-3.5 text-left flex gap-2.5 transition"
+                    style={on
+                      ? { borderColor: "var(--brand)", background: "var(--brand-soft)", borderWidth: 1.5 }
+                      : { borderColor: "var(--border-strong)", background: "var(--bg-subtle)" }}>
+                    <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border-2"
+                          style={{ borderColor: on ? "var(--brand)" : "var(--border-strong)" }}>
+                      {on && <span className="h-2 w-2 rounded-full" style={{ background: "var(--brand)" }} />}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[13.5px] font-bold" style={{ color: on ? "var(--brand)" : "var(--text)" }}>
+                        <T>{title}</T>
+                      </span>
+                      <span className="block text-[11.5px] subtle mt-0.5">{hint}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
 
-        {/* Ish joyi — xaritadan tanlanadi. Viloyat/tuman avtomatik aniqlanadi. */}
-        <Field label="Ish joyi (xaritadan belgilang) *">
-          <MapPicker value={form.loc} onChange={(loc) => setForm((f) => ({ ...f, loc }))} />
-        </Field>
+          {live.neg ? (
+            <div className="rounded-lg p-3.5 text-[12.5px] leading-relaxed"
+                 style={{ background: "var(--accent-soft)", color: "var(--accent-text)" }}>
+              <T>Ish haqi maydonini bo'sh qoldirsangiz, e'lon avtomatik «Kelishiladi» sifatida joylanadi.</T>
+            </div>
+          ) : (
+            <div className="rounded-lg p-3.5 text-[12.5px] font-semibold"
+                 style={{ background: "var(--brand-soft)", color: "var(--brand)" }}>
+              <T>Jami to'lanadigan summa</T>: {fmtSum(live.total)} so'm ({fmtSum(live.per)} × {form.workersNeeded || 1} <T>ishchi</T>)
+            </div>
+          )}
 
-        <Field label="Ishchilar soni *">
-          <input
-            type="number" min={1} inputMode="numeric" className="input max-w-[200px]"
-            value={form.workersNeeded}
-            onChange={(e) => {
-              const v = e.target.value;
-              setForm({ ...form, workersNeeded: v === "" ? "" : Math.max(1, parseInt(v, 10) || 1) });
-            }}
-            onBlur={() => { if (form.workersNeeded === "" ) setForm((f) => ({ ...f, workersNeeded: 1 })); }}
-            placeholder={t("Masalan, 3")}
-          />
-        </Field>
-
-        <Field label="Kimlar kerak *">
-          <div className="flex flex-wrap gap-2">
-            {GENDER_OPTIONS.map((g) => (
-              <button key={g} type="button"
-                onClick={() => setForm({ ...form, gender: g })}
-                className={`chip ${form.gender === g ? "chip-active" : ""}`}>
-                <T>{GENDER_LABEL[g]}</T>
-              </button>
-            ))}
-          </div>
-          <div className="mt-1 text-xs muted"><T>Ishga erkaklar, ayollar yoki aralash kerakligini tanlang.</T></div>
-        </Field>
-
-        <Field label="Taklif qilinayotgan narx">
-          <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-center">
-            <select className="input" value={form.pricingType} onChange={(e) => setForm({ ...form, pricingType: e.target.value as any })}>
-              <option value="per_worker">{t("Har bir ishchi uchun")}</option>
-              <option value="total">{t("Umumiy summa")}</option>
-            </select>
-            <input
-              type="text" inputMode="numeric" className="input"
-              placeholder={t("Masalan, 150 000")}
-              value={form.priceAmount === "" ? "" : fmtThousands(String(form.priceAmount))}
-              onChange={(e) => {
-                const digits = onlyDigits(e.target.value);
-                setForm({ ...form, priceAmount: digits === "" ? "" : Number(digits) });
-              }}
-            />
-            <span className="text-sm text-[color:var(--text-muted)]">so'm</span>
-          </div>
-          <div className="mt-2 text-sm text-[color:var(--text-muted)]">
-            {live.neg ? <T>Agar narx kelishilgan holda bo'lsa, bo'sh qoldiring.</T> : <span><T>Kishi boshiga</T>: <b>{fmtSum(live.per)}</b> so'm • <T>Jami</T>: <b>{fmtSum(live.total)}</b> so'm</span>}
-          </div>
-        </Field>
-
-        <div className="grid sm:grid-cols-2 gap-3">
+          <div className="grid sm:grid-cols-2 gap-4">
           <Field label="Boshlanish sanasi *">
             <input required type="date" min={MIN_DATE} max={MAX_DATE} className="input" value={form.startDate}
               onChange={(e) => { const d = e.target.value; setForm({ ...form, startDate: d, workTimeFrom: clampTime(d, curH, curM) }); }} />
@@ -242,29 +291,34 @@ export default function CreateElon() {
             </div>
             <div className="mt-1 text-xs muted"><T>Kamida hozirgi vaqtdan 1 soat keyin (24 soatlik)</T></div>
           </Field>
-        </div>
+          </div>
 
-        <Field label="Aloqa telefon raqami *">
-          <input
-            className="input max-w-[260px]"
-            required
-            inputMode="numeric"
-            value={form.contactPhone}
-            onChange={(e) => setForm({ ...form, contactPhone: fmtPhone(e.target.value) })}
-            placeholder="+998 90 020 25 35"
-          />
-        </Field>
+          <Field label="Aloqa telefon raqami *">
+            <input
+              className="input sm:max-w-[280px]"
+              required
+              inputMode="numeric"
+              value={form.contactPhone}
+              onChange={(e) => setForm({ ...form, contactPhone: fmtPhone(e.target.value) })}
+              placeholder="+998 90 020 25 35"
+            />
+          </Field>
 
-        <Field label="Rasmlar (ixtiyoriy)">
-          <MultiImageUploader value={form.images} onChange={(images) => setForm({ ...form, images })} max={6} />
-          <div className="mt-1 text-xs muted">JPG / PNG / WebP, har biri 8MB gacha. Maks 6 ta rasm.</div>
-        </Field>
+          <Field label="Rasmlar (ixtiyoriy)">
+            <MultiImageUploader value={form.images} onChange={(images) => setForm({ ...form, images })} max={6} />
+            <div className="mt-1.5 text-[12px] subtle">JPG / PNG / WebP, har biri 8MB gacha. Maks 6 ta rasm.</div>
+          </Field>
 
-        <div className="flex flex-wrap justify-end gap-2">
-          <button type="button" className="btn-secondary" onClick={() => router.back()}><T>Bekor qilish</T></button>
-          <button className="btn-primary" disabled={create.isPending}><T>E'lonni joylashtirish</T></button>
-        </div>
-      </form>
+          <div className="divider" />
+
+          <div className="flex flex-wrap gap-2.5">
+            <button className="btn btn-primary flex-1 !py-3.5" disabled={create.isPending}>
+              <T>E'lonni joylashtirish</T>
+            </button>
+            <button type="button" className="btn btn-outline" onClick={() => router.back()}><T>Bekor qilish</T></button>
+          </div>
+        </form>
+      </div>
     </Shell>
   );
 }
@@ -272,8 +326,8 @@ export default function CreateElon() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-sm font-medium"><T>{label}</T></span>
-      <div className="mt-1">{children}</div>
+      <span className="text-[13px] font-bold heading"><T>{label}</T></span>
+      <div className="mt-1.5">{children}</div>
     </label>
   );
 }

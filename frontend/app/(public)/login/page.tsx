@@ -1,17 +1,20 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Send, ShieldCheck, Clock, MessageSquareText } from "lucide-react";
+import { Send, ExternalLink } from "lucide-react";
 import { api, setAccess, User } from "@/lib/api";
+import { AUTH_BOT_USERNAME } from "@/lib/contact";
 import { Button } from "@/components/ui/Button";
+import { Logo } from "@/components/Logo";
 import { T, useT } from "@/components/T";
-import { ScriptToggle } from "@/components/ScriptToggle";
+import { LangMenu } from "@/components/LangMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 type Req = { tgToken: string; botUrl: string; devCode?: string };
 type Verify = { accessToken: string; refreshToken: string; user: User };
 
+/** Figma "01 · Ro'yxatdan o'tish (Kod kiritish)": chapda ko'k panel, o'ngda kod kartasi. */
 export default function LoginPage() {
   const router = useRouter();
   const t = useT();
@@ -33,9 +36,9 @@ export default function LoginPage() {
   }, []);
 
   // Backend botUrl'ni bermasa (username sozlanmagan bo'lsa), token va ochiq
-  // bot username'idan zaxira havola quramiz. NEXT_PUBLIC_BOT_USERNAME sozlanmagan
-  // bo'lsa, rasmiy auth bot (@Ishchi_bormi_auth_bot) default sifatida ishlatiladi.
-  const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME || "Ishchi_bormi_auth_bot";
+  // bot username'idan zaxira havola quramiz. Bot nomi lib/contact.ts dagi
+  // yagona manbadan olinadi (NEXT_PUBLIC_BOT_USERNAME orqali sozlanadi).
+  const botUsername = AUTH_BOT_USERNAME;
   const effectiveBotUrl =
     botUrl || (tgToken && botUsername ? `https://t.me/${botUsername}?start=${tgToken}` : "");
   // t.me ba'zi tarmoqlarda brauzerda ochilmaydi (DNS bloklanishi mumkin), lekin
@@ -70,149 +73,159 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-        <div className="mx-auto max-w-6xl flex items-center justify-between px-6 py-3.5">
-          <Link href="/" className="font-extrabold text-xl heading tracking-tight">Ishchi Bormi</Link>
-          <div className="flex items-center gap-2">
-            <ScriptToggle />
-            <ThemeToggle />
+    <div className="min-h-screen grid lg:grid-cols-[38%_1fr]">
+      {/* ── Chap panel — Figma: ko'k gradient ─────────────────────── */}
+      <aside className="gradient-hero text-white hidden lg:flex flex-col justify-between p-12">
+        <Link href="/" className="text-[21px] font-black tracking-[-0.3px]">
+          <span className="text-white">Ishchi</span><span style={{ color: "var(--accent)" }}>Bormi</span>
+        </Link>
+        <div>
+          <h2 className="text-[38px] font-black leading-[1.15] tracking-[-1.2px]">
+            <T>Ish topish va</T><br /><T>ishchi yollash —</T><br /><T>bir joyda.</T>
+          </h2>
+          <p className="mt-5 text-[14px] text-white/75 leading-relaxed max-w-sm">
+            <T>Bitta hisob — ham ish qidiring, ham ishchi yollang. Telegram bot orqali bir daqiqada ro'yxatdan o'ting.</T>
+          </p>
+          <div className="mt-9 grid grid-cols-3 gap-4 max-w-md">
+            {[["30 soniya", "Ro'yxatdan o'tish"], ["0 so'm", "Xizmat haqi"], ["24/7", "Qo'llab-quvvatlash"]].map(([v, l]) => (
+              <div key={l}>
+                <div className="text-[20px] font-black"><T>{v}</T></div>
+                <div className="text-[11.5px] text-white/70 mt-0.5"><T>{l}</T></div>
+              </div>
+            ))}
           </div>
         </div>
-      </header>
+      </aside>
 
-      <main className="flex-1 grid place-items-center px-4 py-10">
-        <div className="grid lg:grid-cols-2 gap-6 lg:gap-12 items-center w-full max-w-5xl">
-          {/* Left: marketing */}
-          <div className="hidden lg:block animate-fade-in">
-            <h2 className="text-3xl font-extrabold heading leading-tight tracking-tight">
-              <T>Ishonchli ish va ishonchli ishchi — bir necha daqiqada</T>
-            </h2>
-            <p className="mt-3 text-sm muted">
-              <T>Telegram orqali xavfsiz kirish. Hech qanday parol, hech qanday murakkablik.</T>
-            </p>
-            <ul className="mt-6 grid gap-3">
-              <Feature icon={<ShieldCheck size={16} />} title="Tasdiqlangan profillar" body="Har bir foydalanuvchi telefon raqami orqali tasdiqlangan." />
-              <Feature icon={<Clock size={16} />} title="Tez login" body="Faqat 6 xonali kod — parol talab qilinmaydi." />
-              <Feature icon={<MessageSquareText size={16} />} title="To'g'ridan-to'g'ri aloqa" body="Vositachilarsiz — telefon orqali bevosita bog'laning." />
-            </ul>
+      {/* ── O'ng panel — kod kartasi ─────────────────────────────── */}
+      <div className="flex flex-col" style={{ background: "var(--bg-subtle)" }}>
+        <header className="flex items-center justify-between px-5 sm:px-10 py-5">
+          <div className="lg:hidden"><Logo /></div>
+          <div className="flex items-center gap-2 ml-auto">
+            <LangMenu />
+            <ThemeToggle />
           </div>
+        </header>
 
-          {/* Right: login card */}
-          <form
-            onSubmit={submit}
-            className="card-elevated w-full p-7 sm:p-9 animate-slide-up"
-          >
-            <div className="flex items-center justify-center h-12 w-12 rounded-2xl mx-auto" style={{ background: "var(--brand-soft)", color: "var(--brand)" }}>
-              <Send size={22} />
-            </div>
-            <h1 className="mt-4 text-center text-2xl font-extrabold heading tracking-tight">
-              <T>Telegram orqali kirish</T>
-            </h1>
-            <p className="mt-1.5 text-center text-sm muted">
-              <T>3 ta oddiy qadamda hisobingizga kiring</T>
+        <main className="flex-1 grid place-items-center px-5 sm:px-10 pb-10">
+          <form onSubmit={submit} className="card w-full max-w-[480px] p-7 sm:p-8 animate-slide-up">
+            <h1 className="text-[24px] font-black heading tracking-[-0.6px]"><T>Ro'yxatdan o'tish</T></h1>
+            <p className="mt-1.5 text-[13.5px] muted">
+              <T>Telegram botimiz orqali kod oling va quyida kiriting.</T>
             </p>
 
-            {/* Steps */}
-            <ol className="mt-6 surface p-4 rounded-xl space-y-3">
-              <Step n={1}><T>Pastdagi tugma orqali Telegram botga o'ting</T></Step>
-              <Step n={2}><T>"Start" tugmasini bosib, telefon raqamingizni yuboring</T></Step>
-              <Step n={3}><T>Bot yuborgan 6 xonali kodni bu yerga kiriting</T></Step>
-            </ol>
+            {/* 1-qadam */}
+            <div className="mt-6 rounded-xl p-4 flex gap-3" style={{ background: "var(--brand-soft)" }}>
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white"
+                    style={{ background: "var(--brand)" }}>
+                <Send size={16} />
+              </span>
+              <div>
+                <div className="text-[13px] font-bold" style={{ color: "var(--brand)" }}>
+                  <T>1-qadam · Telegram bot</T>
+                </div>
+                <div className="mt-1 text-[12.5px] muted leading-relaxed">
+                  <T>Botga o'ting, «Start» tugmasini bosing va 6 xonali kodni oling.</T>
+                </div>
+              </div>
+            </div>
 
-            {/* TG button */}
             <a
               href={effectiveBotUrl || "#"}
               target="_blank"
               rel="noreferrer"
               onClick={(e) => { if (!effectiveBotUrl) e.preventDefault(); }}
-              className="btn btn-tg btn-lg w-full mt-5 gap-2"
+              className="btn btn-outline w-full mt-3 gap-2"
             >
-              <Send size={16} /><T>Telegram botga o'tish</T>
+              <T>Telegram botni ochish</T><ExternalLink size={14} />
             </a>
 
             {/* t.me brauzerda ochilmasa (DNS bloklangan bo'lsa) — ilovada ochish */}
             {tgAppUrl && (
-              <a
-                href={tgAppUrl}
-                className="mt-2 block text-center text-xs muted underline underline-offset-2 hover:heading"
-              >
+              <a href={tgAppUrl} className="mt-2 block text-center text-[12px] subtle underline underline-offset-2 hover:text-[color:var(--text)]">
                 <T>Havola ochilmayaptimi? Telegram ilovasida ochish</T>
               </a>
             )}
 
-            {/* OTP input */}
+            {/* 2-qadam — kod kataklari */}
             <div className="mt-6">
-              <label className="text-sm font-medium heading"><T>Tasdiqlash kodi</T></label>
-              <input
-                inputMode="numeric"
-                pattern="\d{6}"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="• • • • • •"
-                className="input mt-2 text-center tracking-[0.7em] text-2xl font-bold py-3.5"
-                style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
-              />
+              <div className="text-[13px] font-bold heading mb-2.5"><T>2-qadam · Kodni kiriting</T></div>
+              <OtpBoxes value={code} onChange={(v) => { setCode(v); setError(""); }} />
               {error && (
-                <div className="mt-2 text-sm text-danger flex items-center gap-1.5 animate-fade-in">
-                  <span className="h-1.5 w-1.5 rounded-full bg-danger" />{error}
+                <div className="mt-3 text-[13px] text-danger flex items-center gap-1.5 animate-fade-in">
+                  <span className="h-1.5 w-1.5 rounded-full bg-danger shrink-0" />{error}
                 </div>
               )}
             </div>
 
-            <Button
-              type="submit"
-              size="lg"
-              fullWidth
-              className="mt-4"
-              disabled={code.length < 6}
-              loading={submitting}
-            >
-              {submitting ? <T>Tekshirilmoqda…</T> : <T>Kirish</T>}
+            <Button type="submit" size="lg" fullWidth className="mt-5" disabled={code.length < 6} loading={submitting}>
+              {submitting ? <T>Tekshirilmoqda…</T> : <T>Davom etish</T>}
             </Button>
 
-            <p className="mt-4 text-center text-xs muted">
-              <T>Kirish orqali siz</T>{" "}
+            <p className="mt-4 text-center text-[11.5px] subtle leading-relaxed">
+              <T>Davom etish orqali siz</T>{" "}
               <Link href="/foydalanish-shartlari" className="heading underline-offset-2 hover:underline"><T>Foydalanish shartlari</T></Link>{" "}
               <T>va</T>{" "}
               <Link href="/maxfiylik-siyosati" className="heading underline-offset-2 hover:underline"><T>Maxfiylik siyosati</T></Link>{" "}
               <T>ga rozilik bildirasiz.</T>
             </p>
           </form>
-        </div>
-      </main>
+        </main>
 
-      <footer className="border-t" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-        <div className="mx-auto max-w-6xl px-6 py-4 flex flex-col sm:flex-row justify-between gap-2 text-sm muted">
+        <footer className="px-5 sm:px-10 py-5 flex flex-col sm:flex-row justify-between gap-2 text-[12.5px] subtle">
           <div>© 2026 Ishchi Bormi</div>
           <div className="flex gap-5">
-            <Link href="/yordam"><T>Yordam</T></Link>
-            <Link href="/maxfiylik-siyosati"><T>Maxfiylik siyosati</T></Link>
+            <Link href="/yordam" className="hover:text-[color:var(--text)]"><T>Yordam</T></Link>
+            <Link href="/maxfiylik-siyosati" className="hover:text-[color:var(--text)]"><T>Maxfiylik siyosati</T></Link>
           </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
   );
 }
 
-function Step({ n, children }: { n: number; children: React.ReactNode }) {
-  return (
-    <li className="flex gap-3 text-sm">
-      <span className="shrink-0 grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold" style={{ background: "var(--brand)", color: "#fff" }}>{n}</span>
-      <span className="leading-relaxed">{children}</span>
-    </li>
-  );
-}
+/** Figma: 6 ta alohida katak. Bitta yashirin input emas — har katak alohida,
+ *  lekin qiymat yagona `code` satrida saqlanadi (qo'yib yuborish ham ishlaydi). */
+function OtpBoxes({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const refs = useRef<(HTMLInputElement | null)[]>([]);
 
-function Feature({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+  function setAt(i: number, ch: string) {
+    const digits = value.padEnd(6, " ").split("");
+    digits[i] = ch || " ";
+    onChange(digits.join("").replace(/\s+$/, "").replace(/\s/g, ""));
+  }
+
   return (
-    <li className="flex gap-3">
-      <span className="shrink-0 h-9 w-9 grid place-items-center rounded-xl" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>{icon}</span>
-      <div>
-        <div className="font-semibold heading text-sm"><T>{title}</T></div>
-        <div className="text-xs muted mt-0.5"><T>{body}</T></div>
-      </div>
-    </li>
+    <div className="flex gap-2.5">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <input
+          key={i}
+          ref={(el) => { refs.current[i] = el; }}
+          inputMode="numeric"
+          maxLength={1}
+          value={value[i] || ""}
+          onChange={(e) => {
+            const raw = e.target.value.replace(/\D/g, "");
+            if (raw.length > 1) {
+              // Kodni to'liq qo'yib yuborish
+              onChange(raw.slice(0, 6));
+              refs.current[Math.min(5, raw.length - 1)]?.focus();
+              return;
+            }
+            setAt(i, raw);
+            if (raw && i < 5) refs.current[i + 1]?.focus();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Backspace" && !value[i] && i > 0) refs.current[i - 1]?.focus();
+          }}
+          onPaste={(e) => {
+            const raw = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+            if (raw) { e.preventDefault(); onChange(raw); refs.current[Math.min(5, raw.length - 1)]?.focus(); }
+          }}
+          className="input !p-0 h-[52px] w-full text-center text-[22px] font-bold"
+          aria-label={`${i + 1}-raqam`}
+        />
+      ))}
+    </div>
   );
 }

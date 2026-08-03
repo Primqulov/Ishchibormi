@@ -8,10 +8,11 @@ import {
   Instagram, Youtube,
 } from "lucide-react";
 import { CONTACT, SOCIAL } from "@/lib/contact";
-import { ScriptToggle } from "@/components/ScriptToggle";
+import { LangMenu } from "@/components/LangMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { T, useT } from "@/components/T";
 import { getAccess } from "@/lib/api";
+import { Logo } from "@/components/Logo";
 
 type FAQ = { q: string; a: string };
 
@@ -37,7 +38,7 @@ const CATEGORIES: { id: string; label: string; icon: any; questions: FAQ[] }[] =
     icon: ClipboardList,
     questions: [
       { q: "Yangi e'lon qanday yarataman?",
-        a: "Sidebar'dagi 'E'lon berish' tugmasini bosing. Sarlavha, turkum, batafsil ma'lumot, ishchilar soni va narxni kiriting. E'lon avval qoralama (Qoralama) sifatida saqlanadi, keyin uni 'Joylashtirish' tugmasi orqali nashr qilasiz." },
+        a: "Yuqoridagi 'E'lon berish' tugmasini bosing. Vazifa nomi, kategoriya, tavsif, ish joyi (xaritadan), ishchilar soni, ish haqi va sana-vaqtni kiriting. Saqlaganingizdan so'ng e'lon darhol e'lonlar ro'yxatida ko'rinadi." },
       { q: "Yangi turkum qo'sha olamanmi?",
         a: "Ha. E'lon yaratish sahifasida 'Yangi turkum nomi' maydoniga yozib, '+ Qo'shish' tugmasini bosing — turkum darhol faollashadi va boshqa foydalanuvchilar uchun ham ko'rinadi." },
       { q: "Narxni 'Kelishiladi' qilib qo'yishim mumkinmi?",
@@ -130,9 +131,9 @@ export default function HelpPage() {
       {/* ── Header ─────────────────── */}
       <header className="border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
         <div className="mx-auto max-w-6xl flex items-center justify-between px-4 py-3">
-          <Link href="/" className="font-extrabold text-xl heading">Ishchi Bormi</Link>
+          <Logo />
           <div className="flex items-center gap-3">
-            <ScriptToggle />
+            <LangMenu />
             <ThemeToggle />
             <Link href={ctaHref} className="btn-primary"><T>Kirish</T></Link>
           </div>
