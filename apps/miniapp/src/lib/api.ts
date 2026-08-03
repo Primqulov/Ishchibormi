@@ -288,6 +288,9 @@ export interface Elon {
   createdAt: string;
   ownerName?: string;
   ownerAvatarUrl?: string;
+  /** Feed uchun denormalizatsiya qilingan — backend Elon modelida bor. */
+  ownerRating?: number;
+  ownerReviewsCount?: number;
   images?: string[];
 }
 
@@ -304,6 +307,9 @@ export interface Application {
   workerName?: string;
   ownerName?: string;
   ownerAvatarUrl?: string;
+  /** Feed uchun denormalizatsiya qilingan — backend Elon modelida bor. */
+  ownerRating?: number;
+  ownerReviewsCount?: number;
   peopleCount?: number;
   amount: number;
   isNegotiable: boolean;

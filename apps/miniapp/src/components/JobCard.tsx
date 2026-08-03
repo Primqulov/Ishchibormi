@@ -33,7 +33,7 @@ export const JobCard = memo(function JobCard({
   const when = fmtWhen(e.startDate, e.workTimeFrom);
   const negotiable = e.pricingType === "negotiable";
   const amount = e.perWorkerAmount || e.priceAmount;
-  const rating = 0; // Feed javobida ish beruvchi reytingi yo'q — quyida yashiriladi.
+  const rating = e.ownerRating || 0;
 
   const open = () => {
     haptic.tap();
@@ -130,7 +130,7 @@ export const JobCard = memo(function JobCard({
             className="pointer-events-auto relative z-[2] shrink-0 rounded-lg px-5 py-2 text-[16px] font-semibold leading-5 text-white transition active:scale-[0.97]"
             style={{ background: "var(--brand-light)", boxShadow: "0 1px 1px rgba(0,0,0,.05)" }}
           >
-            Ko'rish
+            Qabul qilish
           </button>
         </div>
       </div>

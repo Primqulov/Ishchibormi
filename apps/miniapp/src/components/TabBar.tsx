@@ -28,7 +28,7 @@ const TABS: { id: Tab; label: string; Icon: (p: { size?: number }) => JSX.Elemen
   { id: "home", label: "Asosiy", Icon: HomeIcon },
   { id: "jobs", label: "Ishlar", Icon: BriefcaseIcon },
   { id: "notifications", label: "Xabarlar", Icon: BellIcon },
-  { id: "profile", label: "Profil", Icon: UserIcon },
+  { id: "profile", label: "Profile", Icon: UserIcon },
 ];
 
 export function TabBar({
