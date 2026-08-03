@@ -77,9 +77,18 @@ func verifyInitData(initData, botToken string, now time.Time, ttl time.Duration)
 
 	pairs := make([]string, 0, len(values))
 	for k, v := range values {
-		// `hash` imzoning o'zi, `signature` esa Telegram'ning yangi Ed25519
-		// imzosi — ikkalasi ham data-check-string'ga kirmaydi.
-		if k == "hash" || k == "signature" {
+		// FAQAT `hash` chiqariladi.
+		//
+		// `signature` (Telegram'ning Ed25519 imzosi) ham chiqarilsa xato
+		// bo'ladi — u faqat UCHINCHI TARAF tekshiruvida (bot tokeniga ega
+		// bo'lmagan servis Telegram'ning ochiq kaliti bilan tekshirganda)
+		// data-check-string'dan olib tashlanadi. Bu yerdagi bot-token (HMAC)
+		// usulida esa `signature` oddiy maydon va imzoga KIRADI.
+		//
+		// Ilgari u ham chiqarilardi: eski klientlar `signature` yubormagani
+		// uchun hech narsa sezilmasdi, yangi klientlarda esa HAR BIR kirish
+		// 401 bo'lardi.
+		if k == "hash" {
 			continue
 		}
 		if len(v) == 0 {

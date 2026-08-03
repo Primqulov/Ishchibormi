@@ -25,13 +25,19 @@ const testBotToken = "123456:TEST-BOT-TOKEN-FOR-SIGNING"
 // aynan shuni. Test faqat handler'ni emas, imzo algoritmining o'zini ham
 // tekshirishi uchun bu yerda hash mustaqil ravishda qaytadan hisoblanadi
 // (verifyInitData ichidagi kodni chaqirmaydi).
-func signInitData(t *testing.T, botToken string, tgID int64, authDate time.Time) string {
+func signInitData(t *testing.T, botToken string, tgID int64, authDate time.Time, extra ...map[string]string) string {
 	t.Helper()
 	userJSON := `{"id":` + strconv.FormatInt(tgID, 10) + `,"first_name":"Test","language_code":"uz"}`
 	fields := map[string]string{
 		"auth_date": strconv.FormatInt(authDate.Unix(), 10),
 		"query_id":  "AAHdF6IQAAAAAN0XohDhrOrc",
 		"user":      userJSON,
+	}
+	// Klient versiyasiga qarab qo'shiladigan maydonlar (masalan `signature`).
+	for _, m := range extra {
+		for k, v := range m {
+			fields[k] = v
+		}
 	}
 
 	pairs := make([]string, 0, len(fields))
@@ -67,6 +73,49 @@ func TestVerifyInitDataAcceptsGenuineSignature(t *testing.T) {
 	}
 	if got != 555000111 {
 		t.Fatalf("telegramId = %d, kutilgan 555000111", got)
+	}
+}
+
+// Regressiya: yangi Telegram klientlari `signature` maydonini ham yuboradi.
+//
+// U bir vaqtlar data-check-string'dan `hash` bilan birga chiqarib tashlangandi
+// va natijada YANGI klientlarda har bir kirish 401 bo'lardi. Eski testlar buni
+// tuta olmasdi, chunki fixture `signature` ni umuman yubormasdi — ya'ni xato
+// bor kod yo'li testda hech qachon bosilmagan.
+//
+// `signature` faqat UCHINCHI TARAF (Ed25519) tekshiruvida chiqariladi; bu
+// yerdagi bot-token HMAC usulida u oddiy maydon va imzoga kiradi.
+func TestVerifyInitDataAcceptsSignatureField(t *testing.T) {
+	now := time.Now()
+	data := signInitData(t, testBotToken, 555000111, now, map[string]string{
+		"signature": "Rhx_nliDJcu1NunbUgJuqyBls-x5GGh-Q5OYEvysPgrViBMMA0g4htyE6befIZDgpihWJJ",
+	})
+
+	if !strings.Contains(data, "signature=") {
+		t.Fatal("test yaroqsiz: signature maydoni qo'shilmadi")
+	}
+
+	got, err := verifyInitData(data, testBotToken, now, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("signature maydoni bor initData rad etildi: %v", err)
+	}
+	if got != 555000111 {
+		t.Fatalf("telegramId = %d, kutilgan 555000111", got)
+	}
+}
+
+// `signature` imzoga kirgani uchun uni o'zgartirish ham hash'ni buzishi kerak.
+func TestVerifyInitDataRejectsTamperedSignatureField(t *testing.T) {
+	now := time.Now()
+	data := signInitData(t, testBotToken, 555000111, now, map[string]string{
+		"signature": "AAAA_original_value_AAAA",
+	})
+	tampered := strings.Replace(data, "AAAA_original_value_AAAA", "BBBB_swapped_value_BBBB", 1)
+	if tampered == data {
+		t.Fatal("test yaroqsiz: signature o'zgarmadi")
+	}
+	if _, err := verifyInitData(tampered, testBotToken, now, 24*time.Hour); err == nil {
+		t.Fatal("o'zgartirilgan signature bilan initData qabul qilindi")
 	}
 }
 
