@@ -117,7 +117,7 @@ export function MyElons({
           e.status === "recruiting" || e.status === "filled" || e.status === "in_progress";
 
         return (
-          <div key={e.id} className="card flex flex-col gap-3 p-4 animate-fade-in">
+          <div key={e.id} className="job-card flex flex-col gap-3 animate-fade-in">
             <div className="flex items-start gap-3">
               <button
                 type="button"
@@ -135,15 +135,15 @@ export function MyElons({
                     {e.categoryName}
                   </span>
                 )}
-                <h3 className="line-clamp-2 text-[15px] font-semibold leading-5 heading">
+                <h3 className="line-clamp-2 text-[18px] font-semibold leading-[22.5px] heading">
                   {e.title}
                 </h3>
               </button>
               <span className={`${s.cls} shrink-0`}>{s.label}</span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] muted">
-              <span className="font-bold tabular-nums" style={{ color: "var(--brand)" }}>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[14px] muted">
+              <span className="text-[18px] font-bold tabular-nums" style={{ color: "var(--brand)" }}>
                 {negotiable ? "Kelishiladi" : `${fmtSum(e.perWorkerAmount || e.priceAmount)} so'm`}
               </span>
               <span className="inline-flex items-center gap-1">

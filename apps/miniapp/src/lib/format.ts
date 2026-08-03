@@ -81,6 +81,34 @@ export function fromNow(iso?: string): string {
   return `${Math.round(months / 12)} yil oldin`;
 }
 
+/** "14:05" — bildirishnomalar ro'yxatida yozuv o'ng chetida turadi. */
+export function fmtTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Sana guruhi sarlavhasi: "Bugun", "Kecha" yoki "12 avgust".
+ *
+ * Bildirishnomalar shu bo'yicha guruhlanadi (maketda "BUGUN" sarlavhasi) —
+ * qator sanani takrorlagandan ko'ra bir marta sarlavha berish qisqa va
+ * telefon ekranida kam joy oladi.
+ */
+export function dayGroup(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const diff = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86_400_000);
+  if (diff === 0) return "Bugun";
+  if (diff === 1) return "Kecha";
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return sameYear
+    ? `${d.getDate()} ${MONTHS_UZ[d.getMonth()]}`
+    : `${d.getDate()} ${MONTHS_UZ[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 /** 0.84 → "840 m", 3.42 → "3.4 km". */
 export function fmtKm(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;

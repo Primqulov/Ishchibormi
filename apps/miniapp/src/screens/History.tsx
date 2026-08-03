@@ -131,7 +131,7 @@ export function History({
                 haptic.tap();
                 onOpenJob(a.elonId);
               }}
-              className="card flex w-full gap-3 p-4 text-left transition active:scale-[0.99] animate-fade-in"
+              className="job-card flex w-full gap-3 animate-fade-in"
             >
               <span
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-full"
@@ -146,7 +146,7 @@ export function History({
 
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-2">
-                  <h3 className="line-clamp-2 min-w-0 flex-1 text-[14.5px] font-semibold leading-5 heading">
+                  <h3 className="line-clamp-2 min-w-0 flex-1 text-[16px] font-semibold leading-[21px] heading">
                     {a.elonTitle}
                   </h3>
                   <span className={`${s.cls} shrink-0`}>{s.label}</span>

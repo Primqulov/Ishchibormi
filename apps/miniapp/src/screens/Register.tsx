@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { Logo } from "@/components/Logo";
 import { AUTH_BOT_USERNAME, requestOtp, verifyOtp, type APIError } from "@/lib/api";
 import { haptic, openTelegramLink, showMainButton } from "@/lib/telegram";
 
@@ -79,16 +80,17 @@ export function Register({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex min-h-[70vh] flex-col justify-center gap-6 px-5 py-8 animate-fade-in">
       <div className="flex flex-col items-center gap-3 text-center">
+        <Logo size={24} />
         <span
-          className="grid h-16 w-16 place-items-center rounded-2xl text-[30px]"
+          className="mt-1 grid h-16 w-16 place-items-center rounded-2xl text-[30px]"
           style={{ background: "var(--brand-soft)" }}
         >
           👋
         </span>
-        <h1 className="text-[22px] font-black tracking-[-0.4px] heading">
-          Ishchi Bormi'ga xush kelibsiz
+        <h1 className="text-[24px] font-bold leading-8 tracking-[-0.24px] heading">
+          Ro'yxatdan o'tish
         </h1>
-        <p className="max-w-[300px] text-[14px] leading-relaxed muted">
+        <p className="max-w-[300px] text-[16px] leading-6 muted">
           Ish berish va ariza yuborish uchun telefon raqamingiz kerak — ish beruvchi
           siz bilan shu raqam orqali bog'lanadi.
         </p>
