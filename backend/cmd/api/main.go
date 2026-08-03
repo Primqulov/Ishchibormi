@@ -192,6 +192,9 @@ func main() {
 			r.Post("/auth/otp/request", authH.RequestOTP)
 			r.Post("/auth/otp/verify", authH.VerifyOTP)
 			r.Get("/auth/otp/peek", authH.DevPeekOTP)
+			// Telegram Mini App kirishi. OTP bilan bir xil limiter ostida:
+			// imzo tekshiruvi arzon emas va bu ham autentifikatsiya nuqtasi.
+			r.Post("/auth/telegram/webapp", authH.TelegramWebApp)
 		})
 		r.With(refreshLimiter.Middleware("refresh")).Post("/auth/refresh", authH.Refresh)
 

@@ -38,6 +38,19 @@ type Config struct {
 	TelegramBotToken    string
 	TelegramBotUsername string
 
+	// TelegramMiniAppBotToken — Telegram Mini App joylashgan botning tokeni.
+	// Mini App'ning `initData` imzosi HAR DOIM uni ochgan botning tokeni bilan
+	// hisoblanadi, shuning uchun bu OTP botidan boshqa bot bo'lsa alohida
+	// berilishi shart. Bo'sh bo'lsa TelegramBotToken ishlatiladi (Mini App va
+	// OTP bir botda bo'lgan holat); ikkalasi ham bo'sh bo'lsa /auth/telegram/webapp
+	// 503 qaytaradi — imzoni tekshirib bo'lmasa kirishga ruxsat berilmaydi.
+	TelegramMiniAppBotToken string
+
+	// MiniAppInitDataTTL — `initData` ning `auth_date` maydoni shundan eski
+	// bo'lsa rad etiladi. initData qayta ishlatilishi mumkin bo'lgan yagona
+	// cheklov shu, ya'ni bu replay oynasining kengligi.
+	MiniAppInitDataTTL time.Duration
+
 	// FCMCredentialsFile — Firebase service-account JSON fayl yo'li (mobil
 	// push uchun). Bo'sh bo'lsa push jimgina o'chiq: API to'liq ishlayveradi,
 	// bildirishnomalar faqat in-app (polling) bo'lib qoladi.
@@ -157,6 +170,10 @@ func Load() Config {
 		TelegramBotToken:    envStr("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername: envStr("TELEGRAM_BOT_USERNAME", ""),
 
+		TelegramMiniAppBotToken: envStr("TELEGRAM_MINIAPP_BOT_TOKEN", ""),
+		MiniAppInitDataTTL: time.Duration(
+			envInt("MINIAPP_INITDATA_TTL_HOURS", 24)) * time.Hour,
+
 		FCMCredentialsFile: envStr("FCM_CREDENTIALS_FILE", ""),
 
 		AWSRegion:          envStr("AWS_REGION", "eu-central-1"),
@@ -182,6 +199,17 @@ func Load() Config {
 }
 
 func (c Config) IsProd() bool { return c.AppEnv == "production" || c.AppEnv == "prod" }
+
+// MiniAppBotToken — `initData` imzosini tekshirish uchun ishlatiladigan token.
+// Mini App alohida botda tursa TELEGRAM_MINIAPP_BOT_TOKEN, OTP boti bilan bir
+// xil botda tursa TELEGRAM_BOT_TOKEN. Bo'sh qiymat "sozlanmagan" degani va
+// chaqiruvchi kirishni rad etishi kerak.
+func (c Config) MiniAppBotToken() string {
+	if t := strings.TrimSpace(c.TelegramMiniAppBotToken); t != "" {
+		return t
+	}
+	return strings.TrimSpace(c.TelegramBotToken)
+}
 
 // mustValidate fails fast in production when insecure defaults are left in
 // place. This prevents accidentally shipping forgeable JWTs, a default admin
