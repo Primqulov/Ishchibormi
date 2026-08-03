@@ -3,13 +3,12 @@
 @tailwind utilities;
 
 /* ── Dizayn tokenlari ─────────────────────────────────────────────────
-   Web/frontend/app/globals.css dan ko'chirilgan (Figma "Ishchi Bormi —
-   Web Dizayn"). Mini App saytdan farq qilmasligi kerak, shuning uchun bu
-   qiymatlar shu yerda "qaytadan o'ylab topilmaydi".
+   Qiymatlar mobil ilova maketidan ("mobile dizayin/" — 32 ta ekran) va
+   apps/web/app/globals.css dan. Ular bir xil palitra: bir mahsulotning
+   uch klienti bir xil ko'rinishi kerak, shuning uchun bu yerda hech nima
+   "qaytadan o'ylab topilmaydi".
 
-   Farqi bitta: Telegram o'z mavzusini beradi va foydalanuvchi kun/tun
-   rejimini Telegram sozlamalaridan boshqaradi — shuning uchun .dark
-   klassini src/lib/telegram.ts o'rnatadi, sayt kabi tugma orqali emas.   */
+   Ilova FAQAT kunduzgi rejimda — sababi pastdagi izohda.                */
 :root {
   /* Sahifa foni Figma maketidagidek #F8F9FF (mobil ilova dizayni). Sayt
      ko'proq kulrang (#EEF0FA) ishlatadi — Mini App esa telefon maketiga
@@ -48,33 +47,13 @@
   --tabbar-h: 60px;
 }
 
-.dark {
-  --bg:           #070C1C;
-  --bg-subtle:    #101736;
-  --card:         #0E1430;
-  --border:       rgba(148, 163, 220, 0.14);
-  --border-strong:rgba(148, 163, 220, 0.24);
-  --text:         #E9EDF9;
-  --text-muted:   #A8AEC6;
-  --text-subtle:  #7C8298;
-  --heading:      #FFFFFF;
-
-  --ring:         rgba(90, 140, 255, 0.35);
-  --accent:       #FFA928;
-  --accent-soft:  rgba(255, 149, 0, 0.16);
-  --accent-text:  #FFC670;
-  --brand:        #4C7CFF;
-  --brand-light:  #6E96FF;
-  --brand-soft:   rgba(76, 124, 255, 0.14);
-  --brand-tint:   rgba(76, 124, 255, 0.18);
-  --brand-100:    rgba(76, 124, 255, 0.24);
-
-  --shadow-card:  0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.04);
-  --shadow-pop:   0 24px 48px -16px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  --shadow-blue:  0 6px 16px -6px rgba(0, 0, 0, 0.6);
-
-  --hero-grad: linear-gradient(135deg, #16255E 0%, #1E3A8A 100%);
-}
+/* Tungi rejim ATAYLAB yo'q.
+   Dizayn maketi ("mobile dizayin/" — 32 ta ekran) faqat kunduzgi rejimda
+   chizilgan va ilova unga 1:1 mos bo'lishi kerak. Tungi palitrani o'ylab
+   topish ikkala rejimni ham maketdan uzoqlashtirardi. Telegram tungi
+   rejimda bo'lsa ham ilova kunduzgi qoladi — src/lib/telegram.ts
+   applyTheme() ga qarang. Tungi rejim kerak bo'lsa, avval maketda
+   chizilishi kerak. */
 
 /* ── Baza — mobil uchun sozlangan ─────────────────────────────────── */
 html, body, #root {
@@ -287,7 +266,6 @@ input, textarea { -webkit-user-select: text; user-select: text; }
   /* Reyting: yulduzcha yonidagi raqam (maketda to'q sariq-jigarrang). */
   .rating { color: #7A4A00; font-size: 0.625rem; font-weight: 600; line-height: 15px; }
 }
-.dark .rating { color: var(--accent-text); }
 
 /* ── Yordamchilar ─────────────────────────────────────────────────── */
 

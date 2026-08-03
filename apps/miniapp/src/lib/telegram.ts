@@ -121,29 +121,39 @@ export function initTelegram() {
   applyTheme();
   applyViewport();
 
-  // Foydalanuvchi Telegram sozlamalarida kun/tun rejimini almashtirsa ilova
-  // ham darhol o'zgarsin.
-  tg.onEvent("themeChanged", applyTheme);
-  // Klaviatura ochilishi/yopilishi va oynaning cho'zilishi.
+  // Mavzu Telegram'dan OLINMAYDI (pastdagi izohga qarang), shuning uchun
+  // `themeChanged` ga obuna bo'lish shart emas. Klaviatura ochilishi va
+  // oynaning cho'zilishi esa kerak.
   tg.onEvent("viewportChanged", applyViewport);
 }
 
-/** Telegram mavzusini CSS o'zgaruvchilariga bog'laydi. */
+/**
+ * Ilova HAR DOIM kunduzgi rejimda.
+ *
+ * Telegram `colorScheme` beradi va unga ergashish texnik jihatdan oson, lekin
+ * mahsulot qarori boshqacha: dizayn maketi ("mobile dizayin/" — 32 ta ekran)
+ * faqat kunduzgi rejimda chizilgan va ilova unga 1:1 mos bo'lishi kerak.
+ * Tungi palitra maketda yo'q, ya'ni uni o'ylab topish kerak bo'lardi — natijada
+ * ikkala rejim ham maketdan farq qilardi.
+ *
+ * Shu sababli `.dark` klassi hech qachon qo'yilmaydi va index.css dan tungi
+ * tokenlar olib tashlangan. Kelajakda tungi rejim kerak bo'lsa, u avval
+ * maketda chizilishi kerak.
+ *
+ * Telegram'ning o'z sarlavha va fon ranglari ham yoritiladi — aks holda
+ * tungi rejimdagi foydalanuvchida ilova tepasida to'q chiziq qolib ketardi.
+ */
 function applyTheme() {
+  document.documentElement.classList.remove("dark");
   if (!tg) return;
-  const dark = tg.colorScheme === "dark";
-  document.documentElement.classList.toggle("dark", dark);
-
-  // Sarlavha va fon ranglari ilovaning o'z foni bilan bir xil bo'lsin —
-  // aks holda tepada boshqa rangdagi chiziq qolib ketadi.
-  const bg = dark ? "#070C1C" : "#EEF0FA";
+  const bg = "#F8F9FF"; // index.css dagi --bg bilan bir xil
   tg.setHeaderColor?.(bg);
   tg.setBackgroundColor?.(bg);
 }
 
+/** Brauzer rejimi: tizim tungi rejimda bo'lsa ham ilova kunduzgi qoladi. */
 function applySystemTheme() {
-  const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  document.documentElement.classList.toggle("dark", Boolean(dark));
+  document.documentElement.classList.remove("dark");
 }
 
 /**

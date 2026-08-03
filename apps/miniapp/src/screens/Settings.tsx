@@ -7,8 +7,8 @@
  *  - **Til**. Mobil ilovada til ilova ichida tanlanadi. Mini App esa
  *    Telegram'ning tilini oladi (`language_code`), chunki foydalanuvchi
  *    allaqachon Telegram'da tilni tanlagan — ikkinchi marta so'rash ortiqcha.
- *  - **Mavzu (kun/tun)**. Telegram beradi; ilova ichida almashtirgich qo'yish
- *    Telegram bilan qarama-qarshi holat yaratardi.
+ *  - **Mavzu**. Ilova har doim kunduzgi: maket faqat shu rejimda chizilgan
+ *    (src/lib/telegram.ts applyTheme dagi izoh).
  *
  * Shuning uchun ular ko'rsatiladi, lekin faqat o'qish uchun.
  */
@@ -22,7 +22,7 @@ import {
   HelpIcon,
   ChevronRightIcon,
 } from "@/components/icons";
-import { haptic, openExternal, tg } from "@/lib/telegram";
+import { haptic, openExternal } from "@/lib/telegram";
 
 const SITE = "https://ishchibormi.uz";
 
@@ -45,7 +45,6 @@ export function Settings({
   // o'qish uchun `user` maydonini parse qilish kerak emas — SDK'ning
   // o'zi ham bermaydi, shuning uchun oddiy zaxira.
   const lang = (navigator.language || "uz").slice(0, 2);
-  const dark = tg?.colorScheme === "dark";
 
   return (
     <div className="flex flex-col gap-5 px-4 pb-6 pt-4 animate-fade-in">
@@ -65,8 +64,8 @@ export function Settings({
         <Row
           icon={<ShieldIcon size={18} />}
           label="Mavzu"
-          value={dark ? "Tungi" : "Kunduzgi"}
-          hint="Telegram sozlamasiga ergashadi"
+          value="Kunduzgi"
+          hint="Ilova doim kunduzgi rejimda"
           last
         />
       </Group>

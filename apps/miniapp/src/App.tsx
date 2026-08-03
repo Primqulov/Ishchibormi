@@ -275,7 +275,14 @@ export default function App() {
         </>
       ) : (
         <>
-          <AppHeader unread={unread} onBell={() => changeTab("notifications")} />
+          {/* Maketda "Bildirishnomalar" markazda ko'k sarlavha bilan
+              turadi (logo emas). "Orqaga" strelkasi esa qo'yilmadi: bu tab,
+              ya'ni qaytadigan joy yo'q — strelka yolg'on va'da bo'lardi. */}
+          {tab === "notifications" ? (
+            <ScreenHeader title="Bildirishnomalar" />
+          ) : (
+            <AppHeader unread={unread} onBell={() => changeTab("notifications")} />
+          )}
 
           {tab === "home" && (
             <Feed
