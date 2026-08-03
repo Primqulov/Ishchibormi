@@ -306,6 +306,9 @@ export const DoubleCheckIcon = svg(
   </>,
 );
 
+/** Yuborish — maketdagi "E'lonni joylashtirish" tugmasidagi qog'oz samolyot. */
+export const SendIcon = svg(<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z" />);
+
 export const GlobeIcon = svg(
   <>
     <circle cx="12" cy="12" r="10" />
