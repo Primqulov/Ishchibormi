@@ -15,9 +15,19 @@ apps/
 └── miniapp/        # Vite + React + TS + Tailwind — ilovaning o'zi
     └── src/
         ├── lib/        telegram.ts · api.ts · format.ts · cat-color.ts
-        ├── components/ JobCard · TabBar · ui · icons
-        └── screens/    Feed · JobDetail · MyApplications · Profile · Register
+        │               leaflet.ts (dinamik) · cluster.ts
+        ├── components/ JobCard · TabBar · LocationPicker · ui · icons
+        └── screens/    Feed · MapView · JobDetail · MyApplications
+                        PostJob · MyElons · Notifications
+                        Profile · ProfileEdit · History · Register
 ```
+
+Navigatsiya ikki qavatli: pastda to'rt tab (**Ishlar · Arizalarim ·
+Xabarlar · Profil**) va o'rtada ko'tarilgan **E'lon** tugmasi; ustida esa
+overlay steki (e'lon tafsiloti, e'lon berish, profil tahriri, ...). Tuzilishi
+mobil ilovanikidan ko'chirilgan (`flutter-app` →
+`core/widgets/app_bottom_nav_bar.dart`) — bir mahsulotning ikki klienti bir
+xil amalni bir xil joydan taklif qilishi kerak.
 
 Servislar ildizdagi `docker-compose.yml` da, `miniapp` **profili** ortida —
 `docker compose up` ularni ko'tarmaydi (Mini App hali prod'ga chiqarilmagan).
@@ -137,9 +147,20 @@ qo'shilgani bitta endpoint.
 sizib ketsa ham hujumchi qo'liga na baza, na JWT siri tushadi.
 
 **Nega Next.js emas, Vite.** Mini App'ga SSR va marshrutlash kerak emas,
-foydalanuvchilar mobil internetda. Natija: **~56 KB gzip**. Dizayn bir xilligi
-build tool'ga bog'liq emas — `tailwind.config.ts` va `index.css` dagi tokenlar
-`apps/web` dan ko'chirilgan.
+foydalanuvchilar mobil internetda. Natija: **~66 KB gzip** (JS) + 5 KB CSS.
+Dizayn bir xilligi build tool'ga bog'liq emas — `tailwind.config.ts` va
+`index.css` dagi tokenlar `apps/web` dan ko'chirilgan.
+
+**Nega leaflet dinamik yuklanadi.** Xarita kutubxonasi ~44 KB gzip, ya'ni
+ilovaning qolgan qismidan kattaroq. Foydalanuvchilarning ko'pchiligi xaritani
+ochmaydi — ro'yxat va qidiruv yetarli. `lib/leaflet.ts` uni `import()` bilan
+alohida chunk qiladi va u faqat xarita birinchi marta ochilganda tortiladi:
+xarita ochmagan odam uning hajmini to'lamaydi.
+
+**Nega xarita pinlari rasm emas, HTML.** Leaflet'ning standart markeri
+`marker-icon.png` ni nisbiy yo'ldan qidiradi va bundler bilan deyarli har
+doim sinadi. `divIcon` bu bog'liqlikni butunlay yo'q qiladi va pin rangini
+dizayn tokenidan olish imkonini beradi.
 
 **Nega router kutubxonasi yo'q.** Ekranlar beshta, manzil qatori yo'q. Oddiy
 holat + `history.pushState` ishlatiladi, chunki tarix Telegram'ning
@@ -186,18 +207,31 @@ cd apps/miniapp && npm run build
 
 Telefonda qo'lda tekshirish kerak bo'lganlar: klaviatura ochilganda layout,
 scroll'da ilova yopilmasligi, qorong'i rejimga o'tish, BackButton va tab
-bar'ning safe-area'si.
+bar'ning safe-area'si. Qo'shimcha: xaritada pin/klaster bosilishi, rasm
+yuklash (kamera va galereya), GPS ruxsati rad etilgan holat.
 
 ---
 
-## 7. v1 ga kirmagan (keyingi bosqich)
+## 7. Nima bor va nima yo'q
 
-- **E'lon berish** — rasm yuklash + xarita orqali joy tanlash kerak, shuning
-  uchun alohida bosqichga qoldirildi. Hozircha ish beruvchi e'lonni saytda
-  yoki mobil ilovada beradi.
-- **Bildirishnomalar** ro'yxati (`/api/notifications` tayyor).
-- **Xarita ko'rinishi** — saytdagi `JobMapExplorer` ning mobil varianti.
-- **Ish tarixi** va profilni tahrirlash.
+Bor: ishlar ro'yxati va qidiruv, **xarita ko'rinishi** (klasterli),
+e'lon tafsiloti va ariza berish, arizalarim, **bildirishnomalar**,
+**e'lon berish** (rasm yuklash + xaritadan joy tanlash), **e'lonlarim**
+(bekor qilish bilan), **ish tarixi**, **profilni tahrirlash** (avatar,
+ism, hudud, bio, ko'nikmalar).
+
+Hali yo'q — ataylab:
+
+- **E'lonni tahrirlash.** Yaratish bor, tahrirlash yo'q: `PATCH /api/elons/{id}`
+  tayyor, lekin ariza berilgan e'londa narx/sana o'zgarsa ishchi bilan
+  kelishuv buziladi. Avval "o'zgarish bo'ldi" bildirishnomasi kerak.
+- **Arizani qabul qilish/rad etish.** Ish beruvchi e'loniga kelgan arizalarni
+  Mini App'da ko'ra olmaydi (`/api/my/elons/applications` tayyor). Bu qaror
+  ishchining ishga chiqishini belgilaydi va noto'g'ri bosilsa qaytarib
+  bo'lmaydi — alohida tasdiqlash oqimi bilan qilinishi kerak.
+- **Baho/izoh qoldirish** (`/api/applications/{id}/review`).
+- **Hisobni o'chirish** — tasdiqlash oqimini talab qiladi, saytda va mobil
+  ilovada bor.
 
 ---
 

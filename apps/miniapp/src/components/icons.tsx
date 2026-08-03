@@ -121,3 +121,76 @@ export const RefreshIcon = svg(
     <path d="M3 21v-5h5" />
   </>,
 );
+
+export const BellIcon = svg(
+  <>
+    <path d="M10.27 21a2 2 0 0 0 3.46 0" />
+    <path d="M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.4 13.92 18 12.5 18 8a6 6 0 0 0-12 0c0 4.5-1.4 5.92-2.74 7.33" />
+  </>,
+);
+
+export const PlusIcon = svg(<path d="M12 5v14M5 12h14" />);
+
+export const ImageIcon = svg(
+  <>
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21" />
+  </>,
+);
+
+export const TrashIcon = svg(
+  <>
+    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+  </>,
+);
+
+export const CalendarIcon = svg(
+  <>
+    <rect width="18" height="18" x="3" y="4" rx="2" />
+    <path d="M16 2v4M8 2v4M3 10h18" />
+  </>,
+);
+
+export const MapIcon = svg(
+  <>
+    <path d="M14.1 4.1 9.9 2 2 6v16l7.9-4 4.2 2.1L22 16V0l-7.9 4.1Z" />
+    <path d="M9.9 2v16M14.1 4v16" />
+  </>,
+);
+
+export const ListIcon = svg(<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />);
+
+export const EditIcon = svg(
+  <>
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+    <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z" />
+  </>,
+);
+
+export const ChevronRightIcon = svg(<path d="m9 18 6-6-6-6" />);
+
+export const HistoryIcon = svg(
+  <>
+    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+    <path d="M3 3v5h5M12 7v5l3.5 2" />
+  </>,
+);
+
+/** GPS — "joriy joylashuvim". */
+export const CrosshairIcon = svg(
+  <>
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="2.5" />
+    <path d="M12 1v3M12 20v3M1 12h3M20 12h3" />
+  </>,
+);
+
+export const MoneyIcon = svg(
+  <>
+    <rect width="20" height="13" x="2" y="6" rx="2" />
+    <circle cx="12" cy="12.5" r="2.5" />
+    <path d="M6 10v5M18 10v5" />
+  </>,
+);

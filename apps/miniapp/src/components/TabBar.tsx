@@ -6,70 +6,146 @@
  * bo'lmaydi. Telegram'ning o'z sarlavha paneli tepada turgani uchun ham
  * navigatsiyani pastga tushirish to'g'ri bo'ladi.
  *
+ * Tuzilishi mobil ilovanikidan ko'chirilgan (flutter-app →
+ * core/widgets/app_bottom_nav_bar.dart): to'rt yon tab va o'rtada ko'tarilgan
+ * "E'lon" tugmasi. Bir mahsulotning ikki klienti bir xil joydan bir xil
+ * amalni taklif qilishi kerak — foydalanuvchi ikkalasini ham ishlatadi.
+ *
  * pb-safe — iPhone'ning home indikatori ustidan qo'shimcha bo'shliq.
  */
 
-import { BriefcaseIcon, FileTextIcon, UserIcon } from "./icons";
+import { BriefcaseIcon, FileTextIcon, BellIcon, UserIcon } from "./icons";
 import { haptic } from "@/lib/telegram";
 
-export type Tab = "feed" | "applications" | "profile";
+export type Tab = "feed" | "applications" | "notifications" | "profile";
 
 const TABS: { id: Tab; label: string; Icon: (p: { size?: number }) => JSX.Element }[] = [
   { id: "feed", label: "Ishlar", Icon: BriefcaseIcon },
   { id: "applications", label: "Arizalarim", Icon: FileTextIcon },
+  { id: "notifications", label: "Xabarlar", Icon: BellIcon },
   { id: "profile", label: "Profil", Icon: UserIcon },
 ];
 
 export function TabBar({
   active,
   onChange,
-  badge,
+  onPost,
+  unread,
+  pendingCount,
 }: {
   active: Tab;
   onChange: (t: Tab) => void;
+  /** Markaziy "E'lon" tugmasi — yangi e'lon berish. */
+  onPost: () => void;
+  /** "Xabarlar" ustidagi nuqta — o'qilmagan bildirishnomalar soni. */
+  unread?: number;
   /** "Arizalarim" ustidagi nuqta — javob kutilayotgan arizalar soni. */
-  badge?: number;
+  pendingCount?: number;
 }) {
   return (
     <nav
-      className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-md"
+      className="pb-safe fixed inset-x-0 bottom-0 z-30 backdrop-blur-md"
       style={{
-        borderColor: "var(--border)",
+        borderTop: "1px solid var(--border)",
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
         background: "color-mix(in srgb, var(--card) 94%, transparent)",
+        boxShadow: "0 -6px 24px rgba(10, 28, 48, 0.08)",
       }}
     >
-      <div className="mx-auto flex max-w-md items-stretch">
-        {TABS.map(({ id, label, Icon }) => {
-          const on = active === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              onClick={() => {
-                if (!on) haptic.select();
-                onChange(id);
-              }}
-              // min-h-[52px]: teginish maydoni barmoq uchun yetarli bo'lsin.
-              className="relative flex min-h-[52px] flex-1 flex-col items-center justify-center gap-1 pt-1.5 transition"
-              style={{ color: on ? "var(--brand)" : "var(--text-subtle)" }}
-              aria-current={on ? "page" : undefined}
-            >
-              <span className="relative">
-                <Icon size={21} />
-                {id === "applications" && badge ? (
-                  <span
-                    className="absolute -right-1.5 -top-1 grid h-[15px] min-w-[15px] place-items-center rounded-full px-1 text-[9px] font-bold text-white"
-                    style={{ background: "var(--accent)" }}
-                  >
-                    {badge > 9 ? "9+" : badge}
-                  </span>
-                ) : null}
-              </span>
-              <span className="text-[10.5px] font-semibold tracking-[0.1px]">{label}</span>
-            </button>
-          );
-        })}
+      <div className="relative mx-auto flex max-w-md items-stretch">
+        <TabItem tab={TABS[0]} active={active} onChange={onChange} badge={undefined} />
+        <TabItem tab={TABS[1]} active={active} onChange={onChange} badge={pendingCount} />
+
+        {/* O'rtadagi slot: yozuv shu yerda, doira esa ustida "suzadi". */}
+        <div className="relative flex flex-1 flex-col items-center justify-end pb-1.5">
+          <PostButton onClick={onPost} />
+          <span className="text-[10.5px] font-semibold tracking-[0.1px] subtle">E'lon</span>
+        </div>
+
+        <TabItem tab={TABS[2]} active={active} onChange={onChange} badge={unread} />
+        <TabItem tab={TABS[3]} active={active} onChange={onChange} badge={undefined} />
       </div>
     </nav>
+  );
+}
+
+function TabItem({
+  tab,
+  active,
+  onChange,
+  badge,
+}: {
+  tab: { id: Tab; label: string; Icon: (p: { size?: number }) => JSX.Element };
+  active: Tab;
+  onChange: (t: Tab) => void;
+  badge?: number;
+}) {
+  const { id, label, Icon } = tab;
+  const on = active === id;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!on) haptic.select();
+        onChange(id);
+      }}
+      // min-h-[52px]: teginish maydoni barmoq uchun yetarli bo'lsin.
+      className="relative flex min-h-[52px] flex-1 flex-col items-center justify-center gap-1 pt-1.5 transition"
+      style={{ color: on ? "var(--brand)" : "var(--text-subtle)" }}
+      aria-current={on ? "page" : undefined}
+    >
+      <span className="relative">
+        <Icon size={21} />
+        {badge ? (
+          <span
+            className="absolute -right-1.5 -top-1 grid h-[15px] min-w-[15px] place-items-center rounded-full px-1 text-[9px] font-bold text-white"
+            style={{ background: "var(--accent)" }}
+          >
+            {badge > 9 ? "9+" : badge}
+          </span>
+        ) : null}
+      </span>
+      <span className="text-[10.5px] font-semibold tracking-[0.1px]">{label}</span>
+    </button>
+  );
+}
+
+/**
+ * Ko'tarilgan markaziy tugma.
+ *
+ * Ko'k doira → oq ichki disk → ko'k "+" — mobil ilovadagi bilan bir xil
+ * (u yerda ham ataylab shunday: "+" oq emas, ko'k).
+ */
+function PostButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        haptic.tap();
+        onClick();
+      }}
+      aria-label="E'lon berish"
+      // -top-4: doira panelning tepa chetidan chiqib turadi.
+      className="absolute -top-4 grid h-[50px] w-[50px] place-items-center rounded-full transition active:scale-[0.88]"
+      style={{
+        background: "var(--brand)",
+        boxShadow: "0 6px 14px -4px color-mix(in srgb, var(--brand) 55%, transparent)",
+      }}
+    >
+      <span
+        className="grid h-[21px] w-[21px] place-items-center rounded-full"
+        style={{ background: "var(--card)" }}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path
+            d="M6 0.7v10.6M0.7 6h10.6"
+            stroke="var(--brand)"
+            strokeWidth="2.6"
+            strokeLinecap="round"
+          />
+        </svg>
+      </span>
+    </button>
   );
 }

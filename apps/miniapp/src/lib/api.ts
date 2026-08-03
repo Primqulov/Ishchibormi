@@ -113,7 +113,59 @@ export const api = {
       method: "PATCH",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
+  del: <T>(p: string, o?: any) => request<T>(p, { ...(o || {}), method: "DELETE" }),
 };
+
+/**
+ * Fayl yuklash (multipart).
+ *
+ * `request` dan foydalanmaydi, chunki u JSON Content-Type qo'yadi — multipart'da
+ * esa chegara satrini (boundary) brauzerning o'zi qo'yishi kerak, qo'lda
+ * yozilgan sarlavha uni buzadi.
+ */
+export async function uploadFile(
+  file: File,
+  kind: "avatar" | "elon",
+  signal?: AbortSignal,
+): Promise<{ key: string; url: string }> {
+  const fd = new FormData();
+  fd.append("file", file);
+
+  const headers: Record<string, string> = {};
+  const t = getAccess();
+  if (t) headers["Authorization"] = `Bearer ${t}`;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/uploads?kind=${kind}`, {
+      method: "POST",
+      body: fd,
+      headers,
+      signal,
+    });
+  } catch {
+    throw { code: "network", message: "Rasm yuklanmadi — internetni tekshiring." } as APIError;
+  }
+
+  const text = await res.text();
+  const data = text ? safeParse(text) : null;
+  if (!res.ok) {
+    if (res.status === 401) setAccess(null);
+    throw {
+      ...(data?.error || { code: "upload_failed", message: "Rasm yuklanmadi." }),
+      status: res.status,
+    } as APIError;
+  }
+  return data as { key: string; url: string };
+}
+
+function safeParse(s: string): any {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
 
 // ── Kirish ────────────────────────────────────────────────────────────
 
@@ -300,4 +352,109 @@ export function applyToElon(elonId: string, body: { peopleCount?: number; messag
 
 export function cancelApplication(id: string) {
   return api.post<Application>(`/api/applications/${id}/cancel`, {});
+}
+
+// ── Bildirishnomalar ──────────────────────────────────────────────────
+
+export interface RelatedEntity {
+  type: string;
+  id: ID;
+}
+
+export interface AppNotification {
+  id: ID;
+  userId: ID;
+  type: string;
+  title: string;
+  body: string;
+  relatedEntity?: RelatedEntity;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export const fetchNotifications = () =>
+  api.get<AppNotification[]>("/api/notifications?limit=100");
+
+export const markAllNotificationsRead = () =>
+  api.post<{ ok: boolean }>("/api/notifications/read-all", {});
+
+/** Bitta yozuvga tegishli o'qilmaganlarni belgilash (e'lon ochilganda). */
+export const markNotificationsRead = (relatedIds: string[], relatedType?: string) =>
+  api.post<{ ok: boolean }>("/api/notifications/read", { relatedIds, relatedType });
+
+// ── Ish tarixi ────────────────────────────────────────────────────────
+
+/** Yakunlangan / bekor qilingan / rad etilgan arizalar (ishchi va ish beruvchi). */
+export const fetchHistory = () => api.get<Application[]>("/api/me/history");
+
+// ── Profil ────────────────────────────────────────────────────────────
+
+export interface MeUpdate {
+  firstName?: string;
+  lastName?: string;
+  avatarUrl?: string;
+  region?: string;
+  district?: string;
+  bio?: string;
+  skills?: string[];
+}
+
+export const updateMe = (body: MeUpdate) => api.patch<User>("/api/me", body);
+
+// ── E'lon yaratish / boshqarish ───────────────────────────────────────
+
+/**
+ * Ish sanasi eng ko'pi shuncha kun oldinga qo'yilishi mumkin.
+ *
+ * Backend'dagi `maxScheduleDays` bilan bir xil bo'lishi SHART
+ * (apps/api/internal/elon/handler.go → validateStartDate). Mos kelmasa forma
+ * foydalanuvchiga ruxsat bergan sanani server 400 bilan qaytaradi.
+ * 3 = bugun, ertaga yoki indinga.
+ */
+export const MAX_SCHEDULE_DAYS = 3;
+
+export interface ElonInput {
+  title: string;
+  categoryId: string;
+  description: string;
+  workersNeeded: number;
+  pricingType: "per_worker" | "total" | "negotiable";
+  priceAmount: number;
+  startDate?: string;
+  workTimeFrom?: string;
+  workTimeTo?: string;
+  contactPhone?: string;
+  gender?: Gender;
+  images?: string[];
+  lat?: number;
+  lng?: number;
+  locationText?: string;
+}
+
+export const createElon = (body: ElonInput) => api.post<Elon>("/api/elons", body);
+
+/** Mening e'lonlarim (faol + arxiv), eng yangisi birinchi. */
+export const fetchMyElons = () => api.get<Elon[]>("/api/my/elons");
+
+/** E'lonni bekor qilish — o'chirish emas, holati "cancelled" bo'ladi. */
+export const cancelElon = (id: string) => api.post<Elon>(`/api/elons/${id}/cancel`, {});
+
+// ── Xarita ────────────────────────────────────────────────────────────
+
+/**
+ * Xarita uchun e'lonlar — koordinatasi borlari.
+ *
+ * Feed'ning o'zi ishlatiladi (alohida endpoint yo'q), lekin kattaroq sahifa
+ * bilan: xaritada bir vaqtning o'zida ko'proq pin ko'rinishi kerak, aks holda
+ * uzoqlashtirilganda xarita deyarli bo'sh chiqadi.
+ */
+export async function fetchMapElons(categoryId?: string): Promise<Elon[]> {
+  const qs = new URLSearchParams();
+  if (categoryId) qs.set("categoryId", categoryId);
+  qs.set("page", "1");
+  qs.set("limit", "100");
+  const res = await api.get<Paged<Elon>>(`/api/elons?${qs}`);
+  return (res.items || []).filter(
+    (e) => typeof e.lat === "number" && typeof e.lng === "number" && (e.lat !== 0 || e.lng !== 0),
+  );
 }

@@ -8,7 +8,16 @@
  * (/delete-account) hamda mobil ilovada mavjud.
  */
 
-import { StarIcon, CheckIcon, PhoneIcon, MapPinIcon } from "@/components/icons";
+import {
+  StarIcon,
+  CheckIcon,
+  PhoneIcon,
+  MapPinIcon,
+  EditIcon,
+  BriefcaseIcon,
+  HistoryIcon,
+  ChevronRightIcon,
+} from "@/components/icons";
 import { Avatar } from "@/components/ui";
 import { fmtPhone } from "@/lib/format";
 import { openTelegramLink, haptic } from "@/lib/telegram";
@@ -16,7 +25,17 @@ import type { User } from "@/lib/api";
 
 const SUPPORT = "Ishchi_bormi_support";
 
-export function Profile({ me }: { me: User }) {
+export function Profile({
+  me,
+  onEdit,
+  onMyElons,
+  onHistory,
+}: {
+  me: User;
+  onEdit: () => void;
+  onMyElons: () => void;
+  onHistory: () => void;
+}) {
   const fullName = [me.firstName, me.lastName].filter(Boolean).join(" ") || "Foydalanuvchi";
   const place = [me.district, me.region].filter(Boolean).join(", ");
   const rating = me.workerRating || me.rating || 0;
@@ -42,6 +61,18 @@ export function Profile({ me }: { me: User }) {
             </p>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            haptic.tap();
+            onEdit();
+          }}
+          aria-label="Profilni tahrirlash"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-full transition active:scale-90"
+          style={{ background: "var(--brand-soft)", color: "var(--brand)" }}
+        >
+          <EditIcon size={16} />
+        </button>
       </div>
 
       {/* Statistika */}
@@ -55,6 +86,22 @@ export function Profile({ me }: { me: User }) {
           icon={<StarIcon size={16} />}
           value={rating > 0 ? rating.toFixed(1) : "—"}
           label={reviews > 0 ? `${reviews} ta baho` : "Hali baho yo'q"}
+        />
+      </div>
+
+      {/* Bo'limlar */}
+      <div className="card flex flex-col divide-y" style={{ borderColor: "var(--border)" }}>
+        <MenuRow
+          icon={<BriefcaseIcon size={18} />}
+          label="E'lonlarim"
+          hint="Bergan e'lonlaringiz va ularga kelgan arizalar"
+          onClick={onMyElons}
+        />
+        <MenuRow
+          icon={<HistoryIcon size={18} />}
+          label="Ish tarixi"
+          hint="Yakunlangan va bekor qilingan ishlar"
+          onClick={onHistory}
         />
       </div>
 
@@ -90,7 +137,7 @@ export function Profile({ me }: { me: User }) {
       </button>
 
       <p className="pb-2 text-center text-[12px] subtle">
-        Profilni to'liq tahrirlash saytda: ishchibormi.uz
+        Hisobni o'chirish saytda: ishchibormi.uz/delete-account
       </p>
     </div>
   );
@@ -111,5 +158,40 @@ function Stat({
       <p className="text-[22px] font-black tabular-nums heading">{value}</p>
       <p className="text-[12px] subtle">{label}</p>
     </div>
+  );
+}
+
+function MenuRow({
+  icon,
+  label,
+  hint,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        haptic.tap();
+        onClick();
+      }}
+      className="flex w-full items-center gap-3 p-4 text-left transition active:scale-[0.99]"
+    >
+      <span
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-full"
+        style={{ background: "var(--brand-soft)", color: "var(--brand)" }}
+      >
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[14.5px] font-semibold heading">{label}</span>
+        {hint && <span className="block text-[12px] subtle">{hint}</span>}
+      </span>
+      <ChevronRightIcon size={18} className="shrink-0 subtle" />
+    </button>
   );
 }
