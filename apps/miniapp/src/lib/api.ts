@@ -433,8 +433,18 @@ export interface ElonInput {
 
 export const createElon = (body: ElonInput) => api.post<Elon>("/api/elons", body);
 
-/** Mening e'lonlarim (faol + arxiv), eng yangisi birinchi. */
-export const fetchMyElons = () => api.get<Elon[]>("/api/my/elons");
+/**
+ * Mening e'lonlarim.
+ *
+ * DIQQAT: backend bu yerda oddiy massiv EMAS, `{active, archived}` obyektini
+ * qaytaradi (apps/api → elon.MyElons). Ikkalasini bitta ro'yxatga qo'shamiz,
+ * chunki Mini App'da tartib holat bo'yicha beriladi (faol e'lonlar tepada) —
+ * alohida ikki bo'lim mobil ekranda ortiqcha bosish qo'shardi.
+ */
+export async function fetchMyElons(): Promise<Elon[]> {
+  const res = await api.get<{ active?: Elon[]; archived?: Elon[] }>("/api/my/elons");
+  return [...(res?.active || []), ...(res?.archived || [])];
+}
 
 /** E'lonni bekor qilish — o'chirish emas, holati "cancelled" bo'ladi. */
 export const cancelElon = (id: string) => api.post<Elon>(`/api/elons/${id}/cancel`, {});
