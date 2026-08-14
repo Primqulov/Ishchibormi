@@ -59,15 +59,18 @@ services:
       # Foydalanuvchiga /delete-account va /maxfiylik-siyosati sahifalarida
       # aytiladigan muddat bilan bir xil bo'lishi SHART (frontend/lib/retention.ts).
       ACCOUNT_RETENTION_DAYS: ${ACCOUNT_RETENTION_DAYS:-90}
-      # Mobil push (FCM). Yoqish uchun: serverda ./secrets/fcm-service-account.json
-      # faylini qo'ying (Firebase Console -> Service accounts -> Generate new
-      # private key), so'ng pastdagi volume qatorini va shu qatorni oching.
-      # Bo'sh qolsa push jimgina o'chiq — API to'liq ishlayveradi.
-      # FCM_CREDENTIALS_FILE: /app/secrets/fcm-service-account.json
+      # Mobil push (FCM). Qiymatni deploy skripti yozadi: serverdagi
+      # ./secrets/fcm-service-account.json fayli bor bo'lsa yo'lni, yo'q bo'lsa
+      # bo'sh qatorni (push jimgina o'chiq, API to'liq ishlayveradi).
+      # Bu qatorlar ATAYLAB izohda emas — deploy serverda `git reset --hard`
+      # qiladi, ya'ni qo'lda ochilgan izoh har deploy'da yopilib qolar edi.
+      FCM_CREDENTIALS_FILE: ${FCM_CREDENTIALS_FILE:-}
     volumes:
       - avatars:/data/avatars
       - uploads:/app/data/uploads
-      # - ./secrets/fcm-service-account.json:/app/secrets/fcm-service-account.json:ro
+      # Aniq fayl emas, butun papka mount qilinadi: fayl yo'q bo'lsa Docker
+      # uning o'rniga papka yaratib qo'yardi va konteyner ishga tushmasdi.
+      - ./secrets:/app/secrets:ro
     healthcheck:
       # /healthz JSON endpoint. busybox wget (alpine base) exits non-zero on any
       # non-2xx, so the container is "healthy" only once the API actually serves.

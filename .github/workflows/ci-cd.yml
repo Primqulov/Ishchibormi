@@ -168,6 +168,31 @@ jobs:
             set_env_if_set AWS_ACCESS_KEY_ID     '${{ secrets.AWS_ACCESS_KEY_ID }}'
             set_env_if_set AWS_SECRET_ACCESS_KEY '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
 
+            # ── Mobil push (FCM) ─────────────────────────────────────────────
+            # Firebase service-account JSON'i FCM_SERVICE_ACCOUNT_JSON secret'ida
+            # turadi va shu yerda serverga yoziladi. secrets/ gitignore'da, ya'ni
+            # yuqoridagi "git reset --hard" unga tegmaydi; server qaytadan
+            # o'rnatilsa ham keyingi deploy faylni tiklaydi.
+            # Secret bo'sh bo'lsa serverdagi mavjud fayl saqlanadi (o'chirilmaydi).
+            # Qiymat single-quote ichida uzatiladi — JSON'da single-quote bo'lmaydi.
+            echo "==> Mobil push (FCM)"
+            FCM_SA='${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}'
+            if [ -n "$FCM_SA" ]; then
+              mkdir -p secrets
+              printf '%s' "$FCM_SA" > secrets/fcm-service-account.json
+              chmod 600 secrets/fcm-service-account.json
+              echo "  service-account fayli secret'dan yozildi"
+            fi
+            # Yakuniy holat faylning o'ziga qarab belgilanadi: backend
+            # FCM_CREDENTIALS_FILE bo'sh bo'lsa push'ni jimgina o'chiradi.
+            if [ -f secrets/fcm-service-account.json ]; then
+              set_env FCM_CREDENTIALS_FILE /app/secrets/fcm-service-account.json
+              echo "  push YOQILDI (boot log'da: fcm push ready)"
+            else
+              set_env FCM_CREDENTIALS_FILE ""
+              echo "  secrets/fcm-service-account.json yo'q -> push o'chiq"
+            fi
+
             echo "==> Server resurslari (debug: build yiqilsa sabab shu yerda ko'rinadi)"
             free -h || true
             df -h / || true
