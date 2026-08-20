@@ -7,7 +7,36 @@ import (
 	"image/png"
 
 	xdraw "golang.org/x/image/draw"
+	"golang.org/x/image/webp"
 )
+
+const (
+	maxImageDimension = 12_000
+	maxImagePixels    = 50_000_000
+)
+
+// ValidateImage rejects malformed files and decompression bombs before any
+// full decode/allocation. The compressed upload cap alone is insufficient: a
+// tiny crafted header can claim dimensions large enough to exhaust memory.
+func ValidateImage(data []byte, contentType string) bool {
+	var (
+		cfg image.Config
+		err error
+	)
+	switch contentType {
+	case "image/jpeg", "image/png":
+		cfg, _, err = image.DecodeConfig(bytes.NewReader(data))
+	case "image/webp":
+		cfg, err = webp.DecodeConfig(bytes.NewReader(data))
+	default:
+		return false
+	}
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 ||
+		cfg.Width > maxImageDimension || cfg.Height > maxImageDimension {
+		return false
+	}
+	return int64(cfg.Width)*int64(cfg.Height) <= maxImagePixels
+}
 
 // JPEG qayta kodlashda sifat darajasi. 82 — ko'z bilan deyarli farqi sezilmaydi,
 // lekin fayl hajmi telefon kamerasidan kelgan asl JPEG'ga nisbatan sezilarli

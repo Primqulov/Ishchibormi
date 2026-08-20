@@ -53,7 +53,10 @@ func (h *Handler) Enable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req codeReq
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	if !totp.Validate(a.TOTPSecret, req.Code) {
 		httpx.Err(w, httpx.NewError(400, "bad_totp", "invalid code"))
 		return
@@ -79,7 +82,10 @@ func (h *Handler) Disable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req codeReq
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	if !totp.Validate(a.TOTPSecret, req.Code) {
 		httpx.Err(w, httpx.NewError(400, "bad_totp", "invalid code"))
 		return

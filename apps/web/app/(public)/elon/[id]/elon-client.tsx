@@ -21,7 +21,7 @@ import { Logo } from "@/components/Logo";
 import { T, useT } from "@/components/T";
 import { fmtSum, fmtSumSom, fmtPhone, fromNow } from "@/lib/format";
 import { catTone } from "@/lib/cat-color";
-import { safeHref } from "@/lib/url";
+import { safeHref, safeImageSrc } from "@/lib/url";
 import dayjs from "dayjs";
 
 export default function ElonDetails() {
@@ -187,19 +187,23 @@ export default function ElonDetails() {
               <ImageIcon size={18} /><T>Rasmlar</T>
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {e.images.map((src, i) => (
-                <a
-                  key={src}
-                  href={src}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="relative aspect-square rounded-xl overflow-hidden border block"
-                  style={{ borderColor: "var(--border)" }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src} alt={`${e.title} ${i + 1}`} className="w-full h-full object-cover hover:scale-105 transition" />
-                </a>
-              ))}
+              {e.images.map((src, i) => {
+                const safeSrc = safeImageSrc(src);
+                if (!safeSrc) return null;
+                return (
+                  <a
+                    key={src}
+                    href={safeSrc}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="relative aspect-square rounded-xl overflow-hidden border block"
+                    style={{ borderColor: "var(--border)" }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={safeSrc} alt={`${e.title} ${i + 1}`} className="w-full h-full object-cover hover:scale-105 transition" />
+                  </a>
+                );
+              })}
             </div>
           </section>
         )}
@@ -223,7 +227,7 @@ export default function ElonDetails() {
           <div className="flex flex-col gap-2.5 text-[13.5px]">
             <Row label="Jami summa" value={fmtSumSom(e.priceAmount, e.pricingType === "negotiable")} />
             <Row label="Ariza berish" value={t("Bepul")} />
-            <Row label="Xizmat haqi" value={t("Bepul")} />
+              <Row label="Ilovadan foydalanish haqi" value={t("Bepul")} />
           </div>
 
           {/* Actions */}

@@ -5,8 +5,14 @@ services:
     restart: unless-stopped
     # Xost 27017 da Windows MongoDB xizmati ishlayotgani uchun to'qnashmaslik
     # maqsadida Docker Mongo xostda 27018 ga chiqariladi (ichkarida esa 27017).
-    # Faqat 127.0.0.1 ga bog'lanadi: bu konteyner Mongo'si lokal dev uchun
-    # (prod Atlas ishlatadi) — serverda tashqi dunyoga ochiq DB porti bo'lmasin.
+    # Faqat 127.0.0.1 ga bog'lanadi — DB porti hech qachon tashqi dunyoga
+    # ochilmaydi (Droplet'da ufw ham 27018 ni bloklaydi).
+    #
+    # PRODUCTION (DigitalOcean Droplet): baza shu konteynerda, ma'lumot
+    # `mongo_data` volume'ida. Ya'ni Droplet o'chsa/volume yo'qolsa ma'lumot ham
+    # ketadi — shuning uchun deploy/backup-mongo.sh kunlik arxiv oladi.
+    # Boshqarilayotgan baza (Atlas / DO Managed) kerak bo'lsa: .env dagi
+    # MONGO_URI ni o'zgartiring — bu konteyner shundan keyin ishlatilmaydi.
     ports:
       - "127.0.0.1:27018:27017"
     volumes:
@@ -27,7 +33,9 @@ services:
       mongo:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      # Only the host reverse proxy may reach the plaintext API directly.
+      # Public clients must use the TLS virtual host.
+      - "127.0.0.1:8080:8080"
     env_file: .env
     environment:
       MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017}
@@ -51,7 +59,7 @@ services:
       REVIEW_LOGIN_CODE: ${REVIEW_LOGIN_CODE:-}
       REVIEW_LOGIN_EXPIRES_AT: ${REVIEW_LOGIN_EXPIRES_AT:-}
       REVIEW_LOGIN_USER_ID: ${REVIEW_LOGIN_USER_ID:-}
-      # Prod EC2'da backend reverse-proxy (TLS) ortida ishlaydi, shuning uchun
+      # Prod Droplet'da backend xostdagi Caddy (TLS) ortida ishlaydi, shuning uchun
       # standart "true": klient IP X-Forwarded-For'dan olinadi (rate-limit
       # har bir foydalanuvchi bo'yicha to'g'ri ishlashi uchun). .env buni
       # override qila oladi (masalan proksisiz sinovda "false").
@@ -60,15 +68,21 @@ services:
       # Foydalanuvchiga /delete-account va /maxfiylik-siyosati sahifalarida
       # aytiladigan muddat bilan bir xil bo'lishi SHART (apps/web/lib/retention.ts).
       ACCOUNT_RETENTION_DAYS: ${ACCOUNT_RETENTION_DAYS:-90}
-      # Mobil push (FCM). Yoqish uchun: serverda ./secrets/fcm-service-account.json
-      # faylini qo'ying (Firebase Console -> Service accounts -> Generate new
-      # private key), so'ng pastdagi volume qatorini va shu qatorni oching.
-      # Bo'sh qolsa push jimgina o'chiq — API to'liq ishlayveradi.
-      # FCM_CREDENTIALS_FILE: /app/secrets/fcm-service-account.json
+      # Mobil push (FCM). Yagona shart — serverda ./secrets/fcm-service-account.json
+      # faylining borligi (Firebase Console -> Service accounts -> Generate new
+      # private key). Deploy skripti faylni ko'rsa .env ga shu o'zgaruvchini
+      # yozadi, ko'rmasa bo'sh qoldiradi va push jimgina o'chiq qoladi — API
+      # to'liq ishlayveradi. Bu qatorlar ATAYLAB izohda emas: deploy serverda
+      # `git reset --hard` qiladi, ya'ni qo'lda ochilgan izoh har deploy'da
+      # yopilib, push jimgina o'chib qolardi.
+      FCM_CREDENTIALS_FILE: ${FCM_CREDENTIALS_FILE:-}
     volumes:
       - avatars:/data/avatars
       - uploads:/app/data/uploads
-      # - ./secrets/fcm-service-account.json:/app/secrets/fcm-service-account.json:ro
+      # Aniq fayl emas, butun papka mount qilinadi: fayl yo'q bo'lsa Docker
+      # uning o'rniga papka yaratib qo'yardi va konteyner ishga tushmasdi.
+      # Papkaning o'zi yo'q bo'lsa bo'sh holda yaratiladi — zarari yo'q.
+      - ./secrets:/app/secrets:ro
     healthcheck:
       # /healthz JSON endpoint. busybox wget (alpine base) exits non-zero on any
       # non-2xx, so the container is "healthy" only once the API actually serves.
@@ -99,7 +113,7 @@ services:
       # MUHIM: NEXT_PUBLIC_* qiymatlari build vaqtida kodga yoziladi, shuning
       # uchun ularni build args sifatida uzatamiz (aks holda localhost qoladi).
       # Default'lar PRODUCTION (ishchibormi.uz) — lokal dev uchun .env ustun
-      # keladi (masalan localhost). EC2'da .env bu kalitlarni bermasa, prod
+      # keladi (masalan localhost). Droplet'da .env bu kalitlarni bermasa, prod
       # qiymatlar ishlatiladi.
       args:
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-https://ishchibormi.uz}
@@ -111,58 +125,12 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     env_file: .env
     environment:
       NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-https://ishchibormi.uz}
       NEXT_PUBLIC_WS_BASE: ${NEXT_PUBLIC_WS_BASE:-wss://ishchibormi.uz}
       NEXT_PUBLIC_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-Ishchi_bormi_auth_bot}
-
-  # ── Telegram Mini App ───────────────────────────────────────────────────
-  # Statik webapp (nginx) + oynani ochadigan bot. Ikkalasi ham bazaga
-  # TEGMAYDI: webapp backend API'ga brauzerdan so'rov yuboradi, bot esa faqat
-  # menyu tugmasini qo'yadi. Shu sababli mongo'ga depends_on ham yo'q.
-  #
-  # PROFILE ORTIDA: `docker compose up` ularni ishga TUSHIRMAYDI va BUILD
-  # QILMAYDI. Sabab — Mini App hozircha prod'ga chiqarilmagan (tunnel bilan
-  # lokal sinovda). Profilsiz qoldirilsa EC2 deploy'i uni ham qurishga
-  # urinardi (RAM tanqis) va tokensiz bot cheksiz qayta ishga tushardi.
-  #
-  # Lokal ishga tushirish:  make miniapp   (yoki --profile miniapp)
-  # Prod'ga chiqarish vaqti kelganda: deploy skriptiga
-  # TELEGRAM_MINIAPP_BOT_TOKEN + MINIAPP_URL secretlarini qo'shing va
-  # `docker compose --profile miniapp up -d` ga o'ting.
-  miniapp:
-    profiles: ["miniapp"]
-    build:
-      context: ./apps/miniapp
-      args:
-        # DIQQAT: VITE_* qiymatlari BUILD vaqtida bundle ichiga yoziladi
-        # (frontend'dagi NEXT_PUBLIC_* bilan bir xil xatti-harakat).
-        # O'zgartirgandan keyin: docker compose build --no-cache miniapp
-        VITE_API_BASE: ${VITE_API_BASE:-https://api.ishchibormi.uz}
-        VITE_AUTH_BOT_USERNAME: ${VITE_AUTH_BOT_USERNAME:-Ishchi_bormi_auth_bot}
-    container_name: ib_miniapp
-    restart: unless-stopped
-    ports:
-      # Telegram HTTPS talab qiladi -> oldida tunnel yoki reverse-proxy turadi.
-      - "5173:80"
-
-  miniapp-bot:
-    profiles: ["miniapp"]
-    build:
-      context: ./apps/bots/miniapp
-      dockerfile: Dockerfile
-    container_name: ib_miniapp_bot
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      # Imzo tekshiruvi backend'da shu token bilan bajariladi — qiymat bitta
-      # .env dan kelgani uchun ikkovi hech qachon farq qila olmaydi.
-      TELEGRAM_MINIAPP_BOT_TOKEN: ${TELEGRAM_MINIAPP_BOT_TOKEN}
-      MINIAPP_URL: ${MINIAPP_URL}
-    depends_on:
-      - miniapp
 
 volumes:
   mongo_data:

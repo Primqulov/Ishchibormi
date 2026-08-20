@@ -123,14 +123,17 @@ type Elon struct {
 	ContactPhone    string  `bson:"contactPhone,omitempty" json:"contactPhone"`
 	// Ishga kimlar kerak: male (erkaklar) | female (ayollar) | mixed (aralash).
 	// Bo'sh/eski e'lonlar "aralash" deb hisoblanadi (feed filtriga qarang).
-	Gender        string     `bson:"gender,omitempty" json:"gender"`
-	Status        string     `bson:"status" json:"status"` // draft|recruiting|filled|in_progress|completed|cancelled
-	AcceptedCount int        `bson:"acceptedCount" json:"acceptedCount"`
-	ViewsCount    int        `bson:"viewsCount" json:"viewsCount"`
-	IsDeleted     bool       `bson:"isDeleted" json:"isDeleted"`
-	PublishedAt   *time.Time `bson:"publishedAt,omitempty" json:"publishedAt,omitempty"`
-	CreatedAt     time.Time  `bson:"createdAt" json:"createdAt"`
-	UpdatedAt     time.Time  `bson:"updatedAt" json:"updatedAt"`
+	Gender        string `bson:"gender,omitempty" json:"gender"`
+	Status        string `bson:"status" json:"status"` // draft|recruiting|filled|in_progress|completed|cancelled
+	AcceptedCount int    `bson:"acceptedCount" json:"acceptedCount"`
+	ViewsCount    int    `bson:"viewsCount" json:"viewsCount"`
+	IsDeleted     bool   `bson:"isDeleted" json:"isDeleted"`
+	// Denormalized moderation flag so public feed/sitemap queries can hide all
+	// listings immediately when an owner is blocked without an expensive join.
+	OwnerBlocked bool       `bson:"ownerBlocked,omitempty" json:"-"`
+	PublishedAt  *time.Time `bson:"publishedAt,omitempty" json:"publishedAt,omitempty"`
+	CreatedAt    time.Time  `bson:"createdAt" json:"createdAt"`
+	UpdatedAt    time.Time  `bson:"updatedAt" json:"updatedAt"`
 	// Denormalized owner info for fast feed
 	OwnerName         string  `bson:"ownerName,omitempty" json:"ownerName"`
 	OwnerRating       float64 `bson:"ownerRating,omitempty" json:"ownerRating"`
@@ -266,9 +269,13 @@ type Admin struct {
 	IsActive     bool               `bson:"isActive" json:"isActive"`
 	// Two-factor (TOTP). TOTPSecret is never serialized to clients. TOTPEnabled
 	// is true only after the admin verifies a code during enrollment.
-	TOTPSecret  string    `bson:"totpSecret,omitempty" json:"-"`
-	TOTPEnabled bool      `bson:"totpEnabled" json:"totpEnabled"`
-	CreatedAt   time.Time `bson:"createdAt" json:"createdAt"`
+	TOTPSecret  string `bson:"totpSecret,omitempty" json:"-"`
+	TOTPEnabled bool   `bson:"totpEnabled" json:"totpEnabled"`
+	// Incremented whenever credentials, role, active state, or logout changes
+	// the session. Admin JWTs carry the matching value and are rejected when it
+	// differs, providing immediate revocation for privileged sessions.
+	TokenVersion int       `bson:"tokenVersion,omitempty" json:"-"`
+	CreatedAt    time.Time `bson:"createdAt" json:"createdAt"`
 }
 
 // Broadcast — admin ommaviy bildirishnomasi tarixi. Yuborish fon jarayonida

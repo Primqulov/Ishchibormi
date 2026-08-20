@@ -3,6 +3,7 @@ package httpx
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 )
@@ -53,7 +54,19 @@ const maxJSONBody = 1 << 20 // 1 MiB
 
 func Decode(r *http.Request, v any) error {
 	limited := http.MaxBytesReader(nil, r.Body, maxJSONBody)
-	if err := json.NewDecoder(limited).Decode(v); err != nil {
+	dec := json.NewDecoder(limited)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return NewError(http.StatusRequestEntityTooLarge, "too_large", "JSON body is too large")
+		}
+		return NewError(http.StatusBadRequest, "invalid_json", "invalid JSON body")
+	}
+	// A request must contain exactly one JSON value. Silently accepting a valid
+	// object followed by arbitrary bytes creates parser discrepancies between
+	// proxies, logs and the application.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return NewError(http.StatusBadRequest, "invalid_json", "invalid JSON body")
 	}
 	return nil

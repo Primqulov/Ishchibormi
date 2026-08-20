@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { api, User, Elon, Application } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { safeImageSrc } from "@/lib/url";
 
 interface Report { id: string; reason: string; description?: string; status: string; createdAt: string; }
 interface Detail {
@@ -49,7 +50,7 @@ export default function AdminUserDetail() {
       <div className="card p-5 grid gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="h-14 w-14 rounded-full bg-black/10 overflow-hidden grid place-items-center text-lg font-bold">
-            {u.avatarUrl ? <img src={u.avatarUrl} alt="" className="h-full w-full object-cover" /> : (u.firstName?.[0] || "?")}
+            {safeImageSrc(u.avatarUrl) ? <img src={safeImageSrc(u.avatarUrl)} alt="" className="h-full w-full object-cover" /> : (u.firstName?.[0] || "?")}
           </div>
           <div>
             <div className="text-lg font-bold">{u.firstName} {u.lastName}</div>

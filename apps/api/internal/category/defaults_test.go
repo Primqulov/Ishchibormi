@@ -12,8 +12,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// TestEnsureDefaults, eski/ortiqcha turkumlar bo'lgan DB'da EnsureDefaults
-// aynan 3 faol turkum qoldirishini va qolganlarini nofaol qilishini tekshiradi.
+// TestEnsureDefaults tizim turkumlarini upsert qiladi, lekin admin yaratgan
+// turkumlarning faollik holatiga tegmasligini tekshiradi.
 // Mongo kerak (default: localhost:27017). Ulanib bo'lmasa test o'tkazib yuboriladi.
 func TestEnsureDefaults(t *testing.T) {
 	uri := os.Getenv("MONGO_TEST_URI")
@@ -56,7 +56,8 @@ func TestEnsureDefaults(t *testing.T) {
 		}
 	}
 
-	// Faol turkumlar (List handler aynan shu filtrni ishlatadi).
+	// Faol turkumlar: uchta tizim turkumi va avvaldan faol bo'lgan admin
+	// turkumlari birga qolishi kerak.
 	activeSlugs := map[string]bson.M{}
 	cur, err := col.Find(ctx, bson.M{"isActive": true})
 	if err != nil {
@@ -70,9 +71,6 @@ func TestEnsureDefaults(t *testing.T) {
 	}
 	cur.Close(ctx)
 
-	if len(activeSlugs) != 3 {
-		t.Fatalf("faol turkumlar soni = %d, kutilgan 3; slug'lar: %v", len(activeSlugs), keys(activeSlugs))
-	}
 	for _, want := range []string{"tozalash", "yuk-tashish", "maxsus"} {
 		d, ok := activeSlugs[want]
 		if !ok {
@@ -83,13 +81,18 @@ func TestEnsureDefaults(t *testing.T) {
 			t.Errorf("%q: isSystemDefault=false, true bo'lishi kerak", want)
 		}
 	}
+	for _, want := range []string{"ustachilik", "bogdorchilik", "qurilish"} {
+		if _, ok := activeSlugs[want]; !ok {
+			t.Errorf("admin turkumi %q restartdan keyin nofaol bo'lib qoldi", want)
+		}
+	}
 
 	// Kanonik slug qayta faollashtirilib, nomi yangilanganini tekshiramiz.
 	if d, ok := activeSlugs["tozalash"]; ok && fmt.Sprint(d["name"]) != "Tozalash" {
 		t.Errorf("tozalash nomi = %q, kutilgan \"Tozalash\"", d["name"])
 	}
 
-	// Eski turkumlar o'chirilmagan, faqat nofaol bo'lishi kerak.
+	// Eski/admin turkumlar o'chirilmasligi va holati saqlanishi kerak.
 	total, _ := col.CountDocuments(ctx, bson.M{})
 	if total < 5 {
 		t.Errorf("umumiy turkum soni = %d, eski yozuvlar o'chib ketmasligi kerak (>=5)", total)
@@ -97,8 +100,8 @@ func TestEnsureDefaults(t *testing.T) {
 	var ust bson.M
 	if err := col.FindOne(ctx, bson.M{"slug": "ustachilik"}).Decode(&ust); err != nil {
 		t.Errorf("ustachilik yozuvi topilmadi (o'chib ketmasligi kerak): %v", err)
-	} else if ust["isActive"] != false {
-		t.Errorf("ustachilik isActive=%v, nofaol (false) bo'lishi kerak", ust["isActive"])
+	} else if ust["isActive"] != true {
+		t.Errorf("ustachilik isActive=%v, faol (true) bo'lib qolishi kerak", ust["isActive"])
 	}
 }
 

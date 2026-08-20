@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ const (
 	CtxUserID    ctxKey = "userId"
 	CtxAdminID   ctxKey = "adminId"
 	CtxAdminRole ctxKey = "adminRole"
+	CtxAdminVer  ctxKey = "adminTokenVersion"
 	// CtxReviewActor marks a request made by the sandboxed Google Play review
 	// account. auth.RequireActiveUser sets it (it already has the user
 	// document, so this costs no extra query) and handlers consult it to keep
@@ -34,14 +36,27 @@ var TrustProxyHeaders = false
 // algorithm-confusion / "alg:none" downgrade attacks.
 var allowedJWTMethods = []string{"HS256"}
 
+// AccessLog deliberately records URL.Path rather than RequestURI. Query
+// parameters include dev OTP lookup tokens and upload URLs; logging the raw URI
+// would turn ordinary access logs into a credential/data leak.
+func AccessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		next.ServeHTTP(w, r)
+		log.Printf("http method=%s path=%s remote=%s duration=%s",
+			r.Method, r.URL.Path, clientIP(r), time.Since(started).Round(time.Millisecond))
+	})
+}
+
 type Claims struct {
 	UserID string `json:"uid"`
 	jwt.RegisteredClaims
 }
 
 type AdminClaims struct {
-	AdminID string `json:"aid"`
-	Role    string `json:"role"`
+	AdminID      string `json:"aid"`
+	Role         string `json:"role"`
+	TokenVersion *int   `json:"ver"`
 	jwt.RegisteredClaims
 }
 
@@ -114,12 +129,15 @@ func AdminAuth(secret string) func(http.Handler) http.Handler {
 			_, err := jwt.ParseWithClaims(tok, c,
 				func(*jwt.Token) (any, error) { return []byte(secret), nil },
 				jwt.WithValidMethods(allowedJWTMethods))
-			if err != nil || c.AdminID == "" {
+			// A pointer distinguishes a new token carrying `ver: 0` from a
+			// legacy privileged token where the version claim is absent entirely.
+			if err != nil || c.AdminID == "" || c.TokenVersion == nil {
 				Err(w, NewError(http.StatusUnauthorized, "bad_token", "invalid token"))
 				return
 			}
 			ctx := context.WithValue(r.Context(), CtxAdminID, c.AdminID)
 			ctx = context.WithValue(ctx, CtxAdminRole, c.Role)
+			ctx = context.WithValue(ctx, CtxAdminVer, *c.TokenVersion)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -169,6 +187,20 @@ func AdminRole(r *http.Request) string {
 	return ""
 }
 
+func AdminTokenVersion(r *http.Request) int {
+	if v, ok := r.Context().Value(CtxAdminVer).(int); ok {
+		return v
+	}
+	return 0
+}
+
+// WithAdminRole replaces the JWT snapshot with the current database role.
+// The admin session middleware calls this before endpoint RBAC runs, so role
+// changes take effect immediately instead of waiting for token expiry.
+func WithAdminRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, CtxAdminRole, role)
+}
+
 // RequireRole authorizes an admin request by role. "superadmin" is ALWAYS
 // allowed (full access), regardless of the passed list. Any other role passes
 // only if it is in `allowed`. Otherwise a 403 is returned.
@@ -214,6 +246,14 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		h.Add("Vary", "Origin")
+		h.Add("Vary", "Authorization")
+		if r.Header.Get("Authorization") != "" || strings.HasPrefix(r.URL.Path, "/api/auth/") ||
+			strings.HasPrefix(r.URL.Path, "/api/admin/") || r.URL.Path == "/api/me" {
+			h.Set("Cache-Control", "no-store")
+			h.Set("Pragma", "no-cache")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -260,9 +300,20 @@ func (l *Limiter) allow(key string) bool {
 }
 
 func (l *Limiter) Middleware(prefix string) func(http.Handler) http.Handler {
+	return l.MiddlewareKey(prefix, clientIP)
+}
+
+// MiddlewareKey rate-limits by a caller-selected stable identity. Authenticated
+// expensive operations (uploads) use user id rather than spoofable/request-
+// distribution-prone IP addresses. An empty key falls back to client IP.
+func (l *Limiter) MiddlewareKey(prefix string, keyFn func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := prefix + ":" + clientIP(r)
+			identity := keyFn(r)
+			if identity == "" {
+				identity = clientIP(r)
+			}
+			key := prefix + ":" + identity
 			if !l.allow(key) {
 				Err(w, NewError(http.StatusTooManyRequests, "rate_limited", "too many requests"))
 				return

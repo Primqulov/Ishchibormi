@@ -1,8 +1,8 @@
-# Ishchi Bormi — server tomoni (API / Web / Mini App / botlar)
+# Ishchi Bormi — server tomoni (API / Web / botlar)
 
 O'zbekiston uchun kunlik ish (mardikor) bozori platformasi. Telegram orqali parolsiz
 (OTP) kirish, MongoDB'ga asoslangan Go API, Next.js (App Router + TypeScript +
-Tailwind) veb-panel, Telegram Mini App va Go Telegram botlari.
+Tailwind) veb-panel va Go Telegram botlari.
 
 ---
 
@@ -15,7 +15,7 @@ Tailwind) veb-panel, Telegram Mini App va Go Telegram botlari.
 | Bot       | Go (`go-telegram-bot-api/v5`) |
 | DB        | MongoDB 7 (OTP uchun TTL kolleksiya — Redis kerak emas) |
 | Fayllar   | AWS S3 **yoki** lokal disk (S3 sozlanmasa avtomatik lokal) |
-| Infra     | Docker + docker-compose, GitHub Actions CI/CD → AWS EC2 |
+| Infra     | Docker + docker-compose, GitHub Actions CI/CD → DigitalOcean Droplet (Caddy + TLS) |
 
 ---
 
@@ -37,16 +37,12 @@ faqat butun tizimga tegishli fayllar (compose, `.env`, CI) turadi.
 │   │   ├── app/              # sahifalar (App Router)
 │   │   ├── components/       # UI komponentlar
 │   │   └── lib/              # API klient, i18n, format, xarita
-│   ├── miniapp/              # Telegram Mini App (Vite + React) → docs/miniapp.md
-│   │   └── src/{lib,components,screens}
 │   └── bots/
-│       ├── otp/              # OTP yetkazuvchi bot (Mongo'ga yozadi)
-│       └── miniapp/          # Mini App oynasini ochadi (bazaga TEGMAYDI)
-├── deploy/                   # dev overlay + ishga tushirish hujjati
-├── docs/                     # miniapp.md va boshqalar
+│       └── otp/              # OTP yetkazuvchi bot (Mongo'ga yozadi)
+├── deploy/                   # Droplet setup, Caddyfile, backup, dev overlay
 ├── scripts/                  # play-preflight.sh
-├── .github/workflows/        # CI/CD pipeline (test + AWS deploy)
-├── docker-compose.yml        # mongo + backend + bot + frontend (+miniapp profili)
+├── .github/workflows/        # CI/CD pipeline (test + DigitalOcean deploy)
+├── docker-compose.yml        # mongo + backend + bot + frontend
 ├── Makefile
 ├── .env.example              # BITTA .env — barcha servislar shundan o'qiydi
 └── README.md
@@ -186,13 +182,8 @@ Bazaviy prefiks: `/api`. Autentifikatsiya: `Authorization: Bearer <accessToken>`
   Mongo'ning OTP kolleksiyasiga (TTL) yozadi; shu kod bilan
   `/api/auth/otp/verify` orqali kirish yakunlanadi.
 - **`otp/internal/envfile/`** — `.env` yuklovchi.
-- **`miniapp/cmd/bot/main.go` (Mini App boti)** — faqat menyu tugmasiga
-  `MINIAPP_URL` ni qo'yadi va oynani ochadi. **Bazaga ulanmaydi**, shu sababli
-  tokeni sizsa ham hujumchi qo'liga na Mongo, na JWT siri tushadi.
-  Batafsil: [docs/miniapp.md](docs/miniapp.md).
 
-Ikkala bot ham alohida Go moduli va bir-birini import qilmaydi; API bilan
-aloqasi faqat Mongo (OTP boti) yoki umuman yo'q (Mini App boti).
+Bot alohida Go moduli; API bilan aloqasi faqat Mongo orqali.
 
 > Eslatma: qo'llab-quvvatlash endi shaxsiy Telegram akkaunti orqali — avvalgi
 > taklif/shikoyat botlari (`cmd/feedbackbot`, `bot_feedback`/`support_admins`
@@ -248,11 +239,6 @@ docker compose exec backend /app/seed   # demo ma'lumot
 | backend | 8080 |
 | mongo | 27018 → 27017 |
 | bot | (tashqi port yo'q) |
-| miniapp | 5173 (`miniapp` profili) |
-| miniapp-bot | (tashqi port yo'q, `miniapp` profili) |
-
-`miniapp` profilidagi servislar oddiy `docker compose up` bilan
-ko'tarilmaydi — `make miniapp` ishlating (sabab: hali prod'ga chiqarilmagan).
 
 ### Kirish oqimi
 `/login` → "Telegram botga o'tish" → botda `/start` + kontakt → 6 xonali kod →
@@ -261,20 +247,26 @@ qaytadi (botsiz test uchun).
 
 ---
 
-## 8. CI/CD → AWS
+## 8. CI/CD → DigitalOcean
 
 `.github/workflows/ci-cd.yml`:
-- **test** (har push/PR): `apps/api` va ikkala bot uchun `go vet` + `go test`,
-  `apps/web` uchun `npm ci` + `lint` + `build`, `apps/miniapp` uchun
-  `tsc --noEmit` + `vite build`.
-- **deploy** (faqat `main`'ga push, test o'tgach): AWS EC2'ga SSH orqali
-  `git reset --hard origin/main` + `docker compose up --build`.
-  ⚠️ `main`'ga push = **production deploy (AWS)**.
+- **test** (har push/PR): `apps/api` va OTP boti uchun `go vet` + `go test`,
+  `apps/web` uchun `npm ci` + `lint` + `build`.
+- **deploy** (faqat `main`'ga push, test o'tgach): DigitalOcean Droplet'ga SSH
+  orqali `git reset --hard origin/main` + `docker compose up --build`.
+  ⚠️ `main`'ga push = **production deploy**.
 
-Kerakli GitHub secrets: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `PROJECT_DIR`.
+Kerakli GitHub secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`,
+`PROJECT_DIR` + ilova sirlari (`TELEGRAM_BOT_TOKEN`, `JWT_*`,
+`BOT_SHARED_SECRET`, `ADMIN_SEED_PASS`).
+
+Serverni birinchi marta tayyorlash — `deploy/droplet-setup.sh` (Docker, Caddy,
+ufw, swap, deploy user, kunlik Mongo zaxirasi). TLS'ni xostdagi Caddy beradi
+(`deploy/Caddyfile`), sertifikat avtomatik yangilanadi. Batafsil arxitektura va
+`Caddyfile` ni yangilash tartibi: [deploy/README.md](deploy/README.md).
 
 ### Rejalashtirilgan yaxshilanishlar
-1. **Image'larni CI'da qurish** (GHCR) — hozir build EC2'ning o'zida ketadi,
+1. **Image'larni CI'da qurish** (GHCR) — hozir build Droplet'ning o'zida ketadi,
    ya'ni prod mashinaning RAM/CPU'sida (Next.js build "Killed" bo'lishi
    mumkin). Registry'ga o'tilsa deploy `pull` ga aylanadi va **rollback**
    paydo bo'ladi. Batafsil: [deploy/README.md](deploy/README.md).

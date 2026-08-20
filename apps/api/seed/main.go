@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
@@ -14,6 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -82,8 +84,17 @@ var elonSeeds = []elonSeed{
 }
 
 func main() {
+	reset := flag.Bool("reset", false, "delete existing development data before seeding")
+	flag.Parse()
+
 	envfile.Load()
 	cfg := config.Load()
+	// This command creates synthetic users and can erase whole collections with
+	// --reset. Production administration has a separate, narrowly-scoped
+	// resetadmin command; never allow the demo seeder against a prod config.
+	if cfg.IsProd() {
+		log.Fatal("seed is disabled when APP_ENV=production")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	mdb, err := db.Connect(ctx, cfg.MongoURI, cfg.MongoDB)
@@ -94,13 +105,35 @@ func main() {
 		log.Printf("indexes: %v", err)
 	}
 
-	// idempotency: clear domain collections
+	// Safe by default: seeding must never erase a populated database unless the
+	// operator explicitly opts in with --reset. Categories are excluded from
+	// this guard because the API creates the three system defaults on startup.
 	cols := []string{"users", "categories", "elons", "applications", "reviews",
 		"notifications", "reports", "feedback",
 		"admins", "admin_audit", "otp_codes"}
-	for _, c := range cols {
-		if _, err := mdb.Collection(c).DeleteMany(ctx, bson.M{}); err != nil {
-			log.Printf("clear %s: %v", c, err)
+	if !*reset {
+		populated := false
+		for _, c := range cols {
+			if c == "categories" {
+				continue
+			}
+			n, err := mdb.Collection(c).CountDocuments(ctx, bson.M{}, options.Count().SetLimit(1))
+			if err != nil {
+				log.Fatalf("check %s: %v", c, err)
+			}
+			if n > 0 {
+				log.Printf("existing data: %s", c)
+				populated = true
+			}
+		}
+		if populated {
+			log.Fatal("database is not empty; no changes made (use --reset only for a development database)")
+		}
+	} else {
+		for _, c := range cols {
+			if _, err := mdb.Collection(c).DeleteMany(ctx, bson.M{}); err != nil {
+				log.Fatalf("clear %s: %v", c, err)
+			}
 		}
 	}
 	rand.Seed(time.Now().UnixNano())
@@ -109,17 +142,26 @@ func main() {
 	// ---- categories ----
 	catIDs := map[string]primitive.ObjectID{}
 	for _, c := range categories {
-		oid := primitive.NewObjectID()
-		_, err := mdb.Collection("categories").InsertOne(ctx, models.Category{
-			ID: oid, Name: c.Name, Slug: c.Slug, Icon: c.Icon,
-			IsSystemDefault: c.SystemDefault, IsActive: true,
-			UsageCount: rand.Intn(20), CreatedAt: now,
-		})
-		if err != nil && !mongo.IsDuplicateKeyError(err) {
+		var category models.Category
+		err := mdb.Collection("categories").FindOneAndUpdate(
+			ctx,
+			bson.M{"slug": c.Slug},
+			bson.M{
+				"$set": bson.M{
+					"name": c.Name, "icon": c.Icon,
+					"isSystemDefault": c.SystemDefault, "isActive": true,
+				},
+				"$setOnInsert": bson.M{
+					"usageCount": rand.Intn(20), "createdAt": now,
+				},
+			},
+			options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After),
+		).Decode(&category)
+		if err != nil {
 			log.Printf("category %s: %v", c.Name, err)
 			continue
 		}
-		catIDs[c.Name] = oid
+		catIDs[c.Name] = category.ID
 	}
 	fmt.Printf("categories: %d\n", len(catIDs))
 

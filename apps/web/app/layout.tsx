@@ -111,7 +111,7 @@ const organizationLd = {
       email: CONTACT.email,
       contactType: "customer support",
       areaServed: "UZ",
-      availableLanguage: ["uz", "ru"],
+      availableLanguage: "uz",
     },
   ],
   sameAs: SOCIAL_SAMEAS,

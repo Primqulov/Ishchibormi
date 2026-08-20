@@ -67,7 +67,10 @@ func (c *Client) SendHTML(ctx context.Context, chatID int64, html string) error 
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUnreachable, err)
+		// net/http errors can include the full request URL, and Telegram embeds
+		// the bot token in that URL path. Never propagate it into application
+		// logs or API error chains.
+		return ErrUnreachable
 	}
 	defer func() { _ = res.Body.Close() }()
 

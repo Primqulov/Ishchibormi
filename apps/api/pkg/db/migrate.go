@@ -42,3 +42,37 @@ func BackfillElonOwnerAvatars(ctx context.Context, db *mongo.Database) error {
 	}
 	return cur.Close(ctx)
 }
+
+// BackfillElonOwnerModeration denormalizes the owner's block/delete state onto
+// existing listings. New moderation actions maintain these fields directly;
+// this one-time join closes the gap for accounts blocked before that code was
+// deployed.
+func BackfillElonOwnerModeration(ctx context.Context, db *mongo.Database) error {
+	pipeline := mongo.Pipeline{
+		{{Key: "$lookup", Value: bson.M{
+			"from": "users", "localField": "ownerId", "foreignField": "_id", "as": "_owner",
+		}}},
+		{{Key: "$set", Value: bson.M{
+			"ownerBlocked": bson.M{"$ifNull": bson.A{
+				bson.M{"$arrayElemAt": bson.A{"$_owner.isBlocked", 0}}, false,
+			}},
+			"isDeleted": bson.M{"$cond": bson.A{
+				bson.M{"$ifNull": bson.A{bson.M{"$arrayElemAt": bson.A{"$_owner.isDeleted", 0}}, false}},
+				true, "$isDeleted",
+			}},
+			"status": bson.M{"$cond": bson.A{
+				bson.M{"$ifNull": bson.A{bson.M{"$arrayElemAt": bson.A{"$_owner.isDeleted", 0}}, false}},
+				"cancelled", "$status",
+			}},
+		}}},
+		{{Key: "$unset", Value: "_owner"}},
+		{{Key: "$merge", Value: bson.M{
+			"into": "elons", "whenMatched": "merge", "whenNotMatched": "discard",
+		}}},
+	}
+	cur, err := db.Collection("elons").Aggregate(ctx, pipeline)
+	if err != nil {
+		return err
+	}
+	return cur.Close(ctx)
+}

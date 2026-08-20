@@ -1,0 +1,53 @@
+# Caddy — TLS terminator va reverse proxy (DigitalOcean Droplet, XOSTDA ishlaydi).
+#
+# Nega konteynerda emas, xostda: docker-compose backend'ni 127.0.0.1:8080 ga,
+# frontend'ni 127.0.0.1:3000 ga bog'laydi (tashqi dunyoga OCHIQ EMAS). Ya'ni
+# yagona ochiq eshik shu Caddy. `docker compose down` qilinganda ham sertifikatlar
+# va 80/443 xostda qolaveradi — deploy paytida domen "o'lmaydi".
+#
+# O'rnatish/yangilash:
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# TLS: Caddy Let's Encrypt sertifikatini AVTOMATIK oladi va yangilaydi —
+# certbot/cron kerak emas. Yagona shart: domen A-yozuvi shu server IP'siga
+# yo'naltirilgan va 80/443 portlar ufw'da ochiq bo'lsin.
+
+# www -> apex. Bitta origin qoldiramiz: CORS_ORIGINS, NEXT_PUBLIC_API_BASE va
+# cookie domeni bir xil bo'lsin (ikkitasi bo'lsa sessiya "yo'qoladi").
+www.ishchibormi.uz {
+	redir https://ishchibormi.uz{uri} permanent
+}
+
+ishchibormi.uz {
+	encode zstd gzip
+
+	# Zaxira chegara: eng katta yuklama e'lon rasmi — 8MB (+1MB multipart
+	# ortiqchasi, apps/api/internal/upload/handler.go). 12MB shundan yuqori,
+	# ya'ni haqiqiy chegarani API qo'yadi, Caddy faqat suiiste'moldan saqlaydi.
+	request_body {
+		max_size 12MB
+	}
+
+	# Go API. Frontend Next.js bo'lgani uchun yo'llar bo'yicha ajratamiz:
+	#   /api/*      — barcha REST endpoint'lar (cmd/api/main.go: r.Route("/api"))
+	#   /uploads/*  — lokal diskdagi rasmlar (S3 sozlanmagan holat)
+	#   /healthz    — monitoring
+	@api path /api/* /uploads/* /healthz
+	handle @api {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Qolgan hamma narsa — Next.js (SSR, statik fayllar, admin panel).
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	log {
+		output file /var/log/caddy/ishchibormi.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+	}
+}

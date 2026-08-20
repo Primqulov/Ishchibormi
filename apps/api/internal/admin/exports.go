@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ishchibormi/backend/internal/models"
@@ -13,6 +14,22 @@ import (
 )
 
 const exportMax = 50000
+
+// csvCell prevents spreadsheet formula injection. Excel evaluates cells that
+// begin (even after whitespace) with =, +, -, or @; user-controlled names,
+// titles and phone fields must remain inert text when an admin opens an export.
+func csvCell(s string) string {
+	trimmed := strings.TrimLeft(s, " \t\r\n")
+	if trimmed == "" {
+		return s
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + s
+	default:
+		return s
+	}
+}
 
 // csvDownload sets download headers and writes a UTF-8 BOM so Excel opens
 // Cyrillic/Latin text correctly, then returns a writer for the rows.
@@ -48,7 +65,7 @@ func (h *Handler) ExportUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		_ = cw.Write([]string{
-			u.ID.Hex(), u.FirstName, u.LastName, u.Phone, u.Region, u.District,
+			u.ID.Hex(), csvCell(u.FirstName), csvCell(u.LastName), csvCell(u.Phone), csvCell(u.Region), csvCell(u.District),
 			strconv.FormatFloat(u.Rating, 'f', 1, 64), strconv.Itoa(u.ReviewsCount),
 			strconv.Itoa(u.CompletedJobsCount), strconv.FormatBool(u.IsPhoneVerified),
 			strconv.FormatBool(u.IsBlocked), u.CreatedAt.Format(time.RFC3339),
@@ -76,9 +93,9 @@ func (h *Handler) ExportElons(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		_ = cw.Write([]string{
-			e.ID.Hex(), e.Title, e.CategoryName, e.Status, e.Region,
+			e.ID.Hex(), csvCell(e.Title), csvCell(e.CategoryName), e.Status, csvCell(e.Region),
 			strconv.Itoa(e.WorkersNeeded), strconv.FormatInt(e.PriceAmount, 10),
-			e.OwnerName, strconv.Itoa(e.ViewsCount), e.CreatedAt.Format(time.RFC3339),
+			csvCell(e.OwnerName), strconv.Itoa(e.ViewsCount), e.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	cw.Flush()
@@ -103,7 +120,7 @@ func (h *Handler) ExportApplications(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		_ = cw.Write([]string{
-			a.ID.Hex(), a.ElonTitle, a.WorkerName, a.WorkerPhone,
+			a.ID.Hex(), csvCell(a.ElonTitle), csvCell(a.WorkerName), csvCell(a.WorkerPhone),
 			strconv.FormatInt(a.Amount, 10), strconv.FormatBool(a.IsNegotiable),
 			a.Status, a.AppliedAt.Format(time.RFC3339),
 		})

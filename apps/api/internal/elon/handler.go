@@ -120,15 +120,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Description) == "" || req.WorkersNeeded < 1 {
-		httpx.Err(w, httpx.NewError(400, "bad_request", "title, description and workersNeeded required"))
+	if err := validateUpsert(&req); err != nil {
+		httpx.Err(w, err)
 		return
 	}
 	if err := validateStartDate(req.StartDate, time.Now(), false); err != nil {
 		httpx.Err(w, err)
 		return
 	}
-	if err := validateURLs(&req); err != nil {
+	if err := validateURLs(&req, h.Storage, uid.Hex()); err != nil {
 		httpx.Err(w, err)
 		return
 	}
@@ -214,6 +214,20 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(404, "not_found", "elon not found"))
 		return
 	}
+	caller, _ := primitive.ObjectIDFromHex(httpx.UserID(r))
+	participant := caller == e.OwnerID
+	if !participant && !caller.IsZero() {
+		n, _ := h.Applications.CountDocuments(r.Context(), bson.M{
+			"elonId": id, "$or": []bson.M{{"workerId": caller}, {"employerId": caller}},
+		}, options.Count().SetLimit(1))
+		participant = n > 0
+	}
+	publicStatus := e.Status == "recruiting" || e.Status == "filled"
+	if (e.IsReviewData && !httpx.IsReviewActor(r.Context())) ||
+		((e.OwnerBlocked || !publicStatus) && !participant) {
+		httpx.Err(w, httpx.NewError(404, "not_found", "elon not found"))
+		return
+	}
 	// bump view count async (worker navbati orqali; to'lsa — tashlanadi)
 	select {
 	case h.viewBumps <- id:
@@ -236,11 +250,15 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	if err := validateUpsert(&req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	if err := validateStartDate(req.StartDate, time.Now(), true); err != nil {
 		httpx.Err(w, err)
 		return
 	}
-	if err := validateURLs(&req); err != nil {
+	if err := validateURLs(&req, h.Storage, uid.Hex()); err != nil {
 		httpx.Err(w, err)
 		return
 	}
@@ -402,6 +420,10 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	minPrice, _ := strconv.ParseInt(r.URL.Query().Get("minPrice"), 10, 64)
 	maxPrice, _ := strconv.ParseInt(r.URL.Query().Get("maxPrice"), 10, 64)
 	sort := r.URL.Query().Get("sort") // price|time|rating
+	if len([]rune(q)) > 200 || len([]rune(region)) > 100 || len(cat) > 64 {
+		httpx.Err(w, httpx.NewError(400, "query_too_long", "filter value is too long"))
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 100 {
 		limit = 24
@@ -409,8 +431,13 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
+	} else if page > 10_000 {
+		page = 10_000
 	}
-	filter := bson.M{"isDeleted": bson.M{"$ne": true}, "status": "recruiting"}
+	filter := bson.M{
+		"isDeleted": bson.M{"$ne": true}, "ownerBlocked": bson.M{"$ne": true},
+		"status": "recruiting",
+	}
 	// Google Play demo hisobi yaratgan e'lonlar ommaviy feedga hech qachon
 	// tushmaydi. $ne true — maydon umuman yo'q bo'lgan (ya'ni barcha real)
 	// yozuvlarni ham qamrab oladi.
@@ -542,6 +569,7 @@ func (h *Handler) Sitemap(w http.ResponseWriter, r *http.Request) {
 	// indekslanish uchun berilgan bo'lardi.
 	filter := bson.M{
 		"isDeleted":    bson.M{"$ne": true},
+		"ownerBlocked": bson.M{"$ne": true},
 		"isReviewData": bson.M{"$ne": true},
 		"status":       "recruiting",
 	}
@@ -765,14 +793,39 @@ func mapsURL(lat, lng float64) string {
 // validateURLs rejects any user-supplied URL that isn't a safe http(s) link.
 // locationUrl and images are later rendered in hrefs/img on other users'
 // browsers, so a javascript:/data: value would be a stored-XSS vector.
-func validateURLs(req *upsertReq) error {
+func validateURLs(req *upsertReq, store *storage.Service, userID string) error {
 	if !httpx.IsSafeHTTPURL(req.LocationURL) {
 		return httpx.NewError(400, "bad_location_url", "location url must be http(s)")
 	}
 	for _, img := range req.Images {
-		if strings.TrimSpace(img) == "" || !httpx.IsSafeHTTPURL(img) {
-			return httpx.NewError(400, "bad_image_url", "image url must be http(s)")
+		if strings.TrimSpace(img) == "" || store == nil || !store.URLBelongsToUser(img, userID) {
+			return httpx.NewError(400, "bad_image_url", "image must be uploaded by this account")
 		}
+	}
+	return nil
+}
+
+func validateUpsert(req *upsertReq) error {
+	title := strings.TrimSpace(req.Title)
+	description := strings.TrimSpace(req.Description)
+	if title == "" || description == "" || req.WorkersNeeded < 1 {
+		return httpx.NewError(400, "bad_request", "title, description and workersNeeded required")
+	}
+	if len([]rune(title)) > 160 || len([]rune(description)) > 5000 {
+		return httpx.NewError(400, "too_long", "title or description is too long")
+	}
+	if req.WorkersNeeded > 100 || req.PriceAmount < 0 || req.PriceAmount > 1_000_000_000_000 {
+		return httpx.NewError(400, "bad_amount", "workers or price is out of range")
+	}
+	if len(req.Images) > 6 {
+		return httpx.NewError(400, "too_many_images", "at most 6 images are allowed")
+	}
+	if len(req.LocationURL) > 2048 || len([]rune(req.ContactPhone)) > 32 ||
+		len([]rune(req.Region)) > 100 || len([]rune(req.District)) > 100 {
+		return httpx.NewError(400, "too_long", "job field is too long")
+	}
+	if req.Lat < -90 || req.Lat > 90 || req.Lng < -180 || req.Lng > 180 {
+		return httpx.NewError(400, "bad_coordinates", "coordinates are out of range")
 	}
 	return nil
 }

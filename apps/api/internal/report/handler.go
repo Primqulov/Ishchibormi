@@ -2,6 +2,7 @@ package report
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +44,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetType != "user" && req.TargetType != "elon" && req.TargetType != "message" {
 		httpx.Err(w, httpx.NewError(400, "bad_target_type", "bad targetType"))
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.Description = strings.TrimSpace(req.Description)
+	if req.Reason == "" || len([]rune(req.Reason)) > 160 || len([]rune(req.Description)) > 2000 {
+		httpx.Err(w, httpx.NewError(400, "bad_report", "report text is empty or too long"))
 		return
 	}
 	tid, err := primitive.ObjectIDFromHex(req.TargetID)
@@ -107,7 +114,10 @@ func (h *Handler) Resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req resolveReq
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	if req.Status != "resolved" && req.Status != "dismissed" {
 		httpx.Err(w, httpx.NewError(400, "bad_status", "bad status"))
 		return

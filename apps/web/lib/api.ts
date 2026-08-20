@@ -27,12 +27,17 @@ export function setAccess(t: string | null) {
 
 export function setAdminToken(t: string | null) {
   if (typeof window === "undefined") return;
-  if (t) localStorage.setItem(ADMIN_KEY, t);
-  else localStorage.removeItem(ADMIN_KEY);
+  // Admin sessions are deliberately tab-scoped and disappear when the browser
+  // closes. This limits persistence of a privileged bearer token. Purge the
+  // legacy localStorage copy during migration.
+  localStorage.removeItem(ADMIN_KEY);
+  if (t) sessionStorage.setItem(ADMIN_KEY, t);
+  else sessionStorage.removeItem(ADMIN_KEY);
 }
 export function getAdminToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(ADMIN_KEY);
+  localStorage.removeItem(ADMIN_KEY);
+  return sessionStorage.getItem(ADMIN_KEY);
 }
 
 // downloadAdminCsv triggers a browser download of an admin CSV export. The admin
@@ -81,6 +86,49 @@ export interface APIError {
   message: string;
 }
 
+function connectionError(): APIError {
+  const offline =
+    typeof navigator !== "undefined" && navigator.onLine === false;
+  return offline
+    ? {
+        code: "offline",
+        message:
+          "Internet aloqasi yo'q. Tarmoqni tekshirib, qayta urinib ko'ring.",
+      }
+    : {
+        code: "server_unavailable",
+        message:
+          "Server vaqtincha ishlamayapti. Internetingiz ishlayapti — birozdan so'ng qayta urinib ko'ring.",
+      };
+}
+
+function responseError(status: number, data: any): APIError {
+  if (status >= 500) {
+    return {
+      code: "server_error",
+      message:
+        "Serverda vaqtinchalik xatolik bor. Birozdan so'ng qayta urinib ko'ring.",
+    };
+  }
+
+  const backendError = data?.error;
+  if (
+    backendError &&
+    typeof backendError.code === "string" &&
+    typeof backendError.message === "string"
+  ) {
+    // Business errors keep their stable code so forms can show a helpful local
+    // message. Callers must not display raw technical response bodies.
+    return backendError as APIError;
+  }
+
+  return {
+    code: "request_failed",
+    message:
+      "So'rovni bajarib bo'lmadi. Ma'lumotlarni tekshirib, qayta urinib ko'ring.",
+  };
+}
+
 async function request<T>(
   path: string,
   opts: RequestInit & { auth?: "user" | "admin" | "none" } = {}
@@ -98,17 +146,13 @@ async function request<T>(
 
   // fetch() server topilmaganda (backend o'chiq, CORS, oflayn) xom
   // `TypeError: Failed to fetch` tashlaydi — bu Next.js dev'da "Unhandled
-  // Runtime Error" overlay'i bo'lib chiqadi. Uni typed APIError ga o'giramiz,
-  // shunda chaqiruvchilar tushunarli xabar ko'rsatadi.
+  // Runtime Error" overlay'i bo'lib chiqadi. navigator.onLine orqali haqiqiy
+  // oflayn holatni online qurilmadagi backend nosozligidan ajratamiz.
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
   } catch {
-    const err: APIError = {
-      code: "network",
-      message: "Serverga ulanib bo'lmadi. Internet aloqangizni yoki server ishlayotganini tekshiring.",
-    };
-    throw err;
+    throw connectionError();
   }
 
   const text = await res.text();
@@ -136,8 +180,18 @@ async function request<T>(
     if ((res.status === 401 || disabled) && auth === "user") {
       setAccess(null);
     }
-    const err: APIError = (data && data.error) || { code: "http", message: `HTTP ${res.status}` };
-    throw err;
+    // Admin JWT ham xuddi shunday eskirishi mumkin (masalan lokal backend
+    // qayta ishga tushganda boshqa secret bilan). Token shunchaki mavjudligi
+    // admin kirganini anglatmaydi: 401 da uni darhol tozalab, qayta login
+    // qilishga yo'naltiramiz. Aks holda panel har bir amalni "invalid token"
+    // bilan rad etib, foydalanuvchini kirgan holatda qotirib qo'yadi.
+    if (res.status === 401 && auth === "admin") {
+      setAdminToken(null);
+      if (typeof window !== "undefined" && window.location.pathname !== "/admin/login") {
+        window.location.replace("/admin/login?session=expired");
+      }
+    }
+    throw responseError(res.status, data);
   }
   return data as T;
 }
@@ -178,6 +232,7 @@ export interface Category {
   id: ID;
   name: string;
   slug: string;
+  /** Public http(s) URL of the category icon (SVG or raster). */
   icon?: string;
   isSystemDefault?: boolean;
   isActive: boolean;

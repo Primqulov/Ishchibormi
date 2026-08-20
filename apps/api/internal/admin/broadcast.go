@@ -50,6 +50,10 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(400, "bad_request", "title required"))
 		return
 	}
+	if len([]rune(req.Title)) > 160 || len([]rune(req.Body)) > 4000 || len([]rune(req.Region)) > 100 {
+		httpx.Err(w, httpx.NewError(400, "too_long", "broadcast field is too long"))
+		return
+	}
 	// Optional schedule. A time more than a minute in the future defers delivery
 	// to the background scheduler; anything else sends immediately.
 	var scheduledAt *time.Time

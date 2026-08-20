@@ -7,6 +7,7 @@ import { ArrowRight, Briefcase, MapPin, Search } from "lucide-react";
 import { api, Application, Category, Elon, User } from "@/lib/api";
 import { Shell } from "@/components/Shell";
 import { JobCard } from "@/components/JobCard";
+import { CategoryIcon } from "@/components/CategoryIcon";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CardSkeleton } from "@/components/ui/Skeleton";
 import { T, useT } from "@/components/T";
@@ -159,7 +160,7 @@ export default function Dashboard() {
                 >
                   <span className="grid h-11 w-11 place-items-center rounded-xl text-xl"
                         style={{ background: "var(--brand-soft)" }}>
-                    {c.icon || "🧰"}
+                    <CategoryIcon icon={c.icon} name={c.name} className="h-6 w-6" />
                   </span>
                   <div>
                     <div className="text-[13.5px] font-bold heading leading-tight"><T>{c.name}</T></div>

@@ -19,9 +19,14 @@ func IssueUserToken(secret, userID string, ttl time.Duration) (string, error) {
 }
 
 func IssueAdminToken(secret, adminID, role string, ttl time.Duration) (string, error) {
+	return IssueVersionedAdminToken(secret, adminID, role, 0, ttl)
+}
+
+func IssueVersionedAdminToken(secret, adminID, role string, tokenVersion int, ttl time.Duration) (string, error) {
 	c := AdminClaims{
-		AdminID: adminID,
-		Role:    role,
+		AdminID:      adminID,
+		Role:         role,
+		TokenVersion: &tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

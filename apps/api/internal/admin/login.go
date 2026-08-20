@@ -24,6 +24,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	req.Username = strings.ToLower(strings.TrimSpace(req.Username))
+	if req.Username == "" || len(req.Username) > 100 || len(req.Password) == 0 || len(req.Password) > 128 ||
+		(len(req.Code) > 0 && len(strings.TrimSpace(req.Code)) != 6) {
+		httpx.Err(w, httpx.NewError(401, "bad_credentials", "invalid credentials"))
+		return
+	}
 	var a models.Admin
 	if err := h.Admins.FindOne(r.Context(), bson.M{"username": req.Username, "isActive": true}).Decode(&a); err != nil {
 		h.auditRaw(r.Context(), primitive.NilObjectID, "login_failed", req.Username, "no such active admin")
@@ -48,7 +54,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tok, err := httpx.IssueAdminToken(h.Cfg.JWTAccessSecret, a.ID.Hex(), a.Role, h.Cfg.JWTAccessTTL)
+	tok, err := httpx.IssueVersionedAdminToken(h.Cfg.JWTAccessSecret, a.ID.Hex(), a.Role, a.TokenVersion, h.Cfg.JWTAdminTTL)
 	if err != nil {
 		httpx.Err(w, err)
 		return

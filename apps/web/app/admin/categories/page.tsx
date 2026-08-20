@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, Category, getAdminRole } from "@/lib/api";
+import { API_BASE, api, Category, getAdminRole, getAdminToken } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { CategoryIcon } from "@/components/CategoryIcon";
 
 type Draft = { id?: string; name: string; slug: string; icon: string; isActive: boolean };
 const empty: Draft = { name: "", slug: "", icon: "", isActive: true };
@@ -12,6 +13,7 @@ export default function AdminCategories() {
   const [delCat, setDelCat] = useState<Category | null>(null);
   const [err, setErr] = useState("");
   const [isSuper, setIsSuper] = useState(false);
+  const [iconUploading, setIconUploading] = useState(false);
 
   async function load() { setCats(await api.get<Category[]>("/api/admin/categories", { auth: "admin" } as any)); }
   useEffect(() => { load(); setIsSuper(getAdminRole() === "superadmin"); }, []);
@@ -30,6 +32,26 @@ export default function AdminCategories() {
       setEdit(null);
       load();
     } catch (e: any) { setErr(e?.message || "Xatolik"); }
+  }
+  async function uploadIcon(file: File) {
+    setErr("");
+    setIconUploading(true);
+    try {
+      const body = new FormData();
+      body.append("file", file, file.name);
+      const res = await fetch(`${API_BASE}/api/admin/categories/icon`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getAdminToken() || ""}` },
+        body,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+      setEdit((current) => current ? { ...current, icon: data.url } : current);
+    } catch (e: any) {
+      setErr(e?.message || "Ikonka yuklashda xatolik");
+    } finally {
+      setIconUploading(false);
+    }
   }
   async function del() {
     if (!delCat) return;
@@ -82,7 +104,12 @@ export default function AdminCategories() {
             <tbody>
               {cats.map((c) => (
                 <tr key={c.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-                  <td className="py-3 px-4 truncate">{c.icon} {c.name}</td>
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CategoryIconPreview icon={c.icon} name={c.name} />
+                      <span className="truncate">{c.name}</span>
+                    </div>
+                  </td>
                   <td className="px-4 truncate">{c.slug}</td>
                   <td className="px-4">{c.usageCount}</td>
                   <td className="px-4">{c.isSystemDefault ? "tizim" : "admin"}</td>
@@ -121,7 +148,7 @@ export default function AdminCategories() {
       <Modal open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? "Turkumni tahrirlash" : "Yangi turkum"} footer={
         <>
           <button onClick={() => setEdit(null)} className="btn-secondary">Bekor</button>
-          <button onClick={save} className="btn-primary" disabled={!edit?.name.trim()}>Saqlash</button>
+          <button onClick={save} className="btn-primary" disabled={!edit?.name.trim() || !edit?.icon.trim() || iconUploading}>Saqlash</button>
         </>
       }>
         {edit && (
@@ -132,9 +159,37 @@ export default function AdminCategories() {
             <label className="text-sm">Slug (ixtiyoriy — nomdan avtomatik)
               <input className="input mt-1" value={edit.slug} onChange={(e) => setEdit({ ...edit, slug: e.target.value })} placeholder="quruvchi" />
             </label>
-            <label className="text-sm">Icon (emoji yoki nom, ixtiyoriy)
-              <input className="input mt-1" value={edit.icon} onChange={(e) => setEdit({ ...edit, icon: e.target.value })} placeholder="🔨" />
-            </label>
+            <div className="text-sm">
+              <div className="font-medium">Kategoriya ikonkasi <span className="text-danger">*</span></div>
+              <p className="mt-1 text-xs muted">Internetdagi SVG/PNG/WebP/JPG manzilini kiriting yoki kompyuterdan rasm yuklang.</p>
+              <div className="mt-2 flex items-center gap-3">
+                <CategoryIconPreview icon={edit.icon} name={edit.name || "Kategoriya"} large />
+                <div className="flex-1 grid gap-2">
+                  <input
+                    className="input"
+                    type="url"
+                    value={edit.icon}
+                    onChange={(e) => setEdit({ ...edit, icon: e.target.value })}
+                    placeholder="https://.../icon.svg"
+                    required
+                  />
+                  <label className="btn-secondary btn-sm w-fit cursor-pointer">
+                    {iconUploading ? "Yuklanmoqda…" : "PNG/JPG/WebP yuklash"}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      disabled={iconUploading}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) uploadIcon(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
             <label className="text-sm flex items-center gap-2">
               <input type="checkbox" checked={edit.isActive} onChange={(e) => setEdit({ ...edit, isActive: e.target.checked })} /> Faol
             </label>
@@ -165,5 +220,14 @@ export default function AdminCategories() {
         {err && <div className="mt-2 text-danger text-sm">{err}</div>}
       </Modal>
     </div>
+  );
+}
+
+function CategoryIconPreview({ icon, name, large = false }: { icon?: string; name: string; large?: boolean }) {
+  const size = large ? "h-16 w-16" : "h-9 w-9";
+  return (
+    <span className={`${size} shrink-0 rounded-xl border grid place-items-center overflow-hidden bg-[color:var(--bg-subtle)]`}>
+      <CategoryIcon icon={icon} name={name} className="h-[65%] w-[65%]" />
+    </span>
   );
 }

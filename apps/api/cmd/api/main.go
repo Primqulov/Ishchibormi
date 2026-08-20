@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -57,8 +59,8 @@ func main() {
 	if err := db.RunMigrations(ctx, mdb); err != nil {
 		log.Warn("run migrations", "err", err)
 	}
-	// Turkumlarni kanonik ro'yxatga moslashtiramiz (har deploy'da avtomatik):
-	// faqat 3 turkum faol qoladi, eskilari nofaol qilinadi. Ma'lumot o'chmaydi.
+	// Boshlang'ich tizim turkumlarini upsert qilamiz. Admin yaratgan turkumlar
+	// deploy/restart paytida o'zgartirilmaydi.
 	if err := category.EnsureDefaults(ctx, mdb); err != nil {
 		log.Warn("ensure categories", "err", err)
 	}
@@ -143,7 +145,7 @@ func main() {
 	if cfg.TrustProxyHeaders {
 		r.Use(middleware.RealIP)
 	}
-	r.Use(middleware.Logger)
+	r.Use(httpx.AccessLog)
 	r.Use(httpx.Recover)
 	r.Use(httpx.SecurityHeaders)
 	// Auth is a Bearer token in the Authorization header (not cookies), so
@@ -163,7 +165,9 @@ func main() {
 	// Refresh legitimately fires on every 401 from the mobile interceptor, so
 	// the budget is generous — this only caps offline brute-force of refresh
 	// tokens and accidental client retry-loops.
-	refreshLimiter := httpx.NewLimiter(30, 0.1) // 30 burst, 1 / 10s
+	refreshLimiter := httpx.NewLimiter(30, 0.1)   // 30 burst, 1 / 10s
+	uploadLimiter := httpx.NewLimiter(12, 0.1)    // 12 burst, then 1 / 10s per authenticated user
+	publicReadLimiter := httpx.NewLimiter(120, 5) // generous public-query budget per client IP
 
 	// Evict idle per-IP buckets so the limiter maps don't grow unbounded (each
 	// unique client IP would otherwise leave a permanent entry). The 15-min idle
@@ -174,6 +178,8 @@ func main() {
 	loginLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	deleteLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	refreshLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
+	uploadLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
+	publicReadLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { httpx.JSON(w, 200, map[string]string{"status": "ok"}) })
 
@@ -181,8 +187,19 @@ func main() {
 	// auth — these are image URLs embedded in elons/avatars.
 	if s3svc != nil && s3svc.LocalDir() != "" {
 		fs := http.StripPrefix("/uploads/", http.FileServer(http.Dir(s3svc.LocalDir())))
-		r.Get("/uploads/*", fs.ServeHTTP)
-		r.Head("/uploads/*", fs.ServeHTTP)
+		serveUpload := func(w http.ResponseWriter, r *http.Request) {
+			// http.FileServer generates directory listings by default. Upload URLs
+			// are public, but the complete object inventory/user-id hierarchy is not.
+			ext := strings.ToLower(filepath.Ext(r.URL.Path))
+			if strings.HasSuffix(r.URL.Path, "/") || (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp") {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			fs.ServeHTTP(w, r)
+		}
+		r.Get("/uploads/*", serveUpload)
+		r.Head("/uploads/*", serveUpload)
 	}
 
 	r.Route("/api", func(r chi.Router) {
@@ -192,9 +209,6 @@ func main() {
 			r.Post("/auth/otp/request", authH.RequestOTP)
 			r.Post("/auth/otp/verify", authH.VerifyOTP)
 			r.Get("/auth/otp/peek", authH.DevPeekOTP)
-			// Telegram Mini App kirishi. OTP bilan bir xil limiter ostida:
-			// imzo tekshiruvi arzon emas va bu ham autentifikatsiya nuqtasi.
-			r.Post("/auth/telegram/webapp", authH.TelegramWebApp)
 		})
 		r.With(refreshLimiter.Middleware("refresh")).Post("/auth/refresh", authH.Refresh)
 
@@ -209,12 +223,12 @@ func main() {
 		}
 		r.Group(func(r chi.Router) {
 			r.Use(httpx.OptionalUserAuth(cfg.JWTAccessSecret, reviewUserID))
-			r.Get("/elons", elonH.Feed)
-			r.Get("/elons/{id}", elonH.Get)
+			r.With(publicReadLimiter.Middleware("public-read")).Get("/elons", elonH.Feed)
+			r.With(publicReadLimiter.Middleware("public-read")).Get("/elons/{id}", elonH.Get)
 		})
 		r.Get("/elons/sitemap", elonH.Sitemap) // XML sitemap uchun yengil ro'yxat
-		r.Get("/users/{id}", userH.GetPublic)
-		r.Get("/users", userH.Search)
+		r.With(publicReadLimiter.Middleware("public-read")).Get("/users/{id}", userH.GetPublic)
+		r.With(publicReadLimiter.Middleware("public-read")).Get("/users", userH.Search)
 		r.Get("/categories", catH.List)
 
 		// Auth-protected
@@ -280,7 +294,8 @@ func main() {
 			r.Get("/feedback", fbH.Mine)
 
 			// Uploads — demo hisob ommaviy CDN'ga fayl yuklay olmaydi.
-			r.With(auth.DenyReviewAccount).Post("/uploads", uploadH.Upload)
+			r.With(auth.DenyReviewAccount,
+				uploadLimiter.MiddlewareKey("upload", httpx.UserID)).Post("/uploads", uploadH.Upload)
 			r.With(auth.DenyReviewAccount).Delete("/uploads", uploadH.Delete)
 		})
 
@@ -288,6 +303,7 @@ func main() {
 		r.With(loginLimiter.Middleware("admin-login")).Post("/admin/login", adminH.Login)
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(httpx.AdminAuth(cfg.JWTAccessSecret))
+			r.Use(admin.RequireActiveAdmin(adminH.Admins))
 
 			// Overview — read-only, any authenticated admin (incl. support).
 			r.Get("/dashboard", adminH.Dashboard)
@@ -334,6 +350,7 @@ func main() {
 			// RequireRole() with no args admits only superadmin (always-allowed).
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.RequireRole())
+				r.Post("/categories/icon", adminH.UploadCategoryIcon)
 				r.Patch("/categories/{id}/active", adminH.SetCategoryActive)
 				r.Post("/categories", adminH.CreateCategory)
 				r.Put("/categories/{id}", adminH.UpdateCategory)
@@ -364,6 +381,10 @@ func main() {
 		Addr:              cfg.HTTPAddr,
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    32 << 10,
 	}
 
 	go func() {

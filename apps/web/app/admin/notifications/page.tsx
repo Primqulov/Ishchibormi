@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Megaphone, Send, Clock, Check } from "lucide-react";
+import { Megaphone, Send, Clock, Check, CircleAlert } from "lucide-react";
 import { api, Broadcast, Paged } from "@/lib/api";
 import { Pagination } from "@/components/Pagination";
 
@@ -11,6 +11,7 @@ export default function AdminBroadcast() {
   const [activeOnly, setActiveOnly] = useState(true);
   const [schedule, setSchedule] = useState(""); // datetime-local; empty = hozir
   const [msg, setMsg] = useState("");
+  const [msgKind, setMsgKind] = useState<"success" | "error">("success");
   const [sending, setSending] = useState(false);
 
   const [hist, setHist] = useState<Paged<Broadcast> | null>(null);
@@ -18,12 +19,17 @@ export default function AdminBroadcast() {
   const limit = 10;
 
   const loadHist = useCallback(async () => {
-    setHist(await api.get<Paged<Broadcast>>(`/api/admin/broadcasts?page=${page}&limit=${limit}`, { auth: "admin" } as any));
+    try {
+      setHist(await api.get<Paged<Broadcast>>(`/api/admin/broadcasts?page=${page}&limit=${limit}`, { auth: "admin" } as any));
+    } catch (e: any) {
+      setMsg(e?.message || "Tarqatmalar tarixini yuklab bo'lmadi");
+      setMsgKind("error");
+    }
   }, [page]);
   useEffect(() => { loadHist(); }, [loadHist]);
 
   async function send() {
-    setMsg(""); setSending(true);
+    setMsg(""); setMsgKind("success"); setSending(true);
     try {
       const scheduledAt = schedule ? new Date(schedule).toISOString() : "";
       const r = await api.post<{ recipients: number; status: string }>(
@@ -34,18 +40,26 @@ export default function AdminBroadcast() {
       setMsg(r.status === "scheduled"
         ? `~${r.recipients} foydalanuvchiga rejalashtirildi`
         : `~${r.recipients} foydalanuvchiga yuborilmoqda (fon jarayonida)`);
+      setMsgKind("success");
       setTitle(""); setBody(""); setSchedule("");
       setPage(1);
       loadHist();
     } catch (e: any) {
       setMsg(e?.message || "Xatolik");
+      setMsgKind("error");
     } finally {
       setSending(false);
     }
   }
   async function cancel(id: string) {
-    await api.delete(`/api/admin/broadcasts/${id}`, { auth: "admin" } as any);
-    loadHist();
+    setMsg("");
+    try {
+      await api.delete(`/api/admin/broadcasts/${id}`, { auth: "admin" } as any);
+      loadHist();
+    } catch (e: any) {
+      setMsg(e?.message || "Tarqatmani bekor qilib bo'lmadi");
+      setMsgKind("error");
+    }
   }
 
   const items = hist?.items ?? [];
@@ -111,8 +125,14 @@ export default function AdminBroadcast() {
         </button>
 
         {msg && (
-          <div className="flex items-center gap-2 text-sm rounded-lg px-3 py-2" style={{ background: "color-mix(in srgb, var(--success, #16a34a) 12%, transparent)", color: "var(--success, #16a34a)" }}>
-            <Check size={16} /> {msg}
+          <div
+            role={msgKind === "error" ? "alert" : "status"}
+            className="flex items-center gap-2 text-sm rounded-lg px-3 py-2"
+            style={msgKind === "error"
+              ? { background: "color-mix(in srgb, var(--danger, #dc2626) 12%, transparent)", color: "var(--danger, #dc2626)" }
+              : { background: "color-mix(in srgb, var(--success, #16a34a) 12%, transparent)", color: "var(--success, #16a34a)" }}
+          >
+            {msgKind === "error" ? <CircleAlert size={16} /> : <Check size={16} />} {msg}
           </div>
         )}
         <p className="text-xs text-[color:var(--text-muted)]">Yuborish fon jarayonida bajariladi — ko'p foydalanuvchi bo'lsa ham sahifa kutib qolmaydi.</p>

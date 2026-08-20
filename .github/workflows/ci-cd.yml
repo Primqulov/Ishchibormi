@@ -25,16 +25,15 @@ jobs:
       - name: Kodni yuklab olish
         uses: actions/checkout@v4
 
-      # --- Go (api + ikkala bot) ---
+      # --- Go (api + OTP bot) ---
       - name: Go o'rnatish
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.26"
           cache: true
           cache-dependency-path: |
             apps/api/go.sum
             apps/bots/otp/go.sum
-            apps/bots/miniapp/go.sum
 
       - name: API - vet & test
         working-directory: apps/api
@@ -48,21 +47,14 @@ jobs:
           go vet ./...
           go test ./...
 
-      - name: Mini App bot - vet & build
-        working-directory: apps/bots/miniapp
-        run: |
-          go vet ./...
-          go build ./...
-
       # --- Frontend (Next.js) ---
       - name: Node o'rnatish
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: |
             apps/web/package-lock.json
-            apps/miniapp/package-lock.json
 
       - name: Web - install
         working-directory: apps/web
@@ -76,33 +68,27 @@ jobs:
         working-directory: apps/web
         run: npm run build --if-present
 
-      # --- Mini App (Vite) ---
-      # compose bu image'ni ham quradi, ya'ni u deploy yo'lida. Sinovsiz
-      # qoldirilsa buzuq bundle to'g'ridan-to'g'ri prod'ga chiqib ketardi.
-      - name: Mini App - install
-        working-directory: apps/miniapp
-        run: npm ci
-
-      - name: Mini App - build (tsc --noEmit + vite build)
-        working-directory: apps/miniapp
-        run: npm run build
-
   # ───────────────────────────────────────────────
-  # 2) CD: EC2 serverga deploy
+  # 2) CD: DigitalOcean Droplet'ga deploy
   #    Faqat main'ga push bo'lganda VA test o'tgandan keyin
+  #
+  #    Server tayyorlash (bir marta): deploy/droplet-setup.sh
+  #    TLS/reverse-proxy: xostdagi Caddy (deploy/Caddyfile) — bu pipeline unga
+  #    TEGMAYDI. Caddyfile o'zgarsa serverda qo'lda yangilang:
+  #      sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
   # ───────────────────────────────────────────────
   deploy:
-    name: Deploy to EC2
+    name: Deploy to DigitalOcean
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - name: EC2'ga SSH orqali deploy
+      - name: Droplet'ga SSH orqali deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
           command_timeout: "20m"
           script: |
@@ -141,6 +127,14 @@ jobs:
             # ilova refresh oqimi bilan o'zi yangilaydi, web ~3 kunda qayta kiradi.
             # Bu maxfiy emas, shuning uchun oddiy set_env.
             set_env JWT_ACCESS_TTL_MIN 4320
+
+            # Fayl yuklash manzili. S3 sozlanmagan bo'lsa backend rasmlarni
+            # lokal diskda saqlaydi va ularni /uploads ostida o'zi tarqatadi
+            # (Caddy /uploads/* ni backend'ga yo'naltiradi). APP_ENV=production
+            # da config.go bu qiymat HTTPS bo'lishini TALAB qiladi — noto'g'ri
+            # bo'lsa API umuman ishga tushmaydi. Shuning uchun har deploy'da
+            # majburan yoziladi: bu maxfiy emas, faqat to'g'ri bo'lishi shart.
+            set_env UPLOAD_PUBLIC_BASE https://ishchibormi.uz/uploads
 
             echo "==> MongoDB ulanishini .env ga yozish (GitHub secret bo'lsa)"
             # MONGO_URI maxfiy (parol bor) -> faqat GitHub secret orqali keladi,
@@ -185,8 +179,26 @@ jobs:
             set_env_if_set JWT_REFRESH_SECRET    '${{ secrets.JWT_REFRESH_SECRET }}'
             set_env_if_set BOT_SHARED_SECRET     '${{ secrets.BOT_SHARED_SECRET }}'
             set_env_if_set ADMIN_SEED_PASS       '${{ secrets.ADMIN_SEED_PASS }}'
+            # S3 IXTIYORIY: bu secretlar bo'sh bo'lsa (DigitalOcean'da odatda
+            # shunday) backend rasmlarni Droplet diskidagi `uploads` volume'ida
+            # saqlaydi — yuqoridagi UPLOAD_PUBLIC_BASE shu holat uchun.
             set_env_if_set AWS_ACCESS_KEY_ID     '${{ secrets.AWS_ACCESS_KEY_ID }}'
             set_env_if_set AWS_SECRET_ACCESS_KEY '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+
+            # ── Mobil push (FCM) ─────────────────────────────────────────────
+            # Service-account fayli serverda ./secrets/ ostida turadi (secrets/
+            # gitignore'da, ya'ni "git reset --hard" unga tegmaydi). Fayl bor
+            # bo'lsa push yoqiladi, yo'q bo'lsa o'zgaruvchi bo'shatiladi — API
+            # o'chib qolmaydi, faqat push jimgina ishlamaydi. Yo'lni qo'lda .env
+            # ga yozib qo'yish shart emas: yagona manba shu tekshiruv.
+            echo "==> Mobil push (FCM) holati"
+            if [ -f secrets/fcm-service-account.json ]; then
+              set_env FCM_CREDENTIALS_FILE /app/secrets/fcm-service-account.json
+              echo "  secrets/fcm-service-account.json topildi -> push YOQILDI"
+            else
+              set_env FCM_CREDENTIALS_FILE ""
+              echo "  secrets/fcm-service-account.json yo'q -> push o'chiq"
+            fi
 
             echo "==> Server resurslari (debug: build yiqilsa sabab shu yerda ko'rinadi)"
             free -h || true

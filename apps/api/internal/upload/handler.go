@@ -105,6 +105,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(400, "no_file", "fayl o'qib bo'lmadi"))
 		return
 	}
+	if !ValidateImage(raw, ct) {
+		httpx.Err(w, httpx.NewError(http.StatusUnprocessableEntity, "invalid_image", "rasm buzilgan yoki o'lchami juda katta"))
+		return
+	}
 	body := compressImage(raw, ct, maxDimByKind[kind])
 
 	// Build a prefix that scopes the object to this user (and entity, if any).
@@ -125,15 +129,17 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 }
 
 // DELETE /api/uploads?key=...  or  DELETE /api/uploads?url=...
-// Deletes the underlying S3 object. Authenticated users only — strict
-// ownership check is performed by the calling domain (user/elon) before
-// invoking this; this endpoint is best-effort for cleanup.
+// Deletes the underlying S3 object. The key must be under the authenticated
+// user's own avatars/<uid>/ or elons/<uid>/ namespace. This endpoint is called
+// directly by clients for best-effort cleanup, so ownership must be enforced
+// here rather than assumed to have happened in a domain handler.
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if h.Storage == nil {
 		httpx.JSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
-	if httpx.UserID(r) == "" {
+	uid := httpx.UserID(r)
+	if uid == "" {
 		httpx.Err(w, httpx.NewError(401, "unauthorized", "kirish talab qilinadi"))
 		return
 	}
@@ -143,6 +149,10 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if key == "" {
 		httpx.JSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	if !h.Storage.KeyBelongsToUser(key, uid) {
+		httpx.Err(w, httpx.NewError(http.StatusForbidden, "forbidden", "fayl sizga tegishli emas"))
 		return
 	}
 	if err := h.Storage.Delete(r.Context(), key); err != nil {

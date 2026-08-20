@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api, Category, Elon, User, Gender, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
 import { Shell } from "@/components/Shell";
+import { CategoryIcon } from "@/components/CategoryIcon";
 import { MultiImageUploader } from "@/components/ui/ImageUpload";
 import { MapPicker, LatLng } from "@/components/ui/MapPicker";
 import { CheckCircle2, AlertTriangle, User2 } from "lucide-react";
@@ -161,7 +162,8 @@ export default function CreateElon() {
                 <button key={c.id} type="button"
                   onClick={() => setForm({ ...form, categoryId: c.id })}
                   className={`chip ${form.categoryId === c.id ? "chip-active" : ""}`}>
-                  {c.icon}<T>{c.name}</T>
+                  <CategoryIcon icon={c.icon} name={c.name} className="h-4 w-4" />
+                  <T>{c.name}</T>
                 </button>
               ))}
             </div>

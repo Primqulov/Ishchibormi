@@ -101,3 +101,16 @@ func TestCompressImage_NonImagePassthrough(t *testing.T) {
 		t.Fatal("webp/boshqa turlar o'zgarishsiz qaytishi kerak")
 	}
 }
+
+func TestValidateImage(t *testing.T) {
+	var valid bytes.Buffer
+	if err := png.Encode(&valid, gradient(16, 16)); err != nil {
+		t.Fatal(err)
+	}
+	if !ValidateImage(valid.Bytes(), "image/png") {
+		t.Fatal("valid PNG was rejected")
+	}
+	if ValidateImage([]byte("not an image"), "image/png") {
+		t.Fatal("malformed image was accepted")
+	}
+}

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, setAdminToken } from "@/lib/api";
 
@@ -10,6 +10,12 @@ export default function AdminLogin() {
   const [code, setCode] = useState("");
   const [needCode, setNeedCode] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("session") === "expired") {
+      setErr("Admin sessiyasi eskirgan yoki token yaroqsiz. Qayta kiring.");
+    }
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

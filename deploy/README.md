@@ -5,6 +5,37 @@ Ishga tushirish bilan bog'liq fayllar. Ilova kodi bu yerda emas — u `apps/` da
 | Fayl | Vazifasi |
 |------|----------|
 | `docker-compose.dev.yml` | Lokal dev overlay (APP_ENV=dev, OTP_DEV_RETURN, localhost CORS) |
+| `droplet-setup.sh` | Yangi DigitalOcean Droplet'ni noldan tayyorlaydi (Docker, Caddy, ufw, swap, deploy user, cron) |
+| `Caddyfile` | Xostdagi Caddy konfiguratsiyasi — TLS + `/api`,`/uploads` → backend, qolgani → Next.js |
+| `backup-mongo.sh` | Konteyner Mongo'ning kunlik gzip zaxirasi (7 kun saqlanadi) |
+
+## Production — DigitalOcean Droplet
+
+```
+Internet → :443 Caddy (xost, avtomatik Let's Encrypt)
+              ├── /api/*, /uploads/*, /healthz → 127.0.0.1:8080  (Go API)
+              └── qolgan hamma narsa          → 127.0.0.1:3000  (Next.js)
+
+docker compose: mongo + backend + bot + frontend
+                (barchasi faqat 127.0.0.1 ga bog'langan)
+```
+
+Caddy ATAYLAB compose ichida emas, xostda: `docker compose down` qilinganda
+ham 80/443 va sertifikatlar joyida qoladi, ya'ni deploy paytida domen o'lmaydi.
+Shu sababli `Caddyfile` o'zgarsa CI uni yangilamaydi — qo'lda:
+
+```bash
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Birinchi o'rnatish: `deploy/droplet-setup.sh` (skript ichidagi izohga qarang).
+Undan keyingi har bir deploy — `main`'ga push (`.github/workflows/ci-cd.yml`).
+
+Kerakli GitHub secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`,
+`PROJECT_DIR`, `TELEGRAM_BOT_TOKEN`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`,
+`BOT_SHARED_SECRET`, `ADMIN_SEED_PASS` (S3 va `MONGO_URI` — ixtiyoriy).
 
 ## Nega asosiy `docker-compose.yml` ildizda qoldi
 
@@ -41,11 +72,12 @@ foydalangan ma'qul.
 
 ## Keyingi qadam (hali qilinmagan)
 
-Hozir image'lar **EC2 serverning o'zida** build qilinadi (`docker compose
+Hozir image'lar **Droplet'ning o'zida** build qilinadi (`docker compose
 build`), ya'ni prod mashinaning RAM va CPU'sida. Next.js build'i RAM yetmay
-"Killed" bo'lishi mumkin va deploy paytida sayt sekinlashadi.
+"Killed" bo'lishi mumkin va deploy paytida sayt sekinlashadi. (`droplet-setup.sh`
+shu sabab 2GB swap yaratadi — bu yamoq, yechim emas.)
 
 Rejalashtirilgan o'zgarish: image'lar GitHub Actions'da build qilinib
-registry'ga (GHCR) push qilinadi, EC2 esa faqat `docker compose pull` qiladi.
+registry'ga (GHCR) push qilinadi, Droplet esa faqat `docker compose pull` qiladi.
 Bu deploy'ni soniyalarga tushiradi va teglangan image orqali **rollback**
 imkonini beradi (hozir buning imkoni yo'q).

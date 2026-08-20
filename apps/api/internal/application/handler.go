@@ -53,7 +53,10 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req applyReq
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 
 	var elon models.Elon
 	if err := h.Elons.FindOne(r.Context(), bson.M{"_id": elonID, "isDeleted": bson.M{"$ne": true}}).Decode(&elon); err != nil {
@@ -115,11 +118,14 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	worker, _ := loadUser(r.Context(), h.Users, uid)
-	phone := req.Phone
-	if phone == "" && worker != nil {
-		phone = worker.Phone
+	worker, err := loadUser(r.Context(), h.Users, uid)
+	if err != nil {
+		httpx.Err(w, httpx.NewError(401, "no_account", "account not found"))
+		return
 	}
+	// Contact identity comes from the verified account, never a caller-supplied
+	// number that could impersonate somebody else.
+	phone := worker.Phone
 	app := models.Application{
 		ElonID:       elonID,
 		ElonTitle:    elon.Title,
@@ -145,14 +151,12 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		// ish beruvchi esa hech narsani sezmaydi.
 		IsReviewData: httpx.IsReviewActor(r.Context()),
 	}
-	if worker != nil {
-		// Worker snapshot (ish beruvchining nomzodlar ro'yxati uchun).
-		app.WorkerName = strings.TrimSpace(worker.FirstName + " " + worker.LastName)
-		app.WorkerRating = worker.WorkerRating
-		app.WorkerReviewsCount = worker.WorkerReviewsCount
-		app.WorkerAvatarURL = worker.AvatarURL
-		app.WorkerVerified = worker.IsPhoneVerified
-	}
+	// Worker snapshot (ish beruvchining nomzodlar ro'yxati uchun).
+	app.WorkerName = strings.TrimSpace(worker.FirstName + " " + worker.LastName)
+	app.WorkerRating = worker.WorkerRating
+	app.WorkerReviewsCount = worker.WorkerReviewsCount
+	app.WorkerAvatarURL = worker.AvatarURL
+	app.WorkerVerified = worker.IsPhoneVerified
 	// Shu ishga oldingi arizani tekshiramiz. Unique indeks (elonId, workerId)
 	// bir ish uchun bitta yozuvga ruxsat beradi, shuning uchun bekor qilingan
 	// yoki rad etilgan arizani qayta faollashtiramiz (qayta ariza topshirish).
@@ -258,18 +262,41 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, decision string
 		}
 	}
 	set := bson.M{"status": decision, "decidedAt": now}
-	if _, err := h.Apps.UpdateOne(r.Context(), bson.M{"_id": appID}, bson.M{"$set": set}); err != nil {
+	transition, err := h.Apps.UpdateOne(r.Context(),
+		bson.M{"_id": appID, "employerId": uid, "status": "pending"},
+		bson.M{"$set": set})
+	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
+	if transition.ModifiedCount != 1 {
+		httpx.Err(w, httpx.NewError(409, "state_changed", "application state already changed"))
+		return
+	}
 	if decision == "accepted" {
-		// increment elon acceptedCount by the number of people in this
-		// application (guruh arizasi), mark filled if reached
+		// Reserve slots atomically. The earlier read gives a friendly error, but
+		// only this conditional increment is race-safe when two applications are
+		// accepted concurrently.
 		var elon models.Elon
-		_ = h.Elons.FindOneAndUpdate(r.Context(),
-			bson.M{"_id": app.ElonID},
+		reserve := h.Elons.FindOneAndUpdate(r.Context(),
+			bson.M{
+				"_id":    app.ElonID,
+				"status": bson.M{"$in": []string{"recruiting", "filled"}},
+				"$expr": bson.M{"$lte": bson.A{
+					bson.M{"$add": bson.A{"$acceptedCount", people}}, "$workersNeeded",
+				}},
+			},
 			bson.M{"$inc": bson.M{"acceptedCount": people}, "$set": bson.M{"updatedAt": now}},
-			options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&elon)
+			options.FindOneAndUpdate().SetReturnDocument(options.After))
+		if err := reserve.Decode(&elon); err != nil {
+			// Slot reservation lost a race. Restore this application only if it is
+			// still the exact transition performed above.
+			_, _ = h.Apps.UpdateOne(r.Context(),
+				bson.M{"_id": appID, "status": "accepted", "decidedAt": now},
+				bson.M{"$set": bson.M{"status": "pending"}, "$unset": bson.M{"decidedAt": ""}})
+			httpx.Err(w, httpx.NewError(409, "not_enough_slots", "Ish o'rinlari hozirgina to'ldi."))
+			return
+		}
 		filled := false
 		if elon.AcceptedCount >= elon.WorkersNeeded && elon.Status == "recruiting" {
 			_, _ = h.Elons.UpdateOne(r.Context(), bson.M{"_id": elon.ID}, bson.M{"$set": bson.M{"status": "filled"}})
@@ -363,10 +390,17 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	// Bekor qilish sababi majburiy — sababsiz bekor qilib bo'lmaydi.
 	var req cancelReq
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	reason := strings.TrimSpace(req.Reason)
 	if reason == "" {
 		httpx.Err(w, httpx.NewError(400, "reason_required", "bekor qilish sababini yozing"))
+		return
+	}
+	if len([]rune(reason)) > 500 {
+		httpx.Err(w, httpx.NewError(400, "too_long", "bekor qilish sababi juda uzun"))
 		return
 	}
 	var app models.Application
@@ -384,9 +418,15 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wasAccepted := app.Status == "accepted"
-	_, err = h.Apps.UpdateOne(r.Context(), bson.M{"_id": appID}, bson.M{"$set": bson.M{"status": "cancelled", "cancelledBy": who, "cancelReason": reason, "decidedAt": time.Now()}})
+	res, err := h.Apps.UpdateOne(r.Context(),
+		bson.M{"_id": appID, "status": app.Status},
+		bson.M{"$set": bson.M{"status": "cancelled", "cancelledBy": who, "cancelReason": reason, "decidedAt": time.Now()}})
 	if err != nil {
 		httpx.Err(w, err)
+		return
+	}
+	if res.ModifiedCount != 1 {
+		httpx.Err(w, httpx.NewError(409, "state_changed", "application state already changed"))
 		return
 	}
 	if wasAccepted {
@@ -479,6 +519,8 @@ func pageOpts(r *http.Request, defaultLimit, maxLimit int) *options.FindOptions 
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
+	} else if page > 10_000 {
+		page = 10_000
 	}
 	return options.Find().
 		SetSort(bson.D{{Key: "appliedAt", Value: -1}}).

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Send, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { api, setAccess, User } from "@/lib/api";
 import { AUTH_BOT_USERNAME } from "@/lib/contact";
 import { Button } from "@/components/ui/Button";
@@ -10,6 +10,7 @@ import { Logo } from "@/components/Logo";
 import { T, useT } from "@/components/T";
 import { LangMenu } from "@/components/LangMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { TelegramIcon } from "@/components/icons/TelegramIcon";
 
 type Req = { tgToken: string; botUrl: string; devCode?: string };
 type Verify = { accessToken: string; refreshToken: string; user: User };
@@ -58,14 +59,37 @@ export default function LoginPage() {
       // (web ilova refresh oqimini ishlatmaydi) — XSS hujum yuzasini kamaytiradi.
       setAccess(v.accessToken);
       router.replace(v.user.onboardingCompleted ? "/dashboard" : "/onboarding");
-    } catch (err: any) {
-      // Bloklangan hisob: backend token bermaydi (aks holda foydalanuvchi
-      // "kirib" darhol qaytib chiqarilardi). Server xabari inglizcha, shuning
-      // uchun kodni o'zimiz tarjima qilamiz.
-      if (err?.code === "account_blocked") {
-        setError(t("Hisobingiz bloklangan"));
-      } else {
-        setError(err?.message || t("Kod noto'g'ri yoki muddati o'tgan"));
+    } catch (err: unknown) {
+      // Backend xabari texnik yoki inglizcha bo'lishi mumkin. Uni ekranga
+      // bevosita chiqarmaymiz; faqat xato kodiga mos, foydalanuvchi uchun
+      // tushunarli mahalliy xabarni ko'rsatamiz.
+      const errorCode =
+        typeof err === "object" && err !== null && "code" in err
+          ? String(err.code)
+          : "";
+
+      switch (errorCode) {
+        case "invalid_code":
+          setError(t("Kod noto'g'ri yoki uning muddati tugagan. Yangi kod olib, qayta urinib ko'ring."));
+          break;
+        case "no_phone_bound":
+          setError(t("Avval Telegram botga telefon raqamingizni yuboring, keyin kodni kiriting."));
+          break;
+        case "account_blocked":
+          setError(t("Hisobingiz bloklangan. Yordam xizmatiga murojaat qiling."));
+          break;
+        case "rate_limited":
+          setError(t("Juda ko'p urinish bo'ldi. Biroz kutib, qayta urinib ko'ring."));
+          break;
+        case "offline":
+          setError(t("Internet aloqasi yo'q. Tarmoqni tekshirib, qayta urinib ko'ring."));
+          break;
+        case "server_unavailable":
+        case "server_error":
+          setError(t("Server vaqtincha ishlamayapti. Internetingiz ishlayapti — birozdan so'ng qayta urinib ko'ring."));
+          break;
+        default:
+          setError(t("Kodni tekshirib bo'lmadi. Birozdan so'ng qayta urinib ko'ring."));
       }
     } finally {
       setSubmitting(false);
@@ -87,7 +111,7 @@ export default function LoginPage() {
             <T>Bitta hisob — ham ish qidiring, ham ishchi yollang. Telegram bot orqali bir daqiqada ro'yxatdan o'ting.</T>
           </p>
           <div className="mt-9 grid grid-cols-3 gap-4 max-w-md">
-            {[["30 soniya", "Ro'yxatdan o'tish"], ["0 so'm", "Xizmat haqi"], ["24/7", "Qo'llab-quvvatlash"]].map(([v, l]) => (
+            {[["30 soniya", "Ro'yxatdan o'tish"], ["0 so'm", "Ilovadan foydalanish haqi"], ["24/7", "Qo'llab-quvvatlash"]].map(([v, l]) => (
               <div key={l}>
                 <div className="text-[20px] font-black"><T>{v}</T></div>
                 <div className="text-[11.5px] text-white/70 mt-0.5"><T>{l}</T></div>
@@ -118,7 +142,7 @@ export default function LoginPage() {
             <div className="mt-6 rounded-xl p-4 flex gap-3" style={{ background: "var(--brand-soft)" }}>
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white"
                     style={{ background: "var(--brand)" }}>
-                <Send size={16} />
+                <TelegramIcon className="h-4 w-4" />
               </span>
               <div>
                 <div className="text-[13px] font-bold" style={{ color: "var(--brand)" }}>

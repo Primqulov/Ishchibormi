@@ -147,10 +147,12 @@ func TestUserAuthMiddleware(t *testing.T) {
 }
 
 func TestAdminAuthPropagatesRole(t *testing.T) {
-	tok, _ := IssueAdminToken(testSecret, "admin-1", "moderator", time.Hour)
+	tok, _ := IssueVersionedAdminToken(testSecret, "admin-1", "moderator", 7, time.Hour)
 	var gotID, gotRole string
+	var gotVersion int
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotID, gotRole = AdminID(r), AdminRole(r)
+		gotVersion = AdminTokenVersion(r)
 		w.WriteHeader(200)
 	})
 	h := AdminAuth(testSecret)(inner)
@@ -163,6 +165,32 @@ func TestAdminAuthPropagatesRole(t *testing.T) {
 	}
 	if gotID != "admin-1" || gotRole != "moderator" {
 		t.Errorf("id=%q role=%q, want admin-1/moderator", gotID, gotRole)
+	}
+	if gotVersion != 7 {
+		t.Errorf("token version=%d, want 7", gotVersion)
+	}
+}
+
+func TestAdminAuthRejectsLegacyTokenWithoutVersion(t *testing.T) {
+	claims := jwt.MapClaims{
+		"aid":  "admin-1",
+		"role": "superadmin",
+		"exp":  time.Now().Add(time.Hour).Unix(),
+	}
+	legacy := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tok, err := legacy.SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	AdminAuth(testSecret)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("legacy token reached handler")
+	})).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
 

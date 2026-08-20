@@ -114,7 +114,8 @@ html, body {
     width: 100%;
     min-width: 0;
     border: 1px solid var(--border-strong);
-    background: var(--bg-subtle);
+    /* Keep select background images (for example the chevron) intact. */
+    background-color: var(--bg-subtle);
     color: var(--text);
     border-radius: 0.625rem;
     padding: 0.75rem 1rem;
@@ -122,7 +123,7 @@ html, body {
     line-height: 1.4;
     transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
   }
-  .input:focus { outline: none; border-color: var(--brand); background: var(--card); box-shadow: 0 0 0 3px var(--ring); }
+  .input:focus { outline: none; border-color: var(--brand); background-color: var(--card); box-shadow: 0 0 0 3px var(--ring); }
   .input::placeholder { color: var(--text-subtle); }
   .input[disabled] { opacity: 0.6; cursor: not-allowed; }
 

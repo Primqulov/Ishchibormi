@@ -1,0 +1,9 @@
+.git
+.env*
+data
+coverage*
+*.log
+*.pem
+*.key
+*.p12
+*.pfx

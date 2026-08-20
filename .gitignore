@@ -4,6 +4,9 @@ node_modules/
 
 # ── Builds ─────────────────────────────────────
 .next/
+# next.config.js dev rejimda distDir ni .next-dev qiladi — u ham build chiqindisi
+.next-dev/
+**/.next-dev/
 **/.next/
 dist/
 out/
@@ -14,6 +17,8 @@ build/
 
 # ── Go ─────────────────────────────────────────
 *.exe
+# GOCACHE lokal papkaga yo'naltirilgan bo'lsa (bir necha yuz MB)
+.gocache/
 *.exe~
 *.test
 *.out

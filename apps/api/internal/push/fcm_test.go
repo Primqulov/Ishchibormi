@@ -82,6 +82,16 @@ func TestBuildMessage(t *testing.T) {
 		t.Fatalf("data: %+v", data)
 	}
 
+	// Kanal va ohang ilova tarafi bilan qattiq bog'langan: mos kelmasa push
+	// begona kanalga tushadi va standart "ding" bilan eshitiladi.
+	an, ok := m["android"].(map[string]any)["notification"].(map[string]any)
+	if !ok {
+		t.Fatal("android.notification maydoni yo'q")
+	}
+	if an["channel_id"] != "ishchibormi_default_v2" || an["sound"] != "notification_sound" {
+		t.Fatalf("android.notification: %+v", an)
+	}
+
 	// RelatedEntity'siz notification ham buzilmasin.
 	data2 := buildMessage("t", models.Notification{ID: nid, Type: "system"})["message"].(map[string]any)["data"].(map[string]string)
 	if _, has := data2["relatedId"]; has {

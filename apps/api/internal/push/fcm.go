@@ -32,6 +32,15 @@ import (
 
 const fcmScope = "https://www.googleapis.com/auth/firebase.messaging"
 
+// Android bildirishnoma kanali va uning ohangi. Ikkalasi ham ilova tarafi bilan
+// qattiq bog'langan (flutter-app: MainActivity.kt va AndroidManifest.xml):
+// channel_id mos kelmasa push "Miscellaneous" kanaliga tushadi, sound esa
+// res/raw/notification_sound.ogg faylining kengaytmasiz nomi.
+const (
+	androidChannelID = "ishchibormi_default_v2"
+	androidSound     = "notification_sound"
+)
+
 // serviceAccount — Firebase konsolidan yuklab olinadigan service-account JSON
 // faylining bizga kerak maydonlari.
 type serviceAccount struct {
@@ -210,8 +219,12 @@ func buildMessage(token string, n models.Notification) map[string]any {
 					// MainActivity shu kanalni boot'da yaratadi (flutter-app,
 					// MainActivity.kt) — nomi mos kelmasa Android standart
 					// "Miscellaneous" kanaliga tushib qoladi.
-					"channel_id":    "ishchibormi_default",
-					"default_sound": true,
+					"channel_id": androidChannelID,
+					// Ilovaning o'z ohangi: res/raw/notification_sound.ogg
+					// (kengaytmasiz yozilishi shart). Android 8+ da ovozni
+					// kanalning o'zi belgilaydi, bu maydon esa eski
+					// versiyalar uchun kerak.
+					"sound": androidSound,
 				},
 			},
 		},

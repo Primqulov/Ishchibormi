@@ -25,6 +25,7 @@ type migration struct {
 // renumber or reorder existing ones — the ID is the applied-marker key.
 var migrations = []migration{
 	{ID: "0001_backfill_elon_owner_avatars", Run: BackfillElonOwnerAvatars},
+	{ID: "0002_backfill_elon_owner_moderation", Run: BackfillElonOwnerModeration},
 }
 
 // RunMigrations applies every not-yet-applied migration in order and records

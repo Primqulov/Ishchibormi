@@ -6,13 +6,51 @@
 // keyingi o'zgarish qotib qolmaydi).
 const ICON_CACHE = "public, max-age=604800, stale-while-revalidate=86400";
 
+function originOf(raw, fallback) {
+  try { return new URL(raw || fallback).origin; } catch { return fallback; }
+}
+
+const apiOrigin = originOf(process.env.NEXT_PUBLIC_API_BASE, "http://localhost:8080");
+const wsOrigin = originOf(process.env.NEXT_PUBLIC_WS_BASE, "ws://localhost:8080");
+const devEval = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
+const csp = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  `script-src 'self' 'unsafe-inline'${devEval}`,
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  `img-src 'self' data: blob: https: ${apiOrigin}`,
+  `connect-src 'self' ${apiOrigin} ${wsOrigin}`,
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+].join("; ");
+
+const SECURITY_HEADERS = [
+  { key: 'Content-Security-Policy', value: csp },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(self), payment=(), usb=()' },
+  { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+  ...(process.env.NODE_ENV === 'production'
+    ? [{ key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' }]
+    : []),
+];
+
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
-  images: { remotePatterns: [{ protocol: 'https', hostname: '**' }] },
+  // `next dev` va `next build` bir vaqtda ishlaganda bitta `.next` papkasini
+  // almashib yubormasin. Aks holda ochiq development sahifasining CSS/JS
+  // fayllari 404 qaytarib, UI va tugmalar ishlamay qoladi.
+  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   async headers() {
     // Barcha root-darajadagi ikon fayllari (.png/.ico) + /img/ OG rasmlari.
     return [
+      { source: '/:path*', headers: SECURITY_HEADERS },
       { source: '/:file([^/]+\\.ico)', headers: [{ key: 'Cache-Control', value: ICON_CACHE }] },
       { source: '/:file([^/]+\\.png)', headers: [{ key: 'Cache-Control', value: ICON_CACHE }] },
       { source: '/img/:path*', headers: [{ key: 'Cache-Control', value: ICON_CACHE }] },

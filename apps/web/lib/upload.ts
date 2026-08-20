@@ -38,14 +38,32 @@ export function uploadFile(file: File, kind: UploadKind, opts: UploadOpts = {}):
         if (e.lengthComputable) opts.onProgress!(Math.round((e.loaded / e.total) * 100));
       };
     }
-    xhr.onerror = () => reject(new Error("Tarmoq xatosi"));
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          typeof navigator !== "undefined" && navigator.onLine === false
+            ? "Internet aloqasi yo'q. Tarmoqni tekshirib, qayta urinib ko'ring."
+            : "Server vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring."
+        )
+      );
     xhr.onload = () => {
       try {
         const data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve({ key: data.key, url: data.url });
+        } else if (xhr.status >= 500) {
+          reject(
+            new Error(
+              "Serverda vaqtinchalik xatolik bor. Birozdan so'ng qayta urinib ko'ring."
+            )
+          );
         } else {
-          reject(new Error(data?.error?.message || `HTTP ${xhr.status}`));
+          reject(
+            new Error(
+              data?.error?.message ||
+                "Faylni yuklab bo'lmadi. Ma'lumotlarni tekshirib, qayta urinib ko'ring."
+            )
+          );
         }
       } catch (e) {
         reject(e as Error);

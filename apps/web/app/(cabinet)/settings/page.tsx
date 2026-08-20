@@ -13,7 +13,7 @@ import { AvatarUploader } from "@/components/ui/ImageUpload";
 import { useScript } from "@/lib/i18n";
 import { T, useT } from "@/components/T";
 import { DeleteAccountCard } from "@/components/DeleteAccountCard";
-import { REGIONS } from "@/lib/regions";
+import { PROFILE_REGIONS, districtsOf, optionsWithCurrent } from "@/lib/regions";
 
 /** Figma "14 · Sozlamalar": yon menyu + bo'limlarga ajratilgan kartalar. */
 export default function Settings() {
@@ -33,6 +33,8 @@ export default function Settings() {
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const regionOptions = optionsWithCurrent(PROFILE_REGIONS, region);
+  const districtOptions = optionsWithCurrent(districtsOf(region), district);
 
   const { data: cats } = useQuery<Category[]>({
     queryKey: ["categories"],
@@ -114,14 +116,21 @@ export default function Settings() {
             <div className="mt-4 grid sm:grid-cols-2 gap-4">
               <label className="block">
                 <span className="text-[13px] font-bold heading"><T>Viloyat</T></span>
-                <select className="input mt-1.5" value={region} onChange={(e) => setRegion(e.target.value)}>
+                <select className="input mt-1.5" value={region} onChange={(e) => {
+                  setRegion(e.target.value);
+                  setDistrict("");
+                }}>
                   <option value="">{t("Tanlang")}</option>
-                  {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                  {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </label>
               <label className="block">
                 <span className="text-[13px] font-bold heading"><T>Tuman</T></span>
-                <input className="input mt-1.5" value={district} onChange={(e) => setDistrict(e.target.value)} />
+                <select className="input mt-1.5" value={district}
+                        onChange={(e) => setDistrict(e.target.value)} disabled={!region}>
+                  <option value="">{t("Tanlang")}</option>
+                  {districtOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
               </label>
             </div>
 
@@ -166,7 +175,6 @@ export default function Settings() {
               <div className="flex items-center gap-1.5">
                 <Seg active={script === "latin"} onClick={() => setScript("latin")}>O'zbek</Seg>
                 <Seg active={script === "cyrillic"} onClick={() => setScript("cyrillic")}>Ўзбекча</Seg>
-                <Seg active={false} disabled title={t("Tez orada")}>Русский</Seg>
               </div>
             </SettingRow>
 

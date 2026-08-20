@@ -72,7 +72,10 @@ func (h *Handler) SetElonStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Status string `json:"status"`
 	}
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	allowed := map[string]bool{"hidden": true, "recruiting": true, "filled": true, "cancelled": true}
 	if !allowed[req.Status] {
 		httpx.Err(w, httpx.NewError(400, "bad_status", "unsupported status"))

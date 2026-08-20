@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
 # Reproducible deps: use the committed go.mod + go.sum. No `go mod tidy` at build
@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/seed ./seed
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/resetadmin ./cmd/resetadmin
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/reviewaccount ./cmd/reviewaccount
 
-FROM alpine:3.19
+FROM alpine:3.23
 # Run as a non-root user. The data dirs are pre-created and chowned so the named
 # docker volumes (avatars, uploads) inherit appuser ownership on first mount and
 # stay writable without root.

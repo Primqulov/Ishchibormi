@@ -2,6 +2,7 @@ package config
 
 import (
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ type Config struct {
 	JWTAccessSecret  string
 	JWTRefreshSecret string
 	JWTAccessTTL     time.Duration
+	JWTAdminTTL      time.Duration
 	JWTRefreshTTL    time.Duration
 
 	CORSOrigins []string
@@ -37,19 +39,6 @@ type Config struct {
 
 	TelegramBotToken    string
 	TelegramBotUsername string
-
-	// TelegramMiniAppBotToken — Telegram Mini App joylashgan botning tokeni.
-	// Mini App'ning `initData` imzosi HAR DOIM uni ochgan botning tokeni bilan
-	// hisoblanadi, shuning uchun bu OTP botidan boshqa bot bo'lsa alohida
-	// berilishi shart. Bo'sh bo'lsa TelegramBotToken ishlatiladi (Mini App va
-	// OTP bir botda bo'lgan holat); ikkalasi ham bo'sh bo'lsa /auth/telegram/webapp
-	// 503 qaytaradi — imzoni tekshirib bo'lmasa kirishga ruxsat berilmaydi.
-	TelegramMiniAppBotToken string
-
-	// MiniAppInitDataTTL — `initData` ning `auth_date` maydoni shundan eski
-	// bo'lsa rad etiladi. initData qayta ishlatilishi mumkin bo'lgan yagona
-	// cheklov shu, ya'ni bu replay oynasining kengligi.
-	MiniAppInitDataTTL time.Duration
 
 	// FCMCredentialsFile — Firebase service-account JSON fayl yo'li (mobil
 	// push uchun). Bo'sh bo'lsa push jimgina o'chiq: API to'liq ishlayveradi,
@@ -116,6 +105,7 @@ func envInt(k string, def int) int {
 	}
 	return def
 }
+
 // envTime parses an RFC3339 timestamp. An unset or unparseable value yields the
 // zero Time, which every caller must treat as "not configured" — never as
 // "no deadline".
@@ -142,6 +132,17 @@ func envBool(k string, def bool) bool {
 	return def
 }
 
+func envList(k, def string) []string {
+	raw := strings.Split(envStr(k, def), ",")
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 func Load() Config {
 	cfg := Config{
 		AppEnv:            strings.ToLower(envStr("APP_ENV", "dev")),
@@ -157,8 +158,9 @@ func Load() Config {
 		// seansi shu muddat bilan tugaydi va foydalanuvchi qayta OTP orqali
 		// kiradi. O'g'irlangan token ilgari 15 kun yashardi; endi ko'pi 3 kun.
 		JWTAccessTTL:    time.Duration(envInt("JWT_ACCESS_TTL_MIN", 4320)) * time.Minute,
+		JWTAdminTTL:     time.Duration(envInt("JWT_ADMIN_TTL_MIN", 30)) * time.Minute,
 		JWTRefreshTTL:   time.Duration(envInt("JWT_REFRESH_TTL_HRS", 720)) * time.Hour,
-		CORSOrigins:     strings.Split(envStr("CORS_ORIGINS", "http://localhost:3000"), ","),
+		CORSOrigins:     envList("CORS_ORIGINS", "http://localhost:3000"),
 		AdminSeedUser:   envStr("ADMIN_SEED_USER", "admin"),
 		AdminSeedPass:   envStr("ADMIN_SEED_PASS", "Admin123!"),
 		BotSharedSecret: envStr("BOT_SHARED_SECRET", "dev-shared"),
@@ -169,10 +171,6 @@ func Load() Config {
 		OTPDevReturn:        envBool("OTP_DEV_RETURN", false),
 		TelegramBotToken:    envStr("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername: envStr("TELEGRAM_BOT_USERNAME", ""),
-
-		TelegramMiniAppBotToken: envStr("TELEGRAM_MINIAPP_BOT_TOKEN", ""),
-		MiniAppInitDataTTL: time.Duration(
-			envInt("MINIAPP_INITDATA_TTL_HOURS", 24)) * time.Hour,
 
 		FCMCredentialsFile: envStr("FCM_CREDENTIALS_FILE", ""),
 
@@ -199,17 +197,6 @@ func Load() Config {
 }
 
 func (c Config) IsProd() bool { return c.AppEnv == "production" || c.AppEnv == "prod" }
-
-// MiniAppBotToken — `initData` imzosini tekshirish uchun ishlatiladigan token.
-// Mini App alohida botda tursa TELEGRAM_MINIAPP_BOT_TOKEN, OTP boti bilan bir
-// xil botda tursa TELEGRAM_BOT_TOKEN. Bo'sh qiymat "sozlanmagan" degani va
-// chaqiruvchi kirishni rad etishi kerak.
-func (c Config) MiniAppBotToken() string {
-	if t := strings.TrimSpace(c.TelegramMiniAppBotToken); t != "" {
-		return t
-	}
-	return strings.TrimSpace(c.TelegramBotToken)
-}
 
 // mustValidate fails fast in production when insecure defaults are left in
 // place. This prevents accidentally shipping forgeable JWTs, a default admin
@@ -243,11 +230,40 @@ func (c Config) mustValidate() {
 	if weak[c.BotSharedSecret] {
 		problems = append(problems, "BOT_SHARED_SECRET must be set to a strong random value")
 	}
-	if c.AdminSeedPass == "Admin123!" || c.AdminSeedPass == "" {
-		problems = append(problems, "ADMIN_SEED_PASS must be changed from the default")
+	if len(c.BotSharedSecret) < 32 {
+		problems = append(problems, "BOT_SHARED_SECRET must be at least 32 characters")
+	}
+	if c.AdminSeedPass == "Admin123!" || len(c.AdminSeedPass) < 12 {
+		problems = append(problems, "ADMIN_SEED_PASS must be changed and contain at least 12 characters")
 	}
 	if c.OTPDevReturn {
 		problems = append(problems, "OTP_DEV_RETURN must be false in production")
+	}
+	if c.JWTAdminTTL < 5*time.Minute || c.JWTAdminTTL > time.Hour {
+		problems = append(problems, "JWT_ADMIN_TTL_MIN must be between 5 and 60 minutes")
+	}
+	if c.OTPLength < 6 || c.OTPLength > 8 || c.OTPTTL < time.Minute || c.OTPTTL > 10*time.Minute {
+		problems = append(problems, "OTP_LENGTH/OTP_TTL_SECONDS must stay within 6-8 digits and 60-600 seconds")
+	}
+	if len(c.CORSOrigins) == 0 {
+		problems = append(problems, "CORS_ORIGINS must contain at least one trusted HTTPS origin")
+	}
+	for _, origin := range c.CORSOrigins {
+		u, err := url.Parse(origin)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			problems = append(problems, "CORS_ORIGINS must contain exact HTTPS origins only (no wildcard/path): "+origin)
+		}
+	}
+	if c.AWSS3Bucket == "" {
+		u, err := url.Parse(c.UploadPublicBase)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			problems = append(problems, "UPLOAD_PUBLIC_BASE must be an HTTPS URL in production when local storage is used")
+		}
+	} else if c.AWSS3PublicBaseURL != "" {
+		u, err := url.Parse(c.AWSS3PublicBaseURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			problems = append(problems, "AWS_S3_PUBLIC_BASE_URL must be an HTTPS URL in production")
+		}
 	}
 	if len(problems) > 0 {
 		log.Fatalf("insecure configuration for production:\n  - %s", strings.Join(problems, "\n  - "))

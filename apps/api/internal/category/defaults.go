@@ -16,17 +16,16 @@ type DefaultCategory struct {
 	Icon string
 }
 
-// Defaults — platformaning YAGONA rasmiy turkumlari. Ilova har ishga tushganda
-// (deploy'da ham) DB shu ro'yxatga moslashtiriladi:
-//   - bu 3 turkum faol (isActive=true) qilib upsert qilinadi,
-//   - ro'yxatda bo'lmagan boshqa har qanday eski turkum nofaol qilinadi.
+// Defaults — platformaning boshlang'ich rasmiy turkumlari. Ilova har ishga
+// tushganda ular faol holatda upsert qilinadi. Admin yaratgan boshqa turkumlar
+// ataylab o'zgartirilmaydi: aks holda har deploy ularni nofaol qilib qo'yardi.
 //
 // "Maxsus" — malaka talab qiladigan aralash ishlar: santexnika, elektrik,
 // ustachilik va shunga o'xshash.
 var Defaults = []DefaultCategory{
-	{Name: "Tozalash", Slug: "tozalash", Icon: "🧹"},
-	{Name: "Yuk tashish", Slug: "yuk-tashish", Icon: "🚚"},
-	{Name: "Maxsus", Slug: "maxsus", Icon: "🔧"},
+	{Name: "Tozalash", Slug: "tozalash", Icon: "https://api.iconify.design/lucide/spray-can.svg?color=%230038d8"},
+	{Name: "Yuk tashish", Slug: "yuk-tashish", Icon: "https://api.iconify.design/lucide/truck.svg?color=%230038d8"},
+	{Name: "Maxsus", Slug: "maxsus", Icon: "https://api.iconify.design/lucide/wrench.svg?color=%230038d8"},
 }
 
 // EnsureDefaults DB'dagi turkumlarni Defaults ro'yxatiga moslashtiradi.
@@ -37,9 +36,7 @@ var Defaults = []DefaultCategory{
 func EnsureDefaults(ctx context.Context, db *mongo.Database) error {
 	col := db.Collection("categories")
 
-	slugs := make([]string, 0, len(Defaults))
 	for _, d := range Defaults {
-		slugs = append(slugs, d.Slug)
 		_, err := col.UpdateOne(ctx,
 			bson.M{"slug": d.Slug},
 			bson.M{
@@ -60,11 +57,5 @@ func EnsureDefaults(ctx context.Context, db *mongo.Database) error {
 			return err
 		}
 	}
-
-	// Kanonik ro'yxatda bo'lmagan turkumlarni nofaol qilamiz.
-	_, err := col.UpdateMany(ctx,
-		bson.M{"slug": bson.M{"$nin": slugs}},
-		bson.M{"$set": bson.M{"isActive": false}},
-	)
-	return err
+	return nil
 }

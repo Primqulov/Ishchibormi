@@ -33,13 +33,13 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 200, a)
 }
 
-// Logout writes an audit trail entry for the admin leaving the panel. The token
-// itself is stateless (cleared client-side), so this endpoint's only job is the
-// audit record.
+// Logout revokes all outstanding tokens for this admin by advancing the token
+// version, then writes an audit trail entry.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	aid, _ := primitive.ObjectIDFromHex(httpx.AdminID(r))
 	var a models.Admin
 	_ = h.Admins.FindOne(r.Context(), bson.M{"_id": aid}).Decode(&a)
+	_, _ = h.Admins.UpdateOne(r.Context(), bson.M{"_id": aid}, bson.M{"$inc": bson.M{"tokenVersion": 1}})
 	h.auditRaw(r.Context(), aid, "logout", a.Username, "")
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }

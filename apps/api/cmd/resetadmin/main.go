@@ -75,6 +75,7 @@ func main() {
 				// yo'qotib qo'lda kirolmay qolsa, shu buyruq lockout'dan chiqaradi.
 				"totpEnabled": false,
 			},
+			"$inc":         bson.M{"tokenVersion": 1},
 			"$unset":       bson.M{"totpSecret": ""},
 			"$setOnInsert": bson.M{"createdAt": time.Now()},
 		},

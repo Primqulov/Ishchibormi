@@ -454,11 +454,12 @@ export default function PrivacyPage() {
                 </T>
               </li>
               <li>
-                <b className="heading">Amazon Web Services (AWS):</b>{" "}
+                <b className="heading">DigitalOcean:</b>{" "}
                 <T>
-                  serverimiz AWS EC2'da joylashgan; yuklangan rasmlar AWS S3'da
-                  saqlanadi. Ular bizning nomimizdan, bizning ko'rsatmamiz bilan
-                  ma'lumotni saqlaydi.
+                  serverimiz DigitalOcean'ning ma'lumot markazida joylashgan;
+                  ma'lumotlar bazasi va yuklangan rasmlar ham o'sha serverda
+                  saqlanadi. DigitalOcean bizning nomimizdan, bizning
+                  ko'rsatmamiz bilan ma'lumotni saqlaydi.
                 </T>
               </li>
               <li>

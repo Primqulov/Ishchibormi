@@ -129,27 +129,40 @@ func (s *Service) ReadAll(w http.ResponseWriter, r *http.Request) {
 }
 
 type readReq struct {
-	RelatedIDs  []string `json:"relatedIds"`
-	RelatedType string   `json:"relatedType"`
+	NotificationIDs []string `json:"notificationIds"`
+	RelatedIDs      []string `json:"relatedIds"`
+	RelatedType     string   `json:"relatedType"`
 }
 
 // Read marks a targeted subset of the user's unread notifications read — either
-// those tied to specific related entities (relatedIds) or a whole related type
-// (relatedType, e.g. "application"). Used to clear the "red dot" indicators as
-// the user views the corresponding items.
+// a notification's own id (notificationIds), those tied to specific related
+// entities (relatedIds), or a whole related type (relatedType, e.g.
+// "application"). Used by both the notification detail screen and related
+// application/elon screens.
 func (s *Service) Read(w http.ResponseWriter, r *http.Request) {
 	uid, _ := primitive.ObjectIDFromHex(httpx.UserID(r))
 	var req readReq
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	if len(req.NotificationIDs) > 200 || len(req.RelatedIDs) > 200 || len(req.RelatedType) > 64 {
+		httpx.Err(w, httpx.NewError(400, "too_many_ids", "notification selection is too large"))
+		return
+	}
 	filter := bson.M{"userId": uid, "isRead": false}
 	switch {
-	case len(req.RelatedIDs) > 0:
-		oids := make([]primitive.ObjectID, 0, len(req.RelatedIDs))
-		for _, h := range req.RelatedIDs {
-			if oid, err := primitive.ObjectIDFromHex(h); err == nil {
-				oids = append(oids, oid)
-			}
+	case len(req.NotificationIDs) > 0:
+		oids := objectIDs(req.NotificationIDs)
+		if len(oids) == 0 {
+			httpx.JSON(w, 200, map[string]bool{"ok": true})
+			return
 		}
+		// userId remains in the filter, so a user can never mark another
+		// user's notification read even if they know its ObjectID.
+		filter["_id"] = bson.M{"$in": oids}
+	case len(req.RelatedIDs) > 0:
+		oids := objectIDs(req.RelatedIDs)
 		if len(oids) == 0 {
 			httpx.JSON(w, 200, map[string]bool{"ok": true})
 			return
@@ -158,11 +171,21 @@ func (s *Service) Read(w http.ResponseWriter, r *http.Request) {
 	case req.RelatedType != "":
 		filter["relatedEntity.type"] = req.RelatedType
 	default:
-		httpx.Err(w, httpx.NewError(400, "bad_request", "relatedIds yoki relatedType kerak"))
+		httpx.Err(w, httpx.NewError(400, "bad_request", "notificationIds, relatedIds yoki relatedType kerak"))
 		return
 	}
 	if _, err := s.Col.UpdateMany(r.Context(), filter, bson.M{"$set": bson.M{"isRead": true}}); err != nil {
 		slog.Error("notification read failed", "user", uid.Hex(), "err", err)
 	}
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
+}
+
+func objectIDs(hexIDs []string) []primitive.ObjectID {
+	oids := make([]primitive.ObjectID, 0, len(hexIDs))
+	for _, h := range hexIDs {
+		if oid, err := primitive.ObjectIDFromHex(h); err == nil {
+			oids = append(oids, oid)
+		}
+	}
+	return oids
 }

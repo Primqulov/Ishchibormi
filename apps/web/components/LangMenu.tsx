@@ -4,22 +4,20 @@ import { Globe, ChevronDown, Check } from "lucide-react";
 import { useScript, type Script } from "@/lib/i18n";
 
 type Option = {
-  value: Script | "ru";
+  value: Script;
   code: string;      // pill ichidagi qisqa kod — Figma: "UZ"
   label: string;     // menyudagi nom
   native: string;    // ostidagi izoh
-  soon?: boolean;    // hali tayyor emas
 };
 
 const OPTIONS: Option[] = [
   { value: "latin",    code: "UZ", label: "O'zbekcha", native: "Lotin" },
   { value: "cyrillic", code: "ЎЗ", label: "Ўзбекча",   native: "Kirill" },
-  { value: "ru",       code: "RU", label: "Русский",   native: "Rus tili", soon: true },
 ];
 
 /**
  * Figma "Landing Nav → IconText (ic/globe + UZ)": kichik yumaloq pill.
- * Bosilganda tepadan pastga ochiladigan menyu chiqadi — lotin, kirill, rus.
+ * Bosilganda tepadan pastga ochiladigan menyu chiqadi — lotin va kirill.
  */
 export function LangMenu({ compact }: { compact?: boolean }) {
   const script = useScript((s) => s.script);
@@ -77,15 +75,11 @@ export function LangMenu({ compact }: { compact?: boolean }) {
                 type="button"
                 role="option"
                 aria-selected={active}
-                disabled={o.soon}
                 onClick={() => {
-                  if (o.soon) return;
-                  setScript(o.value as Script);
+                  setScript(o.value);
                   setOpen(false);
                 }}
-                className={`w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition ${
-                  o.soon ? "opacity-55 cursor-not-allowed" : "hover:bg-[color:var(--bg-subtle)]"
-                }`}
+                className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-[color:var(--bg-subtle)]"
                 style={active ? { background: "var(--brand-soft)" } : undefined}
               >
                 <span
@@ -104,7 +98,7 @@ export function LangMenu({ compact }: { compact?: boolean }) {
                     {o.label}
                   </span>
                   <span className="block text-[11px] subtle leading-tight mt-0.5">
-                    {o.soon ? "tez orada" : o.native}
+                    {o.native}
                   </span>
                 </span>
                 {active && <Check size={15} style={{ color: "var(--brand)" }} className="shrink-0" />}

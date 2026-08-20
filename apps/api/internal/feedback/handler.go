@@ -49,6 +49,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(400, "bad_request", "message required"))
 		return
 	}
+	if len([]rune(msg)) > 5000 || len([]rune(strings.TrimSpace(req.Subject))) > 160 {
+		httpx.Err(w, httpx.NewError(400, "too_long", "feedback is too long"))
+		return
+	}
 	ftype := req.Type
 	if ftype != "suggestion" && ftype != "complaint" {
 		ftype = "suggestion"

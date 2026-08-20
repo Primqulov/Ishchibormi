@@ -61,6 +61,8 @@ func pageParams(r *http.Request) (page, limit int, skip int64) {
 	page, _ = strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
+	} else if page > 100_000 {
+		page = 100_000
 	}
 	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 100 {

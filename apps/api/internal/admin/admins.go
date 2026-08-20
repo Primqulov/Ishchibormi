@@ -47,8 +47,8 @@ func (h *Handler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Username = strings.TrimSpace(strings.ToLower(req.Username))
-	if req.Username == "" || len(req.Password) < 6 {
-		httpx.Err(w, httpx.NewError(400, "bad_request", "username and password (>=6 chars) required"))
+	if req.Username == "" || len(req.Username) > 100 || len(req.Password) < 12 || len(req.Password) > 128 {
+		httpx.Err(w, httpx.NewError(400, "bad_request", "username and password (12-128 chars) required"))
 		return
 	}
 	if !validRoles[req.Role] {
@@ -102,6 +102,7 @@ func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	self := httpx.AdminID(r) == id.Hex()
 	set := bson.M{}
+	revokeSessions := false
 	if req.Role != "" {
 		if !validRoles[req.Role] {
 			httpx.Err(w, httpx.NewError(400, "bad_role", "invalid role"))
@@ -112,6 +113,7 @@ func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["role"] = req.Role
+		revokeSessions = true
 	}
 	if req.Name != nil {
 		set["name"] = strings.TrimSpace(*req.Name)
@@ -122,10 +124,11 @@ func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["isActive"] = *req.IsActive
+		revokeSessions = true
 	}
 	if req.Password != "" {
-		if len(req.Password) < 6 {
-			httpx.Err(w, httpx.NewError(400, "bad_request", "password must be >=6 chars"))
+		if len(req.Password) < 12 || len(req.Password) > 128 {
+			httpx.Err(w, httpx.NewError(400, "bad_request", "password must be 12-128 chars"))
 			return
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -134,11 +137,13 @@ func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["passwordHash"] = string(hash)
+		revokeSessions = true
 	}
 	update := bson.M{}
 	if req.DisableTwoFactor {
 		set["totpEnabled"] = false
 		update["$unset"] = bson.M{"totpSecret": ""}
+		revokeSessions = true
 	}
 	if len(set) == 0 && len(update) == 0 {
 		httpx.Err(w, httpx.NewError(400, "bad_request", "nothing to update"))
@@ -146,6 +151,9 @@ func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(set) > 0 {
 		update["$set"] = set
+	}
+	if revokeSessions {
+		update["$inc"] = bson.M{"tokenVersion": 1}
 	}
 	if _, err := h.Admins.UpdateOne(r.Context(), bson.M{"_id": id}, update); err != nil {
 		httpx.Err(w, err)

@@ -82,8 +82,9 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	if req.Code == "" {
-		httpx.Err(w, httpx.NewError(400, "bad_request", "code required"))
+	if len(req.Code) != h.cfg.OTPLength || !isAllDigits(req.Code) ||
+		len(req.Token) > 64 || len(req.Phone) > 32 {
+		httpx.Err(w, httpx.NewError(400, "bad_request", "invalid verification input"))
 		return
 	}
 	ctx := r.Context()
@@ -313,9 +314,23 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	if len(req.RefreshToken) < 32 || len(req.RefreshToken) > 4096 {
+		httpx.Err(w, httpx.NewError(401, "bad_refresh", "invalid refresh token"))
+		return
+	}
 	uid, err := httpx.ParseUserToken(h.cfg.JWTRefreshSecret, req.RefreshToken)
 	if err != nil {
 		httpx.Err(w, httpx.NewError(401, "bad_refresh", "invalid refresh token"))
+		return
+	}
+	oid, err := primitive.ObjectIDFromHex(uid)
+	if err != nil {
+		httpx.Err(w, httpx.NewError(401, "bad_refresh", "invalid refresh token"))
+		return
+	}
+	var u models.User
+	if err := h.users.FindOne(r.Context(), bson.M{"_id": oid}).Decode(&u); err != nil || u.IsBlocked || u.IsDeleted {
+		httpx.Err(w, httpx.NewError(401, "session_revoked", "account session revoked"))
 		return
 	}
 	access, err := httpx.IssueUserToken(h.cfg.JWTAccessSecret, uid, h.cfg.JWTAccessTTL)
@@ -324,6 +339,15 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, 200, map[string]string{"accessToken": access})
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // DevPeekOTP — dev-only endpoint that returns the most recent OTP for a token.

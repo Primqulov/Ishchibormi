@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Briefcase, History, Settings, User as UserIcon, Plus, LogOut,
   Bell as BellIcon, MessageSquareWarning, Menu, Search, X, LayoutGrid,
-  ListChecks, FileText,
+  ListChecks, FileText, AlertTriangle, RefreshCw,
 } from "lucide-react";
 import { api, getAccess, Notification, setAccess, User } from "@/lib/api";
 import { T, useT } from "@/components/T";
@@ -52,7 +52,16 @@ export function Shell({
   // Auth gate
   useEffect(() => { if (!getAccess()) router.replace("/login"); }, [router]);
 
-  const { data: me, isError: meError } = useQuery<User>({ queryKey: ["me"], queryFn: () => api.get<User>("/api/me"), retry: false });
+  const {
+    data: me,
+    error: meQueryError,
+    isError: meError,
+    refetch: refetchMe,
+  } = useQuery<User>({
+    queryKey: ["me"],
+    queryFn: () => api.get<User>("/api/me"),
+    retry: false,
+  });
 
   // Sessiya tugagan bo'lsa /api/me 401 (yoki hisob o'chirilgan bo'lsa 403
   // account_disabled) qaytaradi va api.ts tokenlarni tozalaydi. Token
@@ -109,6 +118,7 @@ export function Shell({
 
   const fullName = me ? `${me.firstName} ${me.lastName}` : "";
   const isActive = (href: string) => pathname === href || (pathname?.startsWith(href + "/") ?? false);
+  const serviceError = meError && getAccess() ? userErrorMessage(meQueryError) : "";
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -210,6 +220,30 @@ export function Shell({
         </div>
       </header>
 
+      {serviceError && (
+        <div
+          role="alert"
+          className="border-b px-4 md:px-10 py-3"
+          style={{
+            borderColor: "var(--danger-border, #fecaca)",
+            background: "var(--danger-bg, #fef2f2)",
+          }}
+        >
+          <div className="mx-auto max-w-shell flex items-center gap-3 text-[13px]">
+            <AlertTriangle size={18} className="text-danger shrink-0" />
+            <span className="flex-1 heading">{serviceError}</span>
+            <button
+              type="button"
+              className="btn btn-outline !py-2 !px-3 gap-1.5 shrink-0"
+              onClick={() => void refetchMe()}
+            >
+              <RefreshCw size={14} />
+              <T>Qayta urinish</T>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Mobil menyu ─────────────────────────────────────────── */}
       {drawer && (
         <div className="fixed inset-0 z-50 xl:hidden">
@@ -251,6 +285,18 @@ export function Shell({
       </main>
     </div>
   );
+}
+
+function userErrorMessage(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return "Ma'lumotlarni yuklab bo'lmadi. Qayta urinib ko'ring.";
 }
 
 /* ── Sahifa qidiruvi — Figma "Search" pill. Navbarda emas, sahifa mazmunida

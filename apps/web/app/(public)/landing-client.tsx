@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import {
   MapPin, Send, ArrowRight, Search, Check, Plus, Minus, Tag,
   Phone, Mail, Instagram, Youtube, LifeBuoy, Users, Wallet,
-  Star, ShieldCheck, Languages, Clock,
+  Star, ShieldCheck, Languages, Clock, AlertTriangle, RefreshCw,
 } from "lucide-react";
 import { AUTH_BOT, CONTACT, SOCIAL } from "@/lib/contact";
 import { api, Category, Elon, User, getAccess } from "@/lib/api";
 import { Logo } from "@/components/Logo";
+import { CategoryIcon } from "@/components/CategoryIcon";
 import { LangMenu } from "@/components/LangMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { T, useT } from "@/components/T";
@@ -23,6 +24,7 @@ export default function Landing() {
   const [examples, setExamples] = useState<Elon[]>([]);
   const [cats, setCats] = useState<Category[]>([]);
   const [checking, setChecking] = useState(true);
+  const [serviceError, setServiceError] = useState("");
   // getAccess() localStorage'ni o'qiydi — server (token yo'q) va client (token
   // bor) renderlarini farqlantiradi. Birinchi render server bilan mos bo'lishi
   // uchun auth'ga bog'liq shohobchalarni faqat mount'dan keyin ko'rsatamiz.
@@ -35,14 +37,19 @@ export default function Landing() {
     if (!getAccess()) { setChecking(false); return; }
     api.get<User>("/api/me")
       .then((u) => router.replace(u.onboardingCompleted ? "/dashboard" : "/onboarding"))
-      .catch(() => setChecking(false));
+      .catch((error) => {
+        setServiceError(userErrorMessage(error));
+        setChecking(false);
+      });
   }, [router]);
 
   useEffect(() => {
     api.get<{ items: Elon[] }>("/api/elons?limit=3", { auth: "none" } as any)
-      .then((r) => setExamples(r.items || [])).catch(() => {});
+      .then((r) => setExamples(r.items || []))
+      .catch((error) => setServiceError(userErrorMessage(error)));
     api.get<Category[]>("/api/categories", { auth: "none" } as any)
-      .then((r) => setCats(r || [])).catch(() => {});
+      .then((r) => setCats(r || []))
+      .catch((error) => setServiceError(userErrorMessage(error)));
   }, []);
 
   const ctaHref = mounted && getAccess() ? "/dashboard" : "/login";
@@ -75,6 +82,30 @@ export default function Landing() {
           </div>
         </div>
       </header>
+
+      {serviceError && (
+        <div
+          role="alert"
+          className="border-b px-5 md:px-[100px] py-3"
+          style={{
+            borderColor: "var(--danger-border, #fecaca)",
+            background: "var(--danger-bg, #fef2f2)",
+          }}
+        >
+          <div className="mx-auto max-w-shell flex items-center gap-3 text-[13px]">
+            <AlertTriangle size={18} className="text-danger shrink-0" />
+            <span className="flex-1 heading">{serviceError}</span>
+            <button
+              type="button"
+              className="btn btn-outline !py-2 !px-3 gap-1.5 shrink-0"
+              onClick={() => window.location.reload()}
+            >
+              <RefreshCw size={14} />
+              <T>Qayta urinish</T>
+            </button>
+          </div>
+        </div>
+      )}
 
       <main className="flex-1">
         {/* ── HERO ────────────────────────────────────────────────── */}
@@ -169,10 +200,10 @@ export default function Landing() {
           <div className="mx-auto max-w-shell grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
             {[
               ["24 soat", "O'rtacha javob vaqti"],
-              ["0 so'm", "Xizmat haqi"],
+              ["0 so'm", "Ilovadan foydalanish haqi"],
               ["3 daqiqa", "Ro'yxatdan o'tish"],
               ["1 hisob", "Ishchi va ish beruvchi uchun"],
-              ["3 til", "O'zbek, rus, ingliz"],
+              ["2 yozuv", "Lotin va kirill"],
             ].map(([v, l]) => (
               <div key={l}>
                 <div className="text-[26px] font-black tracking-[-0.6px]"><T>{v}</T></div>
@@ -243,7 +274,7 @@ export default function Landing() {
                       className="card p-5 flex flex-col gap-2 transition hover:-translate-y-0.5 hover:shadow-pop">
                   <span className="grid h-10 w-10 place-items-center rounded-xl text-lg"
                         style={{ background: "var(--brand-soft)" }}>
-                    {c.icon || "🧰"}
+                    <CategoryIcon icon={c.icon} name={c.name} className="h-5 w-5" />
                   </span>
                   <div className="text-[15px] font-bold heading mt-1"><T>{c.name}</T></div>
                   {typeof c.usageCount === "number" && (
@@ -435,6 +466,18 @@ export default function Landing() {
       </footer>
     </div>
   );
+}
+
+function userErrorMessage(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return "Ma'lumotlarni yuklab bo'lmadi. Qayta urinib ko'ring.";
 }
 
 /* ── helpers ───────────────────────────────────────── */

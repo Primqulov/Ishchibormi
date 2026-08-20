@@ -56,10 +56,19 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	// avatarUrl is rendered on other users' browsers — reject non-http(s) values
-	// so a javascript:/data: payload can't be stored.
-	if req.AvatarURL != nil && !httpx.IsSafeHTTPURL(*req.AvatarURL) {
-		httpx.Err(w, httpx.NewError(400, "bad_avatar_url", "avatar url must be http(s)"))
+	// Avatars must be objects uploaded into this user's server-generated
+	// namespace. Merely allowing arbitrary http(s) URLs would enable tracking
+	// pixels and cross-user object references. Empty intentionally clears it.
+	if req.AvatarURL != nil {
+		avatar := strings.TrimSpace(*req.AvatarURL)
+		if avatar != "" && (h.Storage == nil || !h.Storage.URLBelongsToUser(avatar, httpx.UserID(r))) {
+			httpx.Err(w, httpx.NewError(400, "bad_avatar_url", "avatar must be uploaded by this account"))
+			return
+		}
+		*req.AvatarURL = avatar
+	}
+	if err := validateProfileFields(req); err != nil {
+		httpx.Err(w, err)
 		return
 	}
 	// If avatar is changing, delete the previous file from S3 (best-effort).
@@ -115,6 +124,31 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 200, u)
 }
 
+func validateProfileFields(req updateMeReq) error {
+	tooLong := func(v *string, max int) bool { return v != nil && len([]rune(strings.TrimSpace(*v))) > max }
+	if tooLong(req.FirstName, 80) || tooLong(req.LastName, 80) {
+		return httpx.NewError(400, "too_long", "name is too long")
+	}
+	if tooLong(req.Region, 100) || tooLong(req.District, 100) || tooLong(req.Bio, 1000) {
+		return httpx.NewError(400, "too_long", "profile field is too long")
+	}
+	if len(req.Skills) > 30 {
+		return httpx.NewError(400, "too_many_skills", "too many skills")
+	}
+	for _, skill := range req.Skills {
+		if len([]rune(strings.TrimSpace(skill))) > 80 {
+			return httpx.NewError(400, "too_long", "skill is too long")
+		}
+	}
+	if req.LangPref != nil && *req.LangPref != "latin" && *req.LangPref != "cyrillic" {
+		return httpx.NewError(400, "bad_language", "invalid language preference")
+	}
+	if req.ThemePref != nil && *req.ThemePref != "light" && *req.ThemePref != "dark" {
+		return httpx.NewError(400, "bad_theme", "invalid theme preference")
+	}
+	return nil
+}
+
 func (h *Handler) GetPublic(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	oid, err := primitive.ObjectIDFromHex(id)
@@ -123,7 +157,9 @@ func (h *Handler) GetPublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var u models.User
-	if err := h.Users.FindOne(r.Context(), bson.M{"_id": oid, "isDeleted": bson.M{"$ne": true}}).Decode(&u); err != nil {
+	if err := h.Users.FindOne(r.Context(), bson.M{
+		"_id": oid, "isDeleted": bson.M{"$ne": true}, "isBlocked": bson.M{"$ne": true},
+	}).Decode(&u); err != nil {
 		httpx.Err(w, httpx.NewError(404, "not_found", "user not found"))
 		return
 	}
@@ -132,10 +168,15 @@ func (h *Handler) GetPublic(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(q)) > 200 {
+		httpx.Err(w, httpx.NewError(400, "query_too_long", "search query is too long"))
+		return
+	}
 	// Google Play demo hisobi ommaviy qidiruvda ko'rinmaydi — real
 	// foydalanuvchi uni topib, bog'lanishga urinmasligi kerak.
 	filter := bson.M{
 		"isDeleted":       bson.M{"$ne": true},
+		"isBlocked":       bson.M{"$ne": true},
 		"isReviewAccount": bson.M{"$ne": true},
 	}
 	if q != "" {

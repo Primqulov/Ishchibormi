@@ -123,6 +123,12 @@ func (h *Handler) NotifyUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	req.Title = strings.TrimSpace(req.Title)
+	req.Body = strings.TrimSpace(req.Body)
+	if req.Title == "" || len([]rune(req.Title)) > 160 || len([]rune(req.Body)) > 4000 {
+		httpx.Err(w, httpx.NewError(400, "bad_notification", "notification is empty or too long"))
+		return
+	}
 	h.Notify.Push(r.Context(), id, "system", req.Title, req.Body, nil)
 	h.audit(r, "user_notify", id.Hex(), req.Title)
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
@@ -139,12 +145,18 @@ func (h *Handler) BlockUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req setBlockReq
-	_ = httpx.Decode(r, &req)
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	_, err = h.Users.UpdateOne(r.Context(), bson.M{"_id": id}, bson.M{"$set": bson.M{"isBlocked": req.IsBlocked}})
 	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
+	// Keep public listing queries join-free while applying moderation instantly.
+	_, _ = h.Elons.UpdateMany(r.Context(), bson.M{"ownerId": id},
+		bson.M{"$set": bson.M{"ownerBlocked": req.IsBlocked, "updatedAt": time.Now()}})
 	h.audit(r, "user_block", id.Hex(), "isBlocked=set")
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }
@@ -193,6 +205,17 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	now := time.Now()
+	_, _ = h.Elons.UpdateMany(r.Context(), bson.M{"ownerId": id}, bson.M{"$set": bson.M{
+		"isDeleted": true, "status": "cancelled", "updatedAt": now,
+	}})
+	live := []string{"pending", "accepted"}
+	_, _ = h.Apps.UpdateMany(r.Context(), bson.M{
+		"$or":    []bson.M{{"workerId": id}, {"employerId": id}},
+		"status": bson.M{"$in": live},
+	}, bson.M{"$set": bson.M{
+		"status": "cancelled", "cancelReason": "account_deleted", "decidedAt": now,
+	}})
 	// O'chirilgan hisobning qurilmalariga push (masalan broadcast) ketmasin.
 	_, _ = h.Users.Database().Collection("device_tokens").DeleteMany(r.Context(), bson.M{"userId": id})
 	h.audit(r, "user_delete", id.Hex(), "soft-delete")

@@ -2,14 +2,14 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, Category, User } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { api, User } from "@/lib/api";
 import { Check, CheckCircle2 } from "lucide-react";
 import { AvatarUploader } from "@/components/ui/ImageUpload";
 import { LangMenu } from "@/components/LangMenu";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { T, useT } from "@/components/T";
-import { REGIONS } from "@/lib/regions";
+import { PROFILE_REGIONS, districtsOf, optionsWithCurrent } from "@/lib/regions";
 
 /** Figma "02 · Shaxsiy ma'lumotlarni kiritish": chapda qadamlar, o'ngda forma. */
 export default function Onboarding() {
@@ -21,14 +21,10 @@ export default function Onboarding() {
   const [lastName, setLastName] = useState("");
   const [region, setRegion] = useState("");
   const [district, setDistrict] = useState("");
-  const [skills, setSkills] = useState<string[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
-
-  const { data: cats } = useQuery<Category[]>({
-    queryKey: ["categories"],
-    queryFn: () => api.get<Category[]>("/api/categories"),
-  });
+  const regionOptions = optionsWithCurrent(PROFILE_REGIONS, region);
+  const districtOptions = optionsWithCurrent(districtsOf(region), district);
 
   useEffect(() => {
     api.get<User>("/api/me").then((u) => {
@@ -37,14 +33,9 @@ export default function Onboarding() {
       setLastName(u.lastName || "");
       setRegion(u.region || "");
       setDistrict(u.district || "");
-      setSkills(u.skills || []);
       setAvatarUrl(u.avatarUrl || undefined);
     });
   }, []);
-
-  function toggleSkill(name: string) {
-    setSkills((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
-  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -54,7 +45,7 @@ export default function Onboarding() {
       // /dashboard'dagi Shell eski (onboardingCompleted=false) keshni o'qib,
       // foydalanuvchini yana /onboarding'ga qaytaradi (ikki marta saqlash muammosi).
       const updated = await api.patch<User>("/api/me", {
-        firstName, lastName, region, district, skills, avatarUrl: avatarUrl || "",
+        firstName, lastName, region, district, avatarUrl: avatarUrl || "",
       });
       qc.setQueryData(["me"], updated);
       router.replace("/dashboard");
@@ -117,39 +108,23 @@ export default function Onboarding() {
             <div className="mt-4 grid sm:grid-cols-2 gap-4">
               <label className="block">
                 <span className="text-[13px] font-bold heading"><T>Viloyat</T></span>
-                <select className="input mt-1.5" value={region} onChange={(e) => setRegion(e.target.value)} required>
+                <select className="input mt-1.5" value={region} onChange={(e) => {
+                  setRegion(e.target.value);
+                  setDistrict("");
+                }} required>
                   <option value="">{t("Tanlang")}</option>
-                  {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                  {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </label>
               <label className="block">
                 <span className="text-[13px] font-bold heading"><T>Tuman</T></span>
-                <input className="input mt-1.5" value={district} onChange={(e) => setDistrict(e.target.value)} placeholder={t("Tuman")} />
+                <select className="input mt-1.5" value={district}
+                        onChange={(e) => setDistrict(e.target.value)} disabled={!region} required>
+                  <option value="">{t("Tanlang")}</option>
+                  {districtOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
               </label>
             </div>
-
-            {(cats || []).length > 0 && (
-              <div className="mt-4">
-                <span className="text-[13px] font-bold heading">
-                  <T>Mutaxassislik</T> <span className="font-normal subtle">(<T>bir nechtasini tanlang</T>)</span>
-                </span>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(cats || []).map((c) => {
-                    const on = skills.includes(c.name);
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => toggleSkill(c.name)}
-                        className={`chip ${on ? "chip-active" : ""}`}
-                      >
-                        {on && <Check size={13} />}<T>{c.name}</T>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
             <button disabled={saving} className="btn btn-primary w-full mt-7 !py-3.5 disabled:opacity-50">
               {saving ? <T>Saqlanmoqda…</T> : <T>Saqlash va davom etish</T>}

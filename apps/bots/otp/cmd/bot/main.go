@@ -126,6 +126,17 @@ func main() {
 			_, _ = bot.Send(req)
 
 		case m.Contact != nil:
+			// Telegram lets a user send an arbitrary saved contact, not only the
+			// special "share my phone" contact produced by our keyboard.  Binding
+			// that arbitrary number would let an attacker authenticate as somebody
+			// else.  Telegram sets Contact.UserID only when the contact belongs to
+			// the sender, so require an exact match before issuing an OTP.
+			if !isOwnContact(m.From.ID, m.Contact.UserID) {
+				log.Printf("rejected foreign contact sender=%d contactUser=%d", m.From.ID, m.Contact.UserID)
+				_, _ = bot.Send(tgbotapi.NewMessage(m.Chat.ID,
+					"Faqat o'zingizning telefon raqamingizni pastdagi tugma orqali yuboring."))
+				continue
+			}
 			phone := normalizePhone(m.Contact.PhoneNumber)
 			code, err := generateAndStore(ctx, otpCol, pending[m.Chat.ID], phone, m.From.ID, otpTTL, otpLen)
 			if err != nil {
@@ -143,6 +154,10 @@ func main() {
 			_, _ = bot.Send(tgbotapi.NewMessage(m.Chat.ID, "Iltimos, /start buyrug'idan boshlang."))
 		}
 	}
+}
+
+func isOwnContact(senderID, contactUserID int64) bool {
+	return senderID != 0 && contactUserID == senderID
 }
 
 // findKnownPhone looks up a user by telegramId in the users collection.

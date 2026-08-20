@@ -7,6 +7,7 @@ import { Briefcase, LayoutGrid, List, Map as MapIcon, SlidersHorizontal, X } fro
 import { api, Category, Elon, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
 import { Shell, ShellSearch } from "@/components/Shell";
 import { JobCard } from "@/components/JobCard";
+import { CategoryIcon } from "@/components/CategoryIcon";
 import { JobMapExplorer } from "@/components/JobMapExplorer";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CardSkeleton } from "@/components/ui/Skeleton";
@@ -92,7 +93,8 @@ function ElonlarClient() {
           <button onClick={() => setCat("")} className={`chip ${cat === "" ? "chip-active" : ""}`}><T>Barchasi</T></button>
           {(cats || []).map((c) => (
             <button key={c.id} onClick={() => setCat(c.id)} className={`chip ${cat === c.id ? "chip-active" : ""}`}>
-              {c.icon && <span>{c.icon}</span>}<T>{c.name}</T>
+              <CategoryIcon icon={c.icon} name={c.name} className="h-4 w-4" />
+              <T>{c.name}</T>
             </button>
           ))}
         </div>
