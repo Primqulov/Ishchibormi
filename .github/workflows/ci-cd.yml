@@ -203,8 +203,17 @@ jobs:
             if [ -n "$FCM_SA" ]; then
               mkdir -p secrets
               printf '%s' "$FCM_SA" > secrets/fcm-service-account.json
-              chmod 600 secrets/fcm-service-account.json
-              echo "  service-account fayli secret'dan yozildi"
+              # Backend konteyneri appuser (uid/gid 10001, apps/api/Dockerfile)
+              # sifatida ishlaydi, fayl esa deploy (1001) nomidan yoziladi.
+              # 600 + deploy egaligida konteyner faylni OCHA OLMAYDI
+              # ("open /app/secrets/...: permission denied" -> push jimgina
+              # o'chadi). Shuning uchun guruhni 10001 qilamiz va guruhga
+              # o'qish beramiz; papkaga esa kirish (x) huquqi kerak.
+              # Dockerfile'dagi UID o'zgarsa, bu raqam ham o'zgarishi shart.
+              chgrp 10001 secrets secrets/fcm-service-account.json 2>/dev/null || true
+              chmod 750 secrets
+              chmod 640 secrets/fcm-service-account.json
+              echo "  service-account fayli secret'dan yozildi (gid 10001, 640)"
             fi
             if [ -f secrets/fcm-service-account.json ]; then
               set_env FCM_CREDENTIALS_FILE /app/secrets/fcm-service-account.json
