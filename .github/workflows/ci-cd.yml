@@ -190,8 +190,22 @@ jobs:
             # gitignore'da, ya'ni "git reset --hard" unga tegmaydi). Fayl bor
             # bo'lsa push yoqiladi, yo'q bo'lsa o'zgaruvchi bo'shatiladi — API
             # o'chib qolmaydi, faqat push jimgina ishlamaydi. Yo'lni qo'lda .env
-            # ga yozib qo'yish shart emas: yagona manba shu tekshiruv.
+            # ga yozib qo'yish shart emas: yagona manba quyidagi tekshiruv.
+            #
+            # Faylning MANBASI — FCM_SERVICE_ACCOUNT_JSON secret'i. Yangi server
+            # ko'tarilganda ./secrets/ bo'sh bo'ladi, ya'ni faqat fayl borligini
+            # tekshirish push'ni butunlay o'chirib qo'yadi (aynan shu holat
+            # Contabo'ga ko'chishda yuz berdi). Secret bo'sh bo'lsa serverdagi
+            # mavjud fayl saqlanadi — o'chirilmaydi.
+            # Qiymat single-quote ichida uzatiladi: JSON'da single-quote bo'lmaydi.
             echo "==> Mobil push (FCM) holati"
+            FCM_SA='${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}'
+            if [ -n "$FCM_SA" ]; then
+              mkdir -p secrets
+              printf '%s' "$FCM_SA" > secrets/fcm-service-account.json
+              chmod 600 secrets/fcm-service-account.json
+              echo "  service-account fayli secret'dan yozildi"
+            fi
             if [ -f secrets/fcm-service-account.json ]; then
               set_env FCM_CREDENTIALS_FILE /app/secrets/fcm-service-account.json
               echo "  secrets/fcm-service-account.json topildi -> push YOQILDI"
