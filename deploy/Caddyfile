@@ -1,3 +1,27 @@
+{
+	# ── Global sozlamalar (fayl BOSHIDA turishi shart) ──────────────────────
+	servers {
+		timeouts {
+			# SLOWLORIS himoyasi. Hujum shundan iborat: ko'p ulanish ochib,
+			# sarlavhalarni ataylab juda sekin yuborish. Server har biri uchun
+			# slot ushlab turadi va oxir-oqibat yangi ulanish qabul qilolmaydi.
+			# Sarlavhalar kichik — 10 soniya haqiqiy mijozga yetib ortadi,
+			# hujumchi esa ulanishni cho'zolmaydi.
+			read_header 10s
+
+			# read_body ATAYLAB qo'yilmadi (standart holida qoladi): e'lon
+			# rasmi 12MB gacha bo'lishi mumkin va sekin mobil internetda uni
+			# yuklash daqiqalar oladi. Bu yerga qisqa qiymat qo'yish haqiqiy
+			# foydalanuvchilarning rasm yuklashini buzardi.
+
+			# Bo'sh (keep-alive) ulanishlarni ushlab turmaslik.
+			idle 2m
+		}
+		# Haddan tashqari katta sarlavha — xotira tugatish usuli.
+		max_header_size 16KB
+	}
+}
+
 # Caddy — TLS terminator va reverse proxy (Hetzner server, XOSTDA ishlaydi).
 #
 # Nega konteynerda emas, xostda: docker-compose backend'ni 127.0.0.1:8080 ga,
@@ -33,6 +57,23 @@ www.ishchibormi.uz {
 api.ishchibormi.uz {
 	encode zstd gzip
 
+	# ── Xavfsizlik sarlavhalari ────────────────────────────────────────────
+	header {
+		# HTTPS ni majburlash (brauzer keyingi safar http:// ga urinmaydi).
+		# includeSubDomains ATAYLAB YO'Q: mail./ftp. subdomenlari HTTPS
+		# emas, ularni ham majburlash pochtani ishlamay qo'yishi mumkin.
+		Strict-Transport-Security "max-age=31536000"
+		# Brauzer fayl turini "taxmin qilmasin" — yuklangan rasm ichiga
+		# yashiringan skript bajarilib ketmasin.
+		X-Content-Type-Options "nosniff"
+		# Saytni begona iframe ichiga joylashtirib bo'lmasin (clickjacking).
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Server nomi/versiyasini oshkor qilmaslik: hujumchiga qaysi
+		# dasturiy ta'minot ekanini aytmaymiz.
+		-Server
+	}
+
 	request_body {
 		max_size 12MB
 	}
@@ -58,6 +99,23 @@ api.ishchibormi.uz {
 
 ishchibormi.uz {
 	encode zstd gzip
+
+	# ── Xavfsizlik sarlavhalari ────────────────────────────────────────────
+	header {
+		# HTTPS ni majburlash (brauzer keyingi safar http:// ga urinmaydi).
+		# includeSubDomains ATAYLAB YO'Q: mail./ftp. subdomenlari HTTPS
+		# emas, ularni ham majburlash pochtani ishlamay qo'yishi mumkin.
+		Strict-Transport-Security "max-age=31536000"
+		# Brauzer fayl turini "taxmin qilmasin" — yuklangan rasm ichiga
+		# yashiringan skript bajarilib ketmasin.
+		X-Content-Type-Options "nosniff"
+		# Saytni begona iframe ichiga joylashtirib bo'lmasin (clickjacking).
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Server nomi/versiyasini oshkor qilmaslik: hujumchiga qaysi
+		# dasturiy ta'minot ekanini aytmaymiz.
+		-Server
+	}
 
 	# Zaxira chegara: eng katta yuklama e'lon rasmi — 8MB (+1MB multipart
 	# ortiqchasi, apps/api/internal/upload/handler.go). 12MB shundan yuqori,
