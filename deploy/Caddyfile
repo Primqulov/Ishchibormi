@@ -20,6 +20,42 @@ www.ishchibormi.uz {
 	redir https://ishchibormi.uz{uri} permanent
 }
 
+# Mobil ilova (Play Market) uchun API subdomeni.
+#
+# NEGA ALOHIDA: flutter-app dagi ApiConfig.prodBaseUrl = https://api.ishchibormi.uz
+# va u release build'ga KOMPILYATSIYA vaqtida yoziladi. Ya'ni allaqachon
+# o'rnatilgan ilovalar shu manzilga murojaat qiladi va uni o'zgartirib
+# bo'lmaydi — foydalanuvchi yangilanmaguncha. Shuning uchun domen server
+# tomonida jonli turishi shart, aks holda eski ilovalar butunlay ishlamaydi.
+#
+# Bu yerda yo'llar bo'yicha ajratish YO'Q: subdomen faqat API uchun, backend
+# o'zi /api/*, /uploads/*, /healthz ni ajratadi (apps/api/cmd/api/main.go).
+api.ishchibormi.uz {
+	encode zstd gzip
+
+	request_body {
+		max_size 12MB
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		# Asosiy domendagi bilan bir xil mantiq: mijoz IP'sini ustiga yozamiz,
+		# soxtalashtiriladigan sarlavhalarni olib tashlaymiz. Sababi
+		# quyidagi ishchibormi.uz blokidagi izohda batafsil.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up -True-Client-IP
+		header_up -CF-Connecting-IP
+		header_up -X-Forwarded-Host
+	}
+
+	log {
+		output file /var/log/caddy/ishchibormi-api.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+	}
+}
+
 ishchibormi.uz {
 	encode zstd gzip
 
