@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import { Providers } from "@/components/Providers";
+import { OpenInApp } from "@/components/OpenInApp";
 import {
   SITE_URL,
   SITE_NAME,
@@ -137,7 +138,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: JSON.stringify([organizationLd, websiteLd]).replace(/</g, "\\u003c"),
           }}
         />
-        <Providers>{children}</Providers>
+        <Providers>
+          {/* Android'da ilova o'rnatilgan bo'lsa foydalanuvchini ilovaga
+              o'tkazadi. Ilova yo'q bo'lsa hech narsa qilmaydi. */}
+          <OpenInApp />
+          {children}
+        </Providers>
       </body>
     </html>
   );

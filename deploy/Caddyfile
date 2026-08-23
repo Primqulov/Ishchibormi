@@ -124,6 +124,42 @@ ishchibormi.uz {
 		max_size 12MB
 	}
 
+	# ── Android App Links: /.well-known/assetlinks.json ────────────────────
+	# Android shu faylni o'qib, uz.ishchibormi.app ilovasi ROSTDAN HAM shu
+	# domen egasiga tegishli ekanini tekshiradi. Tasdiqlangach, bu domenga
+	# havolani bosgan foydalanuvchi brauzer o'rniga TO'G'RIDAN-TO'G'RI ilovaga
+	# tushadi (ilova o'rnatilgan bo'lsa).
+	#
+	# Fayl emas, inline respond: Caddy caddy useri sifatida ishlaydi,
+	# /opt/ishchibormi esa deploy niki — fayldan o'qishda ruxsat muammosi
+	# chiqardi. Bu yerda esa konfiguratsiyaning o'zida turadi va repo bilan
+	# birga versiyalanadi.
+	#
+	# IKKI barmoq izi ATAYLAB:
+	#   1) Play App Signing kaliti — Play ilovani QAYTA imzolaydi, ya'ni
+	#      foydalanuvchilar telefonidagi ilova aynan shu kalit bilan imzolangan.
+	#      Bu bo'lmasa jonli ilovada App Links umuman ishlamaydi.
+	#   2) Upload kaliti — lokal `flutter build apk --release` bilan yig'ilgan
+	#      nusxani telefonda sinab ko'rish uchun.
+	# Kalit o'zgarsa (Play Console -> App integrity -> App signing), bu yerni
+	# ham yangilash SHART.
+	handle /.well-known/assetlinks.json {
+		header Content-Type "application/json"
+		respond `[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "uz.ishchibormi.app",
+      "sha256_cert_fingerprints": [
+        "DE:B4:EF:52:EC:6A:D2:5C:42:A5:80:73:16:DA:6F:13:AB:8D:35:59:48:96:57:88:E3:53:84:D3:0F:38:C6:BE",
+        "30:66:C8:9A:8E:B6:06:C9:39:D6:51:DD:CA:35:E8:1D:19:91:0E:E9:9F:41:D7:AB:13:37:13:45:7E:98:2E:78"
+      ]
+    }
+  }
+]` 200
+	}
+
 	# Go API. Frontend Next.js bo'lgani uchun yo'llar bo'yicha ajratamiz:
 	#   /api/*      — barcha REST endpoint'lar (cmd/api/main.go: r.Route("/api"))
 	#   /uploads/*  — lokal diskdagi rasmlar (S3 sozlanmagan holat)
