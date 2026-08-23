@@ -83,6 +83,29 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
+      # appleboy/ssh-action `script_stop: true` bilan HAR BIR QATOR orasiga
+      # o'zining exit-code tekshiruvini qo'shadi. Ko'p qatorli secret to'g'ridan-
+      # to'g'ri `script:` ichiga qo'yilsa, uning qatorlari orasiga ham shu shell
+      # kodi tushadi va JSON butunlay buziladi — serverdagi faylda
+      # `DRONE_SSH_PREV_COMMAND_EXIT_CODE=...` qatorlari paydo bo'ladi, backend
+      # esa "invalid character" deb push'ni o'chiradi.
+      # Yechim: JSON'ni BITTA QATORLIK base64 ga o'tkazib uzatamiz.
+      - name: FCM secret'ni base64 ga o'tkazish
+        id: fcm
+        env:
+          FCM_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$FCM_JSON" ]; then
+            B64=$(printf '%s' "$FCM_JSON" | base64 -w0)
+            # Secretdan hosil qilingan qiymat avtomatik maskalanmaydi — o'zimiz qilamiz.
+            echo "::add-mask::$B64"
+            echo "b64=$B64" >> "$GITHUB_OUTPUT"
+            echo "FCM secret topildi (${#FCM_JSON} bayt) -> base64 tayyor"
+          else
+            echo "b64=" >> "$GITHUB_OUTPUT"
+            echo "FCM secret bo'sh -> serverdagi mavjud fayl saqlanadi"
+          fi
+
       - name: Serverga SSH orqali deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -197,12 +220,13 @@ jobs:
             # tekshirish push'ni butunlay o'chirib qo'yadi (aynan shu holat
             # Contabo'ga ko'chishda yuz berdi). Secret bo'sh bo'lsa serverdagi
             # mavjud fayl saqlanadi — o'chirilmaydi.
-            # Qiymat single-quote ichida uzatiladi: JSON'da single-quote bo'lmaydi.
+            # Qiymat yuqoridagi qadamda base64 ga o'tkazilgan — bitta qator,
+            # ya'ni action'ning qatorlararo shell kodi uni buza olmaydi.
             echo "==> Mobil push (FCM) holati"
-            FCM_SA='${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}'
-            if [ -n "$FCM_SA" ]; then
+            FCM_B64='${{ steps.fcm.outputs.b64 }}'
+            if [ -n "$FCM_B64" ]; then
               mkdir -p secrets
-              printf '%s' "$FCM_SA" > secrets/fcm-service-account.json
+              printf '%s' "$FCM_B64" | base64 -d > secrets/fcm-service-account.json
               # Backend konteyneri appuser (uid/gid 10001, apps/api/Dockerfile)
               # sifatida ishlaydi, fayl esa deploy (1001) nomidan yoziladi.
               # 600 + deploy egaligida konteyner faylni OCHA OLMAYDI

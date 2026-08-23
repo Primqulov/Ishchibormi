@@ -136,7 +136,15 @@ chown -R "$DEPLOY_USER:$DEPLOY_USER" "$PROJECT_DIR"
 sudo -u "$DEPLOY_USER" git config --global --add safe.directory "$PROJECT_DIR"
 
 # FCM service-account fayli uchun papka (bo'sh bo'lsa mobil push jimgina o'chiq).
-install -d -m 750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$PROJECT_DIR/secrets"
+#
+# Guruh ATAYLAB 10001 — backend konteyneri appuser (uid/gid 10001,
+# apps/api/Dockerfile) sifatida ishlaydi, faylni esa CI `deploy` (1001)
+# nomidan yozadi. Setgid biti (2750) bo'lmasa yangi fayllar `deploy` guruhida
+# yaratiladi va konteyner ularni ocha olmaydi ("permission denied" -> push
+# jimgina o'chadi). `deploy` o'zi a'zo bo'lmagan guruhga chgrp qila olmaydi,
+# shuning uchun buni root shu yerda, bir marta o'rnatib qo'yadi.
+# Dockerfile'dagi UID o'zgarsa, bu raqam ham o'zgarishi shart.
+install -d -m 2750 -o "$DEPLOY_USER" -g 10001 "$PROJECT_DIR/secrets"
 
 # ── 8. Caddyfile ────────────────────────────────────────────────────────────
 if [ -f "$PROJECT_DIR/deploy/Caddyfile" ]; then
