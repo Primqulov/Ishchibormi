@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Konteynerdagi MongoDB'ning kunlik zaxira nusxasi (gzip arxiv).
 #
-# Droplet'da baza konteyner ichida (`mongo_data` volume) turadi — ya'ni Droplet
+# Serverda baza konteyner ichida (`mongo_data` volume) turadi — ya'ni server
 # o'chsa yoki volume yo'qolsa ma'lumot ham ketadi. Bu skript har kuni arxiv
-# yaratadi va eskilarini tozalaydi. droplet-setup.sh uni /etc/cron.d ga yozadi.
+# yaratadi va eskilarini tozalaydi. server-setup.sh uni /etc/cron.d ga yozadi.
 #
 # Qo'lda ishga tushirish:
 #   PROJECT_DIR=/opt/ishchibormi deploy/backup-mongo.sh

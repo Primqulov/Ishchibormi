@@ -271,6 +271,11 @@ type Admin struct {
 	// is true only after the admin verifies a code during enrollment.
 	TOTPSecret  string `bson:"totpSecret,omitempty" json:"-"`
 	TOTPEnabled bool   `bson:"totpEnabled" json:"totpEnabled"`
+	// TOTPLastCounter is the 30-second counter of the last code accepted for
+	// this admin. Codes at or below it are refused, making every code single-use
+	// (RFC 6238 §5.2) — a shoulder-surfed or phished code cannot be replayed
+	// within its skew window. Never serialized.
+	TOTPLastCounter uint64 `bson:"totpLastCounter,omitempty" json:"-"`
 	// Incremented whenever credentials, role, active state, or logout changes
 	// the session. Admin JWTs carry the matching value and are rejected when it
 	// differs, providing immediate revocation for privileged sessions.

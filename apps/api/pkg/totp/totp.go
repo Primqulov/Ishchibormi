@@ -52,22 +52,54 @@ func codeAt(secret string, counter uint64) (string, error) {
 
 // Validate reports whether input matches the secret's code in the current 30s
 // window (±1 window tolerance for clock skew). Constant-time comparison.
+//
+// Prefer [ValidateCounter] anywhere the caller can persist state: this form
+// cannot tell that a code has already been spent, so a code observed over a
+// shoulder, read off a screen share, or captured by a phishing page stays
+// usable for the rest of its ~90-second validity.
 func Validate(secret, input string) bool {
+	_, ok := ValidateCounter(secret, input, 0)
+	return ok
+}
+
+// ValidateCounter is [Validate] plus replay protection, as RFC 6238 §5.2
+// requires: "the verifier MUST NOT accept the second attempt of the OTP after
+// the successful validation has been issued for the first OTP".
+//
+// lastUsed is the counter returned by the previous successful validation for
+// this secret (0 when there has never been one). Any code whose counter is not
+// strictly greater is rejected, which makes each generated code single-use —
+// re-entering it, or an attacker replaying one they watched being typed, fails
+// even inside the skew window.
+//
+// On success it returns the counter the caller must persist alongside the
+// secret. On failure the returned counter is meaningless and must be ignored.
+//
+// The skew windows are walked oldest-first so a code that is valid in more than
+// one position (possible only with a repeating code) burns the earliest one,
+// never sliding the high-water mark further than necessary.
+func ValidateCounter(secret, input string, lastUsed uint64) (uint64, bool) {
 	input = strings.TrimSpace(input)
 	if len(input) != digits {
-		return false
+		return 0, false
 	}
-	counter := uint64(time.Now().Unix() / period)
-	for _, d := range []int64{0, -1, 1} {
-		want, err := codeAt(secret, uint64(int64(counter)+d))
+	now := uint64(time.Now().Unix() / period)
+	for _, d := range []int64{-1, 0, 1} {
+		c := uint64(int64(now) + d)
+		want, err := codeAt(secret, c)
 		if err != nil {
-			return false
+			return 0, false
 		}
-		if subtle.ConstantTimeCompare([]byte(want), []byte(input)) == 1 {
-			return true
+		if subtle.ConstantTimeCompare([]byte(want), []byte(input)) != 1 {
+			continue
 		}
+		// Correct code, but already spent (or older than one we have spent).
+		if c <= lastUsed {
+			return 0, false
+		}
+		return c, true
 	}
-	return false
+	return 0, false
 }
 
 // URI builds the otpauth:// provisioning URI an authenticator app imports (as a

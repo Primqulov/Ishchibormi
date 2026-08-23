@@ -27,10 +27,18 @@ const (
 
 // TrustProxyHeaders controls whether the X-Forwarded-For header is honored when
 // determining the client IP (used for rate limiting). It MUST stay false unless
-// the service runs behind a trusted reverse proxy that overwrites the header;
-// otherwise a client can spoof XFF to get an unlimited number of rate-limit
-// buckets and defeat brute-force protection. Set from config at startup.
+// the service runs behind a trusted reverse proxy; otherwise a client can spoof
+// XFF to get an unlimited number of rate-limit buckets and defeat brute-force
+// protection. Set from config at startup.
 var TrustProxyHeaders = false
+
+// TrustedProxyHops is how many reverse proxies sit between the internet and
+// this process. It selects which X-Forwarded-For element is the real client:
+// proxies APPEND, so with one hop (Caddy in deploy/Caddyfile) the client
+// address is the LAST element, with two (CDN -> Caddy) the second-to-last, and
+// so on. Only meaningful when TrustProxyHeaders is true. Set from config at
+// startup; values below 1 are treated as 1.
+var TrustedProxyHops = 1
 
 // allowedJWTMethods pins token verification to HMAC-SHA256, preventing
 // algorithm-confusion / "alg:none" downgrade attacks.
@@ -367,11 +375,8 @@ func clientIP(r *http.Request) string {
 	// trusted proxy. Otherwise an attacker can rotate XFF to mint a fresh
 	// rate-limit bucket per request and bypass brute-force protection.
 	if TrustProxyHeaders {
-		if v := r.Header.Get("X-Forwarded-For"); v != "" {
-			if i := strings.IndexByte(v, ','); i > 0 {
-				return strings.TrimSpace(v[:i])
-			}
-			return strings.TrimSpace(v)
+		if ip := forwardedClientIP(r.Header.Get("X-Forwarded-For"), TrustedProxyHops); ip != "" {
+			return ip
 		}
 	}
 	host := r.RemoteAddr
@@ -379,4 +384,38 @@ func clientIP(r *http.Request) string {
 		return host[:i]
 	}
 	return host
+}
+
+// forwardedClientIP picks the client address out of an X-Forwarded-For chain,
+// counting from the RIGHT.
+//
+// This direction is the whole point. Reverse proxies APPEND the peer address to
+// whatever the client already sent — Caddy's reverse_proxy and nginx's
+// $proxy_add_x_forwarded_for both do — so in
+//
+//	X-Forwarded-For: 9.9.9.9, <real client>
+//
+// the leftmost element is simply a string the attacker typed. Reading it (as
+// this function used to) hands the rate-limit key to the caller: a new value
+// per request means a new bucket per request, and every brute-force budget in
+// this file — admin login, OTP verify, the Play review-code guess counter —
+// becomes unlimited. Only the last `hops` elements were written by
+// infrastructure we control, so the client is the one just before them.
+//
+// A chain shorter than the configured hop count means the header did not come
+// from the expected topology; "" is returned so the caller falls back to
+// RemoteAddr rather than trusting an attacker-supplied element.
+func forwardedClientIP(header string, hops int) string {
+	if header == "" {
+		return ""
+	}
+	if hops < 1 {
+		hops = 1
+	}
+	parts := strings.Split(header, ",")
+	i := len(parts) - hops
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[i])
 }

@@ -131,7 +131,7 @@ chaqiruvlar qidirib chiqilgach quyidagilar aniqlandi:
 |---|---|---|---|
 | **Telegram Bot API** (auth bot) | Telegram ID, kod matni | server | `pkg/tgsend`, `bot/` |
 | **Telegram** (qo'llab-quvvatlash — shaxsiy akkaunt) | foydalanuvchi yozgan xabarlar **Telegram'da qoladi**, bizning bazaga saqlanmaydi | foydalanuvchi → Telegram | ilovadan havola: `AppConstants.telegramSupportUrl` |
-| **DigitalOcean** | barcha server ma'lumotlari (xosting) | — | `docker-compose.yml`, `deploy/` |
+| **Hetzner** | barcha server ma'lumotlari (xosting) | — | `docker-compose.yml`, `deploy/` |
 | **AWS S3** (ixtiyoriy) | yuklangan rasmlar — S3 sozlanmagan bo'lsa rasmlar o'z serverimizda qoladi | server | `pkg/storage/s3.go` |
 | **MongoDB** | barcha yozuvlar (o'z serverimizda) | — | `pkg/db` |
 | **OpenStreetMap tiles** | IP, ko'rilayotgan hudud | klient | `location_picker_page.dart`, `jobs_map_view.dart` |

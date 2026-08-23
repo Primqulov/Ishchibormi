@@ -161,15 +161,28 @@ func randHex(n int) string {
 	return fmt.Sprintf("%x", b)
 }
 
+// randDigits returns an n-digit code drawn uniformly from 0-9.
+//
+// Rejection sampling, not `b % 10`: a byte spans 0..255, which is not a
+// multiple of ten, so the naive modulo makes 0-5 appear 26/256 of the time and
+// 6-9 only 25/256. Every digit biased that way shaves entropy off the code and
+// hands a guesser a better-than-uniform ordering to try. Discarding the six
+// values at the top of the range (250-255) leaves an exact multiple of ten and
+// removes the skew completely. Matches the bot's generator
+// (apps/bots/otp/cmd/bot/main.go) and account.generateCode.
 func randDigits(n int) (string, error) {
-	digits := "0123456789"
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
+	const digits = "0123456789"
 	var sb strings.Builder
-	for _, x := range b {
-		sb.WriteByte(digits[int(x)%len(digits)])
+	sb.Grow(n)
+	b := make([]byte, 1)
+	for sb.Len() < n {
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		if b[0] >= 250 {
+			continue
+		}
+		sb.WriteByte(digits[int(b[0])%10])
 	}
 	return sb.String(), nil
 }

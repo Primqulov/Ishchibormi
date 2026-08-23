@@ -1,6 +1,7 @@
 package push
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -20,6 +21,43 @@ type Handler struct {
 
 func NewHandler(db *mongo.Database) *Handler {
 	return &Handler{Col: db.Collection("device_tokens")}
+}
+
+// maxDeviceTokensPerUser bounds how many device rows one account may own.
+// A real person has a handful of devices; without a ceiling this collection is
+// an append-only store that any authenticated client can write ~4 KB into per
+// request, forever. Ten covers phone + tablet + reinstalls with room to spare.
+const maxDeviceTokensPerUser = 10
+
+// pruneDeviceTokens keeps only the maxDeviceTokensPerUser most recently seen
+// rows for a user, dropping the stalest first. Best-effort: a failure here must
+// never turn a successful registration into an error for the client, because
+// the device would then keep retrying and make the problem worse.
+func (h *Handler) pruneDeviceTokens(ctx context.Context, uid primitive.ObjectID) {
+	cur, err := h.Col.Find(ctx,
+		bson.M{"userId": uid},
+		options.Find().
+			SetSort(bson.D{{Key: "updatedAt", Value: -1}}).
+			SetSkip(maxDeviceTokensPerUser).
+			SetProjection(bson.M{"_id": 1}),
+	)
+	if err != nil {
+		return
+	}
+	defer func() { _ = cur.Close(ctx) }()
+
+	var stale []primitive.ObjectID
+	for cur.Next(ctx) {
+		var row struct {
+			ID primitive.ObjectID `bson:"_id"`
+		}
+		if cur.Decode(&row) == nil {
+			stale = append(stale, row.ID)
+		}
+	}
+	if len(stale) > 0 {
+		_, _ = h.Col.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": stale}})
+	}
 }
 
 type registerReq struct {
@@ -60,6 +98,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	h.pruneDeviceTokens(r.Context(), uid)
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }
 

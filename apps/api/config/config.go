@@ -20,6 +20,11 @@ type Config struct {
 	// TrustProxyHeaders: honor X-Forwarded-For for client IP / rate limiting.
 	// Only enable when running behind a trusted reverse proxy.
 	TrustProxyHeaders bool
+	// TrustedProxyHops: how many reverse proxies sit in front of this process.
+	// Selects which X-Forwarded-For element is the real client (proxies append,
+	// so the client is `hops` from the right). 1 = the deploy/Caddyfile setup;
+	// raise to 2 only when a CDN fronts Caddy.
+	TrustedProxyHops int
 
 	JWTAccessSecret  string
 	JWTRefreshSecret string
@@ -150,6 +155,7 @@ func Load() Config {
 		MongoDB:           envStr("MONGO_DB", "ishchibormi"),
 		HTTPAddr:          envStr("HTTP_ADDR", ":8080"),
 		TrustProxyHeaders: envBool("TRUST_PROXY_HEADERS", false),
+		TrustedProxyHops:  envInt("TRUSTED_PROXY_HOPS", 1),
 		JWTAccessSecret:   envStr("JWT_ACCESS_SECRET", "dev-access-secret"),
 		JWTRefreshSecret:  envStr("JWT_REFRESH_SECRET", "dev-refresh-secret"),
 		// 72 soat (4320 daqiqa). Mobil ilova 401 da refresh oqimi bilan o'zi
@@ -247,6 +253,12 @@ func (c Config) mustValidate() {
 	}
 	if len(c.CORSOrigins) == 0 {
 		problems = append(problems, "CORS_ORIGINS must contain at least one trusted HTTPS origin")
+	}
+	// A wrong hop count silently mis-identifies the client: too high buckets
+	// every visitor together (mass 429s), too low reads an attacker-supplied
+	// X-Forwarded-For element and removes rate limiting altogether.
+	if c.TrustProxyHeaders && (c.TrustedProxyHops < 1 || c.TrustedProxyHops > 4) {
+		problems = append(problems, "TRUSTED_PROXY_HOPS must be between 1 and 4 when TRUST_PROXY_HEADERS=true")
 	}
 	for _, origin := range c.CORSOrigins {
 		u, err := url.Parse(origin)

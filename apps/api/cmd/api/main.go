@@ -137,14 +137,18 @@ func main() {
 
 	// Rate limiting keys off the real client IP. Only trust forwarding headers
 	// when explicitly configured to sit behind a trusted proxy; otherwise XFF is
-	// spoofable and defeats the limiter.
+	// spoofable and defeats the limiter. TrustedProxyHops decides which element
+	// of the forwarded chain is the client — see httpx.forwardedClientIP.
 	httpx.TrustProxyHeaders = cfg.TrustProxyHeaders
+	httpx.TrustedProxyHops = cfg.TrustedProxyHops
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	if cfg.TrustProxyHeaders {
-		r.Use(middleware.RealIP)
-	}
+	// NOTE: chi's middleware.RealIP is deliberately NOT mounted. It trusts
+	// True-Client-IP / X-Real-IP / the LEFTMOST X-Forwarded-For element — all
+	// three fully attacker-controlled behind an appending proxy — and it
+	// overwrites r.RemoteAddr with the result, poisoning the fallback path too.
+	// httpx.clientIP resolves the client itself, counting from the trusted end.
 	r.Use(httpx.AccessLog)
 	r.Use(httpx.Recover)
 	r.Use(httpx.SecurityHeaders)
@@ -168,6 +172,18 @@ func main() {
 	refreshLimiter := httpx.NewLimiter(30, 0.1)   // 30 burst, 1 / 10s
 	uploadLimiter := httpx.NewLimiter(12, 0.1)    // 12 burst, then 1 / 10s per authenticated user
 	publicReadLimiter := httpx.NewLimiter(120, 5) // generous public-query budget per client IP
+	// Authenticated writes that leave permanent, publicly visible or
+	// admin-facing residue. Keyed by user id, not IP: the point is to bound what
+	// one account can produce, and IP is both spoofable and shared (one mobile
+	// carrier NAT would otherwise throttle a whole city).
+	elonLimiter := httpx.NewLimiter(10, 0.02) // 10 burst, then 1 / 50s — job posting
+	// Reports and feedback fan out to a notification document PER ACTIVE ADMIN,
+	// so one request is an amplified write. Tight budget on purpose.
+	inboxLimiter := httpx.NewLimiter(5, 0.01) // 5 burst, then 1 / 100s
+	// Device-token registration is idempotent for a real client (one token per
+	// install, re-sent on rotation), so a low ceiling costs nothing legitimate
+	// and stops the device_tokens collection being used as free storage.
+	deviceLimiter := httpx.NewLimiter(10, 0.05) // 10 burst, then 1 / 20s
 
 	// Evict idle per-IP buckets so the limiter maps don't grow unbounded (each
 	// unique client IP would otherwise leave a permanent entry). The 15-min idle
@@ -180,6 +196,12 @@ func main() {
 	refreshLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	uploadLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	publicReadLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
+	// These three refill slowly, so their buckets need a correspondingly longer
+	// idle threshold — evicting one before it has refilled would hand the owner
+	// a fresh full budget and undo the limit.
+	elonLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
+	inboxLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
+	deviceLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { httpx.JSON(w, 200, map[string]string{"status": "ok"}) })
 
@@ -241,7 +263,8 @@ func main() {
 
 			// Mobil qurilmaning FCM push tokenini ro'yxatga olish (login'dan
 			// keyin / token yangilanganda) va o'chirish (logout'da).
-			r.Post("/users/me/device-token", pushH.Register)
+			r.With(deviceLimiter.MiddlewareKey("device-token", httpx.UserID)).
+				Post("/users/me/device-token", pushH.Register)
 			r.Delete("/users/me/device-token", pushH.Unregister)
 
 			// Self-service account deletion, confirmed by a code pushed to the
@@ -262,7 +285,7 @@ func main() {
 			// Turkumlarni faqat tizim/admin belgilaydi — oddiy foydalanuvchi
 			// yangi turkum qo'sha olmaydi (turkumlar oldindan beriladi).
 
-			r.Post("/elons", elonH.Create)
+			r.With(elonLimiter.MiddlewareKey("elon-create", httpx.UserID)).Post("/elons", elonH.Create)
 			r.Patch("/elons/{id}", elonH.Update)
 			r.Delete("/elons/{id}", elonH.Delete)
 			r.Post("/elons/{id}/cancel", elonH.Cancel)
@@ -287,10 +310,12 @@ func main() {
 
 			// Shikoyat admin moderatsiya navbatiga tushadi — demo hisob real
 			// odam haqida shikoyat yubora olmasligi kerak.
-			r.With(auth.DenyReviewAccount).Post("/reports", repH.Create)
+			r.With(auth.DenyReviewAccount,
+				inboxLimiter.MiddlewareKey("report", httpx.UserID)).Post("/reports", repH.Create)
 
 			// Taklif va shikoyatlar (support Telegram botiga uzatiladi)
-			r.With(auth.DenyReviewAccount).Post("/feedback", fbH.Create)
+			r.With(auth.DenyReviewAccount,
+				inboxLimiter.MiddlewareKey("feedback", httpx.UserID)).Post("/feedback", fbH.Create)
 			r.Get("/feedback", fbH.Mine)
 
 			// Uploads — demo hisob ommaviy CDN'ga fayl yuklay olmaydi.

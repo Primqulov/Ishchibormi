@@ -454,12 +454,12 @@ export default function PrivacyPage() {
                 </T>
               </li>
               <li>
-                <b className="heading">DigitalOcean:</b>{" "}
+                <b className="heading">Hetzner:</b>{" "}
                 <T>
-                  serverimiz DigitalOcean'ning ma'lumot markazida joylashgan;
-                  ma'lumotlar bazasi va yuklangan rasmlar ham o'sha serverda
-                  saqlanadi. DigitalOcean bizning nomimizdan, bizning
-                  ko'rsatmamiz bilan ma'lumotni saqlaydi.
+                  serverimiz Hetzner'ning Germaniyadagi ma'lumot markazida
+                  joylashgan; ma'lumotlar bazasi va yuklangan rasmlar ham
+                  o'sha serverda saqlanadi. Hetzner bizning nomimizdan,
+                  bizning ko'rsatmamiz bilan ma'lumotni saqlaydi.
                 </T>
               </li>
               <li>

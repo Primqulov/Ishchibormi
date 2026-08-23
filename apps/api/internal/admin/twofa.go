@@ -3,10 +3,33 @@ package admin
 import (
 	"net/http"
 
+	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/totp"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+// rotateSession applies a 2FA change and advances tokenVersion in one write,
+// then mints a replacement token for the admin who made the change.
+//
+// Turning the second factor on or off is a credential change, so every other
+// outstanding session for this admin has to die — that is what the tokenVersion
+// bump does (see RequireActiveAdmin). Returning a fresh token keeps the caller's
+// own tab alive: without it, the request that enables 2FA would immediately
+// invalidate the session that made it, and the panel would appear to break.
+func (h *Handler) rotateSession(r *http.Request, id primitive.ObjectID, update bson.M) (string, error) {
+	update["$inc"] = bson.M{"tokenVersion": 1}
+	var updated models.Admin
+	err := h.Admins.FindOneAndUpdate(r.Context(), bson.M{"_id": id}, update,
+		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&updated)
+	if err != nil {
+		return "", err
+	}
+	return httpx.IssueVersionedAdminToken(
+		h.Cfg.JWTAccessSecret, updated.ID.Hex(), updated.Role, updated.TokenVersion, h.Cfg.JWTAdminTTL)
+}
 
 // Setup2FA generates (but does not activate) a new TOTP secret and returns the
 // secret + otpauth URI to add to an authenticator app. Enrollment is confirmed
@@ -26,8 +49,11 @@ func (h *Handler) Setup2FA(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	// The replay high-water mark is tied to the old secret; a new secret starts
+	// from zero, otherwise the counter left behind would reject the first codes
+	// of the new enrollment.
 	if _, err := h.Admins.UpdateOne(r.Context(), bson.M{"_id": a.ID},
-		bson.M{"$set": bson.M{"totpSecret": secret, "totpEnabled": false}}); err != nil {
+		bson.M{"$set": bson.M{"totpSecret": secret, "totpEnabled": false, "totpLastCounter": int64(0)}}); err != nil {
 		httpx.Err(w, err)
 		return
 	}
@@ -57,17 +83,22 @@ func (h *Handler) Enable2FA(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	if !totp.Validate(a.TOTPSecret, req.Code) {
+	counter, ok := totp.ValidateCounter(a.TOTPSecret, req.Code, a.TOTPLastCounter)
+	if !ok {
 		httpx.Err(w, httpx.NewError(400, "bad_totp", "invalid code"))
 		return
 	}
-	if _, err := h.Admins.UpdateOne(r.Context(), bson.M{"_id": a.ID},
-		bson.M{"$set": bson.M{"totpEnabled": true}}); err != nil {
+	// Burn the enrollment code and turn 2FA on in the same write that revokes
+	// sibling sessions.
+	tok, err := h.rotateSession(r, a.ID, bson.M{
+		"$set": bson.M{"totpEnabled": true, "totpLastCounter": int64(counter)},
+	})
+	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
 	h.audit(r, "2fa_enable", a.ID.Hex(), "")
-	httpx.JSON(w, 200, map[string]bool{"ok": true})
+	httpx.JSON(w, 200, map[string]any{"ok": true, "accessToken": tok})
 }
 
 // Disable2FA turns off 2FA for the current admin after verifying a live code.
@@ -86,17 +117,22 @@ func (h *Handler) Disable2FA(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	if !totp.Validate(a.TOTPSecret, req.Code) {
+	if _, ok := totp.ValidateCounter(a.TOTPSecret, req.Code, a.TOTPLastCounter); !ok {
 		httpx.Err(w, httpx.NewError(400, "bad_totp", "invalid code"))
 		return
 	}
-	if _, err := h.Admins.UpdateOne(r.Context(), bson.M{"_id": a.ID},
-		bson.M{"$set": bson.M{"totpEnabled": false}, "$unset": bson.M{"totpSecret": ""}}); err != nil {
+	// Dropping the second factor weakens the account, so it revokes sibling
+	// sessions the same way enabling it does.
+	tok, err := h.rotateSession(r, a.ID, bson.M{
+		"$set":   bson.M{"totpEnabled": false},
+		"$unset": bson.M{"totpSecret": "", "totpLastCounter": ""},
+	})
+	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
 	h.audit(r, "2fa_disable", a.ID.Hex(), "self")
-	httpx.JSON(w, 200, map[string]bool{"ok": true})
+	httpx.JSON(w, 200, map[string]any{"ok": true, "accessToken": tok})
 }
 
 // ---- Admin (staff) management — superadmin only ----

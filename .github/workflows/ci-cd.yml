@@ -69,21 +69,21 @@ jobs:
         run: npm run build --if-present
 
   # ───────────────────────────────────────────────
-  # 2) CD: DigitalOcean Droplet'ga deploy
+  # 2) CD: Hetzner serverga deploy
   #    Faqat main'ga push bo'lganda VA test o'tgandan keyin
   #
-  #    Server tayyorlash (bir marta): deploy/droplet-setup.sh
+  #    Server tayyorlash (bir marta): deploy/server-setup.sh
   #    TLS/reverse-proxy: xostdagi Caddy (deploy/Caddyfile) — bu pipeline unga
   #    TEGMAYDI. Caddyfile o'zgarsa serverda qo'lda yangilang:
   #      sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
   # ───────────────────────────────────────────────
   deploy:
-    name: Deploy to DigitalOcean
+    name: Deploy to Hetzner
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - name: Droplet'ga SSH orqali deploy
+      - name: Serverga SSH orqali deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -179,8 +179,8 @@ jobs:
             set_env_if_set JWT_REFRESH_SECRET    '${{ secrets.JWT_REFRESH_SECRET }}'
             set_env_if_set BOT_SHARED_SECRET     '${{ secrets.BOT_SHARED_SECRET }}'
             set_env_if_set ADMIN_SEED_PASS       '${{ secrets.ADMIN_SEED_PASS }}'
-            # S3 IXTIYORIY: bu secretlar bo'sh bo'lsa (DigitalOcean'da odatda
-            # shunday) backend rasmlarni Droplet diskidagi `uploads` volume'ida
+            # S3 IXTIYORIY: bu secretlar bo'sh bo'lsa (Hetzner'da odatda
+            # shunday) backend rasmlarni server diskidagi `uploads` volume'ida
             # saqlaydi — yuqoridagi UPLOAD_PUBLIC_BASE shu holat uchun.
             set_env_if_set AWS_ACCESS_KEY_ID     '${{ secrets.AWS_ACCESS_KEY_ID }}'
             set_env_if_set AWS_SECRET_ACCESS_KEY '${{ secrets.AWS_SECRET_ACCESS_KEY }}'

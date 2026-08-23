@@ -15,7 +15,7 @@ Tailwind) veb-panel va Go Telegram botlari.
 | Bot       | Go (`go-telegram-bot-api/v5`) |
 | DB        | MongoDB 7 (OTP uchun TTL kolleksiya — Redis kerak emas) |
 | Fayllar   | AWS S3 **yoki** lokal disk (S3 sozlanmasa avtomatik lokal) |
-| Infra     | Docker + docker-compose, GitHub Actions CI/CD → DigitalOcean Droplet (Caddy + TLS) |
+| Infra     | Docker + docker-compose, GitHub Actions CI/CD → Hetzner Cloud server (Caddy + TLS) |
 
 ---
 
@@ -39,9 +39,9 @@ faqat butun tizimga tegishli fayllar (compose, `.env`, CI) turadi.
 │   │   └── lib/              # API klient, i18n, format, xarita
 │   └── bots/
 │       └── otp/              # OTP yetkazuvchi bot (Mongo'ga yozadi)
-├── deploy/                   # Droplet setup, Caddyfile, backup, dev overlay
+├── deploy/                   # Server setup, Caddyfile, backup, dev overlay
 ├── scripts/                  # play-preflight.sh
-├── .github/workflows/        # CI/CD pipeline (test + DigitalOcean deploy)
+├── .github/workflows/        # CI/CD pipeline (test + Hetzner deploy)
 ├── docker-compose.yml        # mongo + backend + bot + frontend
 ├── Makefile
 ├── .env.example              # BITTA .env — barcha servislar shundan o'qiydi
@@ -247,12 +247,12 @@ qaytadi (botsiz test uchun).
 
 ---
 
-## 8. CI/CD → DigitalOcean
+## 8. CI/CD → Hetzner
 
 `.github/workflows/ci-cd.yml`:
 - **test** (har push/PR): `apps/api` va OTP boti uchun `go vet` + `go test`,
   `apps/web` uchun `npm ci` + `lint` + `build`.
-- **deploy** (faqat `main`'ga push, test o'tgach): DigitalOcean Droplet'ga SSH
+- **deploy** (faqat `main`'ga push, test o'tgach): Hetzner serverga SSH
   orqali `git reset --hard origin/main` + `docker compose up --build`.
   ⚠️ `main`'ga push = **production deploy**.
 
@@ -260,13 +260,13 @@ Kerakli GitHub secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`,
 `PROJECT_DIR` + ilova sirlari (`TELEGRAM_BOT_TOKEN`, `JWT_*`,
 `BOT_SHARED_SECRET`, `ADMIN_SEED_PASS`).
 
-Serverni birinchi marta tayyorlash — `deploy/droplet-setup.sh` (Docker, Caddy,
+Serverni birinchi marta tayyorlash — `deploy/server-setup.sh` (Docker, Caddy,
 ufw, swap, deploy user, kunlik Mongo zaxirasi). TLS'ni xostdagi Caddy beradi
 (`deploy/Caddyfile`), sertifikat avtomatik yangilanadi. Batafsil arxitektura va
 `Caddyfile` ni yangilash tartibi: [deploy/README.md](deploy/README.md).
 
 ### Rejalashtirilgan yaxshilanishlar
-1. **Image'larni CI'da qurish** (GHCR) — hozir build Droplet'ning o'zida ketadi,
+1. **Image'larni CI'da qurish** (GHCR) — hozir build serverning o'zida ketadi,
    ya'ni prod mashinaning RAM/CPU'sida (Next.js build "Killed" bo'lishi
    mumkin). Registry'ga o'tilsa deploy `pull` ga aylanadi va **rollback**
    paydo bo'ladi. Batafsil: [deploy/README.md](deploy/README.md).

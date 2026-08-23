@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Yangi DigitalOcean Droplet'ni (Ubuntu 24.04 LTS) noldan ishga tayyorlaydi.
+# Yangi Hetzner Cloud serverni (Ubuntu 24.04/26.04 LTS) noldan ishga tayyorlaydi.
 #
-# ISHLATISH — Droplet'ga root bo'lib kirib:
-#   scp deploy/droplet-setup.sh root@<DROPLET_IP>:~/
-#   ssh root@<DROPLET_IP> 'bash droplet-setup.sh'
+# ISHLATISH — serverga root bo'lib kirib:
+#   scp deploy/server-setup.sh root@<SERVER_IP>:~/
+#   ssh root@<SERVER_IP> 'bash server-setup.sh'
 #
 # Repo OCHIQ (public) bo'lsa to'g'ridan-to'g'ri ham mumkin:
-#   curl -fsSL https://raw.githubusercontent.com/IshchiBormi/web-application/main/deploy/droplet-setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/IshchiBormi/web-application/main/deploy/server-setup.sh | bash
 #
 # Skript IDEMPOTENT: qayta ishga tushirilsa hech narsani buzmaydi, faqat
 # yetishmagan qismini to'ldiradi. `.env` ga TEGMAYDI (mavjud sirlar saqlanadi).
@@ -34,7 +34,7 @@ apt-get install -y -qq ca-certificates curl gnupg git ufw fail2ban apt-transport
 # ── 2. Swap ─────────────────────────────────────────────────────────────────
 # Next.js `npm run build` xotira talab qiladi. Swap bo'lmasa build OOM-killer
 # tomonidan "Killed" qilinadi va deploy yarim yo'lda to'xtaydi — aynan shu
-# muammo eski EC2'da bo'lgan (deploy/README.md dagi izohga qarang).
+# muammo eski serverda ham bo'lgan (deploy/README.md dagi izohga qarang).
 if ! swapon --show | grep -q .; then
 	log "2GB swap yaratish (Next.js build OOM bo'lmasligi uchun)"
 	fallocate -l 2G /swapfile
@@ -66,7 +66,7 @@ else
 	log "Docker allaqachon bor: $(docker --version)"
 fi
 
-# Docker loglari diskni to'ldirib qo'ymasin (Droplet diski kichik).
+# Docker loglari diskni to'ldirib qo'ymasin (server diski kichik).
 if [ ! -f /etc/docker/daemon.json ]; then
 	log "Docker log rotatsiyasini yoqish"
 	mkdir -p /etc/docker
@@ -162,7 +162,7 @@ if [ -f "$PROJECT_DIR/deploy/backup-mongo.sh" ]; then
 	chmod 644 /etc/cron.d/ishchibormi-backup
 fi
 
-IP="$(curl -s4 --max-time 5 ifconfig.me 2>/dev/null || echo '<DROPLET_IP>')"
+IP="$(curl -s4 --max-time 5 ifconfig.me 2>/dev/null || echo '<SERVER_IP>')"
 
 cat <<INFO
 

@@ -36,6 +36,9 @@ type Handler struct {
 	Notify     *notification.Service
 	Apps       *mongo.Collection
 	Storage    *storage.Service
+
+	// loginGuard caps failed logins per admin username — see loginguard.go.
+	loginGuard *loginGuard
 }
 
 func NewHandler(cfg config.Config, db *mongo.Database, n *notification.Service, s *storage.Service) *Handler {
@@ -52,6 +55,7 @@ func NewHandler(cfg config.Config, db *mongo.Database, n *notification.Service, 
 		Notify:     n,
 		Apps:       db.Collection("applications"),
 		Storage:    s,
+		loginGuard: newLoginGuard(),
 	}
 }
 

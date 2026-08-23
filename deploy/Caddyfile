@@ -1,4 +1,4 @@
-# Caddy — TLS terminator va reverse proxy (DigitalOcean Droplet, XOSTDA ishlaydi).
+# Caddy — TLS terminator va reverse proxy (Hetzner server, XOSTDA ishlaydi).
 #
 # Nega konteynerda emas, xostda: docker-compose backend'ni 127.0.0.1:8080 ga,
 # frontend'ni 127.0.0.1:3000 ga bog'laydi (tashqi dunyoga OCHIQ EMAS). Ya'ni
@@ -36,12 +36,31 @@ ishchibormi.uz {
 	#   /healthz    — monitoring
 	@api path /api/* /uploads/* /healthz
 	handle @api {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:8080 {
+			# XAVFSIZLIK: Caddy standart holatda X-Forwarded-For'ga mijoz
+			# IP'sini QO'SHADI — ya'ni mijoz o'zi yuborgan qiymat chapda
+			# saqlanib qoladi. Backend rate-limit uchun shu sarlavhaga
+			# tayanadi, shuning uchun uni butunlay ustiga yozamiz: bosqinchi
+			# har so'rovda soxta IP yozib yangi "bucket" ocholmasin (admin
+			# login/OTP brute-force himoyasi shunga bog'liq).
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+			# chi/boshqa kutubxonalar o'qishi mumkin bo'lgan, mijoz
+			# soxtalashtira oladigan qolgan sarlavhalarni olib tashlaymiz.
+			header_up -True-Client-IP
+			header_up -CF-Connecting-IP
+			header_up -X-Forwarded-Host
+		}
 	}
 
 	# Qolgan hamma narsa — Next.js (SSR, statik fayllar, admin panel).
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+			header_up -True-Client-IP
+			header_up -CF-Connecting-IP
+		}
 	}
 
 	log {

@@ -5,11 +5,11 @@ Ishga tushirish bilan bog'liq fayllar. Ilova kodi bu yerda emas — u `apps/` da
 | Fayl | Vazifasi |
 |------|----------|
 | `docker-compose.dev.yml` | Lokal dev overlay (APP_ENV=dev, OTP_DEV_RETURN, localhost CORS) |
-| `droplet-setup.sh` | Yangi DigitalOcean Droplet'ni noldan tayyorlaydi (Docker, Caddy, ufw, swap, deploy user, cron) |
+| `server-setup.sh` | Yangi Hetzner Cloud serverni noldan tayyorlaydi (Docker, Caddy, ufw, swap, deploy user, cron) |
 | `Caddyfile` | Xostdagi Caddy konfiguratsiyasi — TLS + `/api`,`/uploads` → backend, qolgani → Next.js |
 | `backup-mongo.sh` | Konteyner Mongo'ning kunlik gzip zaxirasi (7 kun saqlanadi) |
 
-## Production — DigitalOcean Droplet
+## Production — Hetzner Cloud server
 
 ```
 Internet → :443 Caddy (xost, avtomatik Let's Encrypt)
@@ -30,7 +30,7 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-Birinchi o'rnatish: `deploy/droplet-setup.sh` (skript ichidagi izohga qarang).
+Birinchi o'rnatish: `deploy/server-setup.sh` (skript ichidagi izohga qarang).
 Undan keyingi har bir deploy — `main`'ga push (`.github/workflows/ci-cd.yml`).
 
 Kerakli GitHub secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`,
@@ -72,12 +72,12 @@ foydalangan ma'qul.
 
 ## Keyingi qadam (hali qilinmagan)
 
-Hozir image'lar **Droplet'ning o'zida** build qilinadi (`docker compose
+Hozir image'lar **serverning o'zida** build qilinadi (`docker compose
 build`), ya'ni prod mashinaning RAM va CPU'sida. Next.js build'i RAM yetmay
-"Killed" bo'lishi mumkin va deploy paytida sayt sekinlashadi. (`droplet-setup.sh`
+"Killed" bo'lishi mumkin va deploy paytida sayt sekinlashadi. (`server-setup.sh`
 shu sabab 2GB swap yaratadi — bu yamoq, yechim emas.)
 
 Rejalashtirilgan o'zgarish: image'lar GitHub Actions'da build qilinib
-registry'ga (GHCR) push qilinadi, Droplet esa faqat `docker compose pull` qiladi.
+registry'ga (GHCR) push qilinadi, server esa faqat `docker compose pull` qiladi.
 Bu deploy'ni soniyalarga tushiradi va teglangan image orqali **rollback**
 imkonini beradi (hozir buning imkoni yo'q).

@@ -7,7 +7,7 @@
 // kolleksiyasida hisob yo'q (masalan Atlas'ga ko'chgandan keyin) yoki eski hash
 // turibdi (seed InsertOne ishlatadi va mavjud adminni HECH QACHON yangilamaydi).
 //
-// Ishga tushirish (EC2 serverda, backend konteyneri ichida — u yerda .env dagi
+// Ishga tushirish (prod serverda, backend konteyneri ichida — u yerda .env dagi
 // MONGO_URI/ADMIN_SEED_* env sifatida mavjud):
 //
 //	docker compose exec backend /app/resetadmin

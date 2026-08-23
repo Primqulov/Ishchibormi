@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck, KeyRound, Check, AlertCircle } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { api, Admin } from "@/lib/api";
+import { api, setAdminToken, Admin } from "@/lib/api";
 
 export default function AdminSecurity() {
   const [me, setMe] = useState<Admin | null>(null);
@@ -23,7 +23,11 @@ export default function AdminSecurity() {
   async function enable() {
     setErr(""); setOk("");
     try {
-      await api.post("/api/admin/2fa/enable", { code }, { auth: "admin" } as any);
+      // 2FA'ni yoqish — kredensial o'zgarishi: backend boshqa barcha admin
+      // seanslarini bekor qiladi va shu tabga yangi token qaytaradi. Uni
+      // saqlamasak, keyingi so'rovning o'zi 401 bo'lib chiqadi.
+      const res = await api.post<{ accessToken?: string }>("/api/admin/2fa/enable", { code }, { auth: "admin" } as any);
+      if (res?.accessToken) setAdminToken(res.accessToken);
       setSetup(null); setCode(""); setOk("2FA yoqildi.");
       loadMe();
     } catch (e: any) { setErr(e?.code === "bad_totp" ? "Kod noto'g'ri." : (e?.message || "Xatolik")); }
@@ -31,7 +35,8 @@ export default function AdminSecurity() {
   async function disable() {
     setErr(""); setOk("");
     try {
-      await api.post("/api/admin/2fa/disable", { code }, { auth: "admin" } as any);
+      const res = await api.post<{ accessToken?: string }>("/api/admin/2fa/disable", { code }, { auth: "admin" } as any);
+      if (res?.accessToken) setAdminToken(res.accessToken);
       setCode(""); setOk("2FA o'chirildi.");
       loadMe();
     } catch (e: any) { setErr(e?.code === "bad_totp" ? "Kod noto'g'ri." : (e?.message || "Xatolik")); }

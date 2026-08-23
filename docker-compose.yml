@@ -6,13 +6,19 @@ services:
     # Xost 27017 da Windows MongoDB xizmati ishlayotgani uchun to'qnashmaslik
     # maqsadida Docker Mongo xostda 27018 ga chiqariladi (ichkarida esa 27017).
     # Faqat 127.0.0.1 ga bog'lanadi — DB porti hech qachon tashqi dunyoga
-    # ochilmaydi (Droplet'da ufw ham 27018 ni bloklaydi).
+    # ochilmaydi (serverda ufw ham 27018 ni bloklaydi).
     #
-    # PRODUCTION (DigitalOcean Droplet): baza shu konteynerda, ma'lumot
-    # `mongo_data` volume'ida. Ya'ni Droplet o'chsa/volume yo'qolsa ma'lumot ham
+    # PRODUCTION (Hetzner Cloud server): baza shu konteynerda, ma'lumot
+    # `mongo_data` volume'ida. Ya'ni server o'chsa/volume yo'qolsa ma'lumot ham
     # ketadi — shuning uchun deploy/backup-mongo.sh kunlik arxiv oladi.
-    # Boshqarilayotgan baza (Atlas / DO Managed) kerak bo'lsa: .env dagi
+    # Boshqarilayotgan baza (masalan MongoDB Atlas) kerak bo'lsa: .env dagi
     # MONGO_URI ni o'zgartiring — bu konteyner shundan keyin ishlatilmaydi.
+    #
+    # RAM: WiredTiger standart holatda (RAM-1GB)/2 ni oladi — 4GB serverda bu
+    # ~1.5GB, ya'ni Next.js SSR va build uchun joy tor qoladi. 1GB ga aniq
+    # cheklaymiz: hozirgi baza hajmida bu yetarli, qolgan RAM esa ilovaga
+    # tegadi. Serverni kattalashtirsangiz shu qiymatni ham oshiring.
+    command: ["mongod", "--wiredTigerCacheSizeGB", "1"]
     ports:
       - "127.0.0.1:27018:27017"
     volumes:
@@ -59,11 +65,14 @@ services:
       REVIEW_LOGIN_CODE: ${REVIEW_LOGIN_CODE:-}
       REVIEW_LOGIN_EXPIRES_AT: ${REVIEW_LOGIN_EXPIRES_AT:-}
       REVIEW_LOGIN_USER_ID: ${REVIEW_LOGIN_USER_ID:-}
-      # Prod Droplet'da backend xostdagi Caddy (TLS) ortida ishlaydi, shuning uchun
+      # Prod serverda backend xostdagi Caddy (TLS) ortida ishlaydi, shuning uchun
       # standart "true": klient IP X-Forwarded-For'dan olinadi (rate-limit
       # har bir foydalanuvchi bo'yicha to'g'ri ishlashi uchun). .env buni
       # override qila oladi (masalan proksisiz sinovda "false").
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+      # Caddy yagona proksi — mijoz IP'si X-Forwarded-For'ning eng oxirgi
+      # elementi. CDN qo'shsangiz 2 qiling (.env.example'ga qarang).
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       # O'chirilgan hisoblar shuncha kundan keyin butunlay yo'q qilinadi.
       # Foydalanuvchiga /delete-account va /maxfiylik-siyosati sahifalarida
       # aytiladigan muddat bilan bir xil bo'lishi SHART (apps/web/lib/retention.ts).
@@ -113,7 +122,7 @@ services:
       # MUHIM: NEXT_PUBLIC_* qiymatlari build vaqtida kodga yoziladi, shuning
       # uchun ularni build args sifatida uzatamiz (aks holda localhost qoladi).
       # Default'lar PRODUCTION (ishchibormi.uz) — lokal dev uchun .env ustun
-      # keladi (masalan localhost). Droplet'da .env bu kalitlarni bermasa, prod
+      # keladi (masalan localhost). Serverda .env bu kalitlarni bermasa, prod
       # qiymatlar ishlatiladi.
       args:
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-https://ishchibormi.uz}
