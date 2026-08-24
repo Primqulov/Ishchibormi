@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ExternalLink } from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
 import { api, setAccess, User } from "@/lib/api";
 import { AUTH_BOT_USERNAME } from "@/lib/contact";
 import { Button } from "@/components/ui/Button";
@@ -24,6 +24,9 @@ export default function LoginPage() {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Ro'yxatdan o'tish nazarda tutilgan rozilik bilan davom etmaydi: shartlar va
+  // maxfiylik siyosatiga rozilik aniq belgilanishi shart.
+  const [agreed, setAgreed] = useState(false);
 
   useEffect(() => {
     api.post<Req>("/api/auth/otp/request", {}).then((r) => {
@@ -52,6 +55,12 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     if (code.length < 6) return;
+    // Tugma allaqachon o'chirilgan bo'ladi — bu Enter bilan yuborish yo'lini
+    // ham yopadi.
+    if (!agreed) {
+      setError(t("Davom etish uchun foydalanish shartlari va maxfiylik siyosatiga rozilik bildiring."));
+      return;
+    }
     setSubmitting(true);
     try {
       const v = await api.post<Verify>("/api/auth/otp/verify", { token: tgToken, code });
@@ -182,17 +191,15 @@ export default function LoginPage() {
               )}
             </div>
 
-            <Button type="submit" size="lg" fullWidth className="mt-5" disabled={code.length < 6} loading={submitting}>
+            {/* Rozilik — tugmadan yuqorida turadi, shunda tugma nega
+                o'chirilganini foydalanuvchi darhol ko'radi. Hujjatlar yangi
+                oynada ochiladi: sahifadan chiqib ketilsa, kiritilgan kod va
+                OTP sessiyasi yo'qoladi. */}
+            <ConsentCheck checked={agreed} onChange={(v) => { setAgreed(v); setError(""); }} />
+
+            <Button type="submit" size="lg" fullWidth className="mt-5" disabled={code.length < 6 || !agreed} loading={submitting}>
               {submitting ? <T>Tekshirilmoqda…</T> : <T>Davom etish</T>}
             </Button>
-
-            <p className="mt-4 text-center text-[11.5px] subtle leading-relaxed">
-              <T>Davom etish orqali siz</T>{" "}
-              <Link href="/foydalanish-shartlari" className="heading underline-offset-2 hover:underline"><T>Foydalanish shartlari</T></Link>{" "}
-              <T>va</T>{" "}
-              <Link href="/maxfiylik-siyosati" className="heading underline-offset-2 hover:underline"><T>Maxfiylik siyosati</T></Link>{" "}
-              <T>ga rozilik bildirasiz.</T>
-            </p>
           </form>
         </main>
 
@@ -204,6 +211,74 @@ export default function LoginPage() {
           </div>
         </footer>
       </div>
+    </div>
+  );
+}
+
+/** Foydalanish shartlari va Maxfiylik siyosatiga aniq rozilik.
+ *
+ *  Haqiqiy `<input type="checkbox">` — klaviatura va skrin-riderlar uchun;
+ *  ko'rinadigan katak esa `peer-*` sinflari bilan chiziladi. Matn `<label>`
+ *  ichida emas: aks holda havolani bosish katakni ham almashtirib yuborardi. */
+function ConsentCheck({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  const t = useT();
+  // Ko'rinadigan matn `<label>` tashqarisida bo'lgani uchun katakning nomi
+  // aria-label bilan beriladi — aks holda skrin-rider nomsiz katakni o'qiydi.
+  const label = t("Men Foydalanish shartlari va Maxfiylik siyosati bilan tanishdim va roziman.");
+
+  return (
+    <div className="mt-5 flex items-start gap-2.5">
+      <input
+        id="consent"
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={label}
+        className="peer sr-only"
+      />
+      {/* Katak 20px, `after:-inset-2` esa bosish maydonini ~36px'ga kengaytiradi
+          (layout o'lchamiga ta'sir qilmaydi). Fokus halqasi `peer-*` orqali —
+          label input'ning bevosita qo'shnisi. */}
+      <label
+        htmlFor="consent"
+        className="relative mt-px grid h-5 w-5 shrink-0 cursor-pointer place-items-center rounded-sm
+                   border-[1.5px] transition-colors after:absolute after:-inset-2 after:content-['']
+                   peer-focus-visible:ring-[3px] peer-focus-visible:ring-[color:var(--ring)]"
+        style={{
+          borderColor: checked ? "var(--brand)" : "var(--border-strong)",
+          background: checked ? "var(--brand)" : "var(--card)",
+        }}
+      >
+        <Check
+          size={13}
+          strokeWidth={3.5}
+          className="text-white transition-opacity"
+          style={{ opacity: checked ? 1 : 0 }}
+        />
+      </label>
+      <p className="text-[12px] leading-relaxed muted">
+        <T>Men</T>{" "}
+        <Link
+          href="/foydalanish-shartlari"
+          target="_blank"
+          rel="noreferrer"
+          className="font-semibold underline underline-offset-2"
+          style={{ color: "var(--brand)" }}
+        >
+          <T>Foydalanish shartlari</T>
+        </Link>{" "}
+        <T>va</T>{" "}
+        <Link
+          href="/maxfiylik-siyosati"
+          target="_blank"
+          rel="noreferrer"
+          className="font-semibold underline underline-offset-2"
+          style={{ color: "var(--brand)" }}
+        >
+          <T>Maxfiylik siyosati</T>
+        </Link>{" "}
+        <T>bilan tanishdim va roziman.</T>
+      </p>
     </div>
   );
 }
