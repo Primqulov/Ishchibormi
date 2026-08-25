@@ -96,6 +96,12 @@ func main() {
 			// phone in the users collection, skip the contact-share step
 			// and just issue a fresh code immediately.
 			if phone, ok := findKnownPhone(ctx, usersCol, m.From.ID); ok {
+				// Sessiyaga bog'lanmagan kod foydasiz — noSessionMessage izohi.
+				if args == "" {
+					log.Printf("start without session token (known user tgID=%d)", m.From.ID)
+					_, _ = bot.Send(tgbotapi.NewMessage(m.Chat.ID, noSessionMessage))
+					continue
+				}
 				code, err := generateAndStore(ctx, otpCol, args, phone, m.From.ID, otpTTL, otpLen)
 				if err != nil {
 					log.Printf("otp store failed (known user tgID=%d): %v", m.From.ID, err)
@@ -113,9 +119,12 @@ func main() {
 			}
 
 			// ── First-time flow: ask for contact ──────────────────────
-			if args != "" {
-				pending[m.Chat.ID] = args
+			if args == "" {
+				log.Printf("start without session token (tgID=%d)", m.From.ID)
+				_, _ = bot.Send(tgbotapi.NewMessage(m.Chat.ID, noSessionMessage))
+				continue
 			}
+			pending[m.Chat.ID] = args
 			req := tgbotapi.NewMessage(m.Chat.ID, "Salom! \"Ishchi Bormi\" ga xush kelibsiz.\n\nIltimos, telefon raqamingizni ulashing.")
 			kb := tgbotapi.NewReplyKeyboard(
 				tgbotapi.NewKeyboardButtonRow(tgbotapi.KeyboardButton{Text: "📞 Telefon raqamni ulashish", RequestContact: true}),
@@ -138,7 +147,16 @@ func main() {
 				continue
 			}
 			phone := normalizePhone(m.Contact.PhoneNumber)
-			code, err := generateAndStore(ctx, otpCol, pending[m.Chat.ID], phone, m.From.ID, otpTTL, otpLen)
+			// `pending` xotirada: bot /start bilan kontakt ulashish orasida
+			// qayta ishga tushsa token yo'qoladi. Unda ham foydasiz kod
+			// bermaymiz.
+			token := pending[m.Chat.ID]
+			if token == "" {
+				log.Printf("contact without session token (tgID=%d)", m.From.ID)
+				_, _ = bot.Send(tgbotapi.NewMessage(m.Chat.ID, noSessionMessage))
+				continue
+			}
+			code, err := generateAndStore(ctx, otpCol, token, phone, m.From.ID, otpTTL, otpLen)
 			if err != nil {
 				log.Printf("otp store failed (contact tgID=%d): %v", m.From.ID, err)
 				_, _ = bot.Send(tgbotapi.NewMessage(m.Chat.ID, "Xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring."))
@@ -155,6 +173,22 @@ func main() {
 		}
 	}
 }
+
+// noSessionMessage — foydalanuvchi botni sayt/ilova havolasisiz ochganda
+// ko'rsatiladigan matn.
+//
+// NEGA KOD CHIQARILMAYDI: kod `tgToken` bilan bog'lanadi va sayt ham, mobil
+// ilova ham tasdiqlashda AYNAN shu tokenni yuboradi
+// (auth_remote_datasource.dart: verifyOtp({token, code})). Tokensiz yozilgan
+// kodni ikkala klient ham topa olmaydi — foydalanuvchi ishlamaydigan kodni
+// kiritib, "Kod noto'g'ri yoki muddati tugagan" xabarini oladi. Shuning
+// uchun bunday kodni umuman bermaymiz va nima qilish kerakligini aytamiz.
+var noSessionMessage = strings.Join([]string{
+	"Kod olish uchun saytdagi yoki ilovadagi «Telegram orqali kirish» tugmasini bosing —",
+	"shundan keyin men sizga kod yuboraman.",
+	"",
+	"Bu suhbatni Telegram tarixidan ochsangiz kod ishlamaydi.",
+}, "\n")
 
 func isOwnContact(senderID, contactUserID int64) bool {
 	return senderID != 0 && contactUserID == senderID

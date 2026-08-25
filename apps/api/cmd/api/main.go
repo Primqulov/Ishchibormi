@@ -278,6 +278,18 @@ func main() {
 	}
 
 	r.Route("/api", func(r chi.Router) {
+		// /api/healthz — /healthz ning taxallusi.
+		//
+		// Nega kerak: asosiy domenda Caddy faqat /api/* ni backendga
+		// yo'naltiradi, ya'ni ishchibormi.uz/healthz frontendga tushib 404
+		// beradi. Monitoring vositalari va deploy tekshiruvlari odatda
+		// /api/healthz ni so'raydi — natijada uzluksiz 404 oqimi hosil
+		// bo'lib, fail2ban (caddy-4xx) tekshiruvchining IP'sini bloklab
+		// qo'yardi. Aynan shu tarzda sayt egasi ham saytdan chiqib qolgan.
+		r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			httpx.JSON(w, 200, map[string]string{"status": "ok"})
+		})
+
 		// Public auth
 		r.Group(func(r chi.Router) {
 			r.Use(otpLimiter.Middleware("otp"))
