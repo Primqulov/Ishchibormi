@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, ExternalLink } from "lucide-react";
-import { api, setAccess, User } from "@/lib/api";
+import { api, APIError, setAccess, User } from "@/lib/api";
 import { AUTH_BOT_USERNAME } from "@/lib/contact";
 import { Button } from "@/components/ui/Button";
 import { Logo } from "@/components/Logo";
@@ -87,6 +87,19 @@ export default function LoginPage() {
         case "account_blocked":
           setError(t("Hisobingiz bloklangan. Yordam xizmatiga murojaat qiling."));
           break;
+        // Avtomatik moderatsiya bloki. Backend `details.bannedUntil` ni ham
+        // qaytaradi — sanani ko'rsatsak foydalanuvchi qachon qaytishini
+        // biladi va yordam xizmatiga bekorga murojaat qilmaydi.
+        case "account_banned": {
+          const until = (err as APIError)?.details?.bannedUntil;
+          const date = until ? new Date(String(until)).toLocaleDateString("uz-UZ") : "";
+          setError(
+            date
+              ? t("Hisobingiz qoidabuzarlik sababli bloklangan. Blok muddati:") + " " + date
+              : t("Hisobingiz qoidabuzarlik sababli bloklangan. Yordam xizmatiga murojaat qiling.")
+          );
+          break;
+        }
         case "rate_limited":
           setError(t("Juda ko'p urinish bo'ldi. Biroz kutib, qayta urinib ko'ring."));
           break;
