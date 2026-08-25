@@ -50,6 +50,60 @@ type Config struct {
 	// bildirishnomalar faqat in-app (polling) bo'lib qoladi.
 	FCMCredentialsFile string
 
+	// ---------------------------------------------------------------------
+	// Kontent moderatsiyasi (Google Gemini). internal/moderation ga qarang.
+	// ---------------------------------------------------------------------
+
+	// GeminiAPIKey — Gemini API kaliti. FCM/S3 kabi IXTIYORIY: bo'sh bo'lsa
+	// moderatsiya jimgina o'chiq va API to'liq ishlayveradi.
+	// Kalit hech qachon javobda, logda yoki klientda ko'rinmaydi.
+	GeminiAPIKey string
+	// GeminiBaseURL — Gemini API ildizi. Faqat test/proksi uchun
+	// o'zgartiriladi; bo'sh bo'lsa rasmiy manzil ishlatiladi.
+	GeminiBaseURL string
+	// GeminiModel — moderatsiya modeli. Bo'sh bo'lsa pkg/gemini.DefaultModel.
+	GeminiModel string
+	// GeminiTimeout — bitta moderatsiya chaqiruvi uchun yuqori chegara.
+	// Rasm base64 holida yuborilgani uchun matnga qaraganda uzoqroq ketadi.
+	GeminiTimeout time.Duration
+	// ModerationMaxImageBytes — moderatsiyaga qabul qilinadigan rasm hajmi
+	// chegarasi. E'lon rasmi chegarasi (8 MiB) bilan bir xil bo'lgani ma'qul.
+	ModerationMaxImageBytes int64
+	// ModerationEnforce — foydalanuvchi kiritgan matn avtomatik
+	// tekshirilsinmi. Quyidagi oqimlarni qamraydi:
+	//   POST/PATCH /api/elons   — e'lon matni va rasmlari
+	//   PATCH      /api/me      — ism, bio, ko'nikmalar
+	//   POST       /api/feedback — taklif/shikoyat matni
+	//
+	// Standart holat FALSE: shunda mavjud oqimlar bir zarracha o'zgarmaydi.
+	ModerationEnforce bool
+	// ModerationStrikeLimit — necha marta nomaqbul kontent yuborilgach
+	// hisob bloklanadi. E'lon, profil matni va profil rasmi BITTA umumiy
+	// hisobga qo'shiladi.
+	// (standart 3 — internal/moderation.DefaultStrikeLimit bilan bir xil;
+	// config eng quyi qatlam bo'lgani uchun u paketni import qilmaydi.)
+	ModerationStrikeLimit int
+	// ModerationBanDuration — avtomatik blok muddati.
+	ModerationBanDuration time.Duration
+
+	// ModerationFailClosed — moderatsiya xizmati ishlamay qolsa nima
+	// qilinsin: true bo'lsa e'lon rad etiladi (fail-closed), false bo'lsa
+	// tekshirilmasdan o'tkaziladi (fail-open). Xato har doim logga yoziladi.
+	//
+	// Standart qiymat MUHITGA bog'liq (MODERATION_FAIL_CLOSED berilmaganda):
+	//   production — TRUE. Tekshirilmagan e'lon ommaga chiqib ketishi
+	//     moderatsiyani umuman qo'ymaslik bilan barobar; agar tashqi xizmat
+	//     ishlamasa e'lon joylash to'xtaydi, lekin nomaqbul kontent o'tmaydi.
+	//   dev — FALSE. Lokal ishlashda Gemini kaliti bo'lmasligi normal;
+	//     fail-closed bo'lsa dasturchi umuman e'lon joylay olmasdi.
+	//
+	// Productionda ATAYLAB false qilib qo'yilsa boot'da ogohlantirish
+	// yoziladi (Gemini uzilishida vaqtincha ochish uchun yo'l ochiq qoladi).
+	ModerationFailClosed bool
+	// moderationFailClosedExplicit — qiymat env'da aniq berilganmi. Faqat
+	// boot ogohlantirishi uchun.
+	moderationFailClosedExplicit bool
+
 	// AWS S3
 	AWSRegion          string
 	AWSAccessKeyID     string
@@ -137,6 +191,19 @@ func envBool(k string, def bool) bool {
 	return def
 }
 
+// envBoolSet — envBool bilan bir xil, lekin qiymat ANIQ berilganini ham
+// qaytaradi. Standart qiymati muhitga bog'liq bo'lgan bayroqlar uchun kerak:
+// "berilmagan" va "false deb berilgan" ni ajratish shart.
+func envBoolSet(k string) (val bool, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(k))) {
+	case "1", "true", "yes", "y", "on":
+		return true, true
+	case "0", "false", "no", "n", "off":
+		return false, true
+	}
+	return false, false
+}
+
 func envList(k, def string) []string {
 	raw := strings.Split(envStr(k, def), ",")
 	out := make([]string, 0, len(raw))
@@ -180,6 +247,20 @@ func Load() Config {
 
 		FCMCredentialsFile: envStr("FCM_CREDENTIALS_FILE", ""),
 
+		GeminiAPIKey:            strings.TrimSpace(envStr("GEMINI_API_KEY", "")),
+		GeminiBaseURL:           strings.TrimSpace(envStr("GEMINI_BASE_URL", "")),
+		GeminiModel:             strings.TrimSpace(envStr("GEMINI_MODEL", "")),
+		GeminiTimeout:           time.Duration(envInt("GEMINI_TIMEOUT_SECONDS", 20)) * time.Second,
+		ModerationMaxImageBytes: int64(envInt("MODERATION_MAX_IMAGE_MB", 8)) << 20,
+		ModerationStrikeLimit:   envInt("MODERATION_STRIKE_LIMIT", 3),
+		ModerationBanDuration:   time.Duration(envInt("MODERATION_BAN_DAYS", 730)) * 24 * time.Hour,
+		// MODERATION_ELON_ENFORCE — eski nom, orqaga moslik uchun qoldirilgan
+		// (bayroq endi e'londan tashqari profil va taklif/shikoyatni ham
+		// qamraydi, shuning uchun MODERATION_ENFORCE afzal).
+		ModerationEnforce: envBool("MODERATION_ENFORCE", envBool("MODERATION_ELON_ENFORCE", false)),
+		// Quyida, AppEnv ma'lum bo'lgach hisoblanadi.
+		ModerationFailClosed: false,
+
 		AWSRegion:          envStr("AWS_REGION", "eu-central-1"),
 		AWSAccessKeyID:     envStr("AWS_ACCESS_KEY_ID", ""),
 		AWSSecretAccessKey: envStr("AWS_SECRET_ACCESS_KEY", ""),
@@ -198,11 +279,33 @@ func Load() Config {
 		ReviewLoginExpiresAt: envTime("REVIEW_LOGIN_EXPIRES_AT"),
 		ReviewLoginUserID:    strings.TrimSpace(envStr("REVIEW_LOGIN_USER_ID", "")),
 	}
+	// Gemini inline so'rov hajmini cheklaydi va base64 o'rash hajmni ~33%
+	// oshiradi, shuning uchun 15 MiB dan yuqorisi baribir rad etilardi.
+	// Xato sozlama tufayli boot yiqilmasin — jimgina chegaralaymiz.
+	// Fail-closed standarti muhitga bog'liq — AppEnv shu yerda ma'lum.
+	if v, ok := envBoolSet("MODERATION_FAIL_CLOSED"); ok {
+		cfg.ModerationFailClosed = v
+		cfg.moderationFailClosedExplicit = true
+	} else {
+		cfg.ModerationFailClosed = cfg.IsProd()
+	}
+	if cfg.ModerationMaxImageBytes < 1<<20 {
+		cfg.ModerationMaxImageBytes = 1 << 20
+	} else if cfg.ModerationMaxImageBytes > 15<<20 {
+		cfg.ModerationMaxImageBytes = 15 << 20
+	}
 	cfg.mustValidate()
 	return cfg
 }
 
 func (c Config) IsProd() bool { return c.AppEnv == "production" || c.AppEnv == "prod" }
+
+// ModerationFailOpenInProd — productionda fail-open ATAYLAB yoqilganmi.
+// main.go boot'da shuni ogohlantirish sifatida yozadi: bu holatda moderatsiya
+// uzilganda tekshirilmagan e'lonlar ommaga chiqadi.
+func (c Config) ModerationFailOpenInProd() bool {
+	return c.IsProd() && c.moderationFailClosedExplicit && !c.ModerationFailClosed
+}
 
 // mustValidate fails fast in production when insecure defaults are left in
 // place. This prevents accidentally shipping forgeable JWTs, a default admin
@@ -244,6 +347,13 @@ func (c Config) mustValidate() {
 	}
 	if c.OTPDevReturn {
 		problems = append(problems, "OTP_DEV_RETURN must be false in production")
+	}
+	// Majburiy moderatsiya kalitsiz — jim yolg'on: har bir e'lon
+	// tekshirilmasdan o'tib ketaveradi (fail-open) yoki hammasi rad etiladi
+	// (fail-closed). Ikkalasi ham sezilmay qoladi, shuning uchun boot'da
+	// to'xtatamiz.
+	if c.ModerationEnforce && c.GeminiAPIKey == "" {
+		problems = append(problems, "GEMINI_API_KEY must be set when MODERATION_ENFORCE=true")
 	}
 	if c.JWTAdminTTL < 5*time.Minute || c.JWTAdminTTL > time.Hour {
 		problems = append(problems, "JWT_ADMIN_TTL_MIN must be between 5 and 60 minutes")

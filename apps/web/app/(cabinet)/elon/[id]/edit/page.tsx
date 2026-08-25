@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, Category, Elon, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
+import { api, APIError, Category, Elon, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
 import { Shell } from "@/components/Shell";
+import { ModerationModal, isModerationError } from "@/components/ModerationModal";
 import { MapPicker, LatLng } from "@/components/ui/MapPicker";
 import { T, useT } from "@/components/T";
 import { fmtThousands, onlyDigits, fmtPhone } from "@/lib/format";
@@ -24,11 +25,29 @@ export default function EditElon() {
     api.get<Category[]>("/api/categories").then(setCats);
   }, [id]);
 
+  // Moderatsiya rad etgan tahrir — modal oynada ko'rsatiladi.
+  const [modErr, setModErr] = useState<APIError | null>(null);
+
   if (!e) return <div className="p-6">Yuklanmoqda…</div>;
+
 
   async function save(ev: React.FormEvent) {
     ev.preventDefault();
+    setModErr(null);
     const price = e!.pricingType === "total" ? e!.priceAmount : e!.perWorkerAmount;
+    try {
+      await patchElon(price);
+    } catch (err: any) {
+      // Moderatsiya rad etdi — modal oynada sabab va ogohlantirish.
+      // Bu yerda router.push QILINMAYDI: foydalanuvchi formada qolib,
+      // matnni tuzatib qayta yubora olishi kerak.
+      if (isModerationError(err)) { setModErr(err); return; }
+      throw err;
+    }
+    router.push("/my-elons");
+  }
+
+  async function patchElon(price: number) {
     await api.patch(`/api/elons/${e!.id}`, {
       title: e!.title, categoryId: e!.categoryId, description: e!.description,
       lat: loc?.lat || 0, lng: loc?.lng || 0,
@@ -39,7 +58,6 @@ export default function EditElon() {
       startDate: e!.startDate, workTimeFrom: e!.workTimeFrom, workTimeTo: e!.workTimeTo,
       contactPhone: e!.contactPhone ? fmtPhone(e!.contactPhone) : "",
     });
-    router.push("/my-elons");
   }
 
   const priceField = e.pricingType === "total" ? e.priceAmount : e.perWorkerAmount;
@@ -107,6 +125,7 @@ export default function EditElon() {
           <button className="btn-primary"><T>Saqlash</T></button>
         </div>
       </form>
+          <ModerationModal error={modErr} onClose={() => setModErr(null)} />
     </Shell>
   );
 }

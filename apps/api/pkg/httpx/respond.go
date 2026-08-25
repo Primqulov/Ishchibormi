@@ -11,6 +11,10 @@ import (
 type APIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Details — ixtiyoriy strukturali qo'shimcha. Klient uni modal oynada
+	// ko'rsatish uchun ishlatadi (masalan ogohlantirish matni va qolgan
+	// urinishlar soni). omitempty: mavjud xatolar javobi o'zgarmaydi.
+	Details map[string]any `json:"details,omitempty"`
 }
 
 type errBody struct {
@@ -21,12 +25,30 @@ type HTTPError struct {
 	Status  int
 	Code    string
 	Message string
+	// Details — javobdagi error.details ga tushadi. Bo'sh bo'lsa chiqmaydi.
+	Details map[string]any
 }
 
 func (e *HTTPError) Error() string { return e.Message }
 
 func NewError(status int, code, msg string) *HTTPError {
 	return &HTTPError{Status: status, Code: code, Message: msg}
+}
+
+// NewErrorWithDetails — NewError, lekin klient uchun strukturali qo'shimcha
+// bilan. Modal oyna sabab va ogohlantirishni alohida ko'rsatishi uchun.
+func NewErrorWithDetails(status int, code, msg string, details map[string]any) *HTTPError {
+	return &HTTPError{Status: status, Code: code, Message: msg, Details: details}
+}
+
+// WithDetails — mavjud xatoga qo'shimcha biriktiradi (nusxa qaytaradi).
+func (e *HTTPError) WithDetails(details map[string]any) *HTTPError {
+	if e == nil {
+		return nil
+	}
+	cp := *e
+	cp.Details = details
+	return &cp
 }
 
 func JSON(w http.ResponseWriter, status int, v any) {
@@ -38,7 +60,9 @@ func JSON(w http.ResponseWriter, status int, v any) {
 func Err(w http.ResponseWriter, err error) {
 	var he *HTTPError
 	if errors.As(err, &he) {
-		JSON(w, he.Status, errBody{Error: APIError{Code: he.Code, Message: he.Message}})
+		JSON(w, he.Status, errBody{Error: APIError{
+			Code: he.Code, Message: he.Message, Details: he.Details,
+		}})
 		return
 	}
 	// Don't leak internal error details (driver/DB messages, stack info) to

@@ -85,6 +85,20 @@ services:
       # `git reset --hard` qiladi, ya'ni qo'lda ochilgan izoh har deploy'da
       # yopilib, push jimgina o'chib qolardi.
       FCM_CREDENTIALS_FILE: ${FCM_CREDENTIALS_FILE:-}
+
+      # Kontent moderatsiyasi (Google Gemini). Kalit .env dan olinadi va
+      # FAQAT backend konteynerida qoladi — frontend servisiga uzatilmaydi
+      # (u NEXT_PUBLIC_* dan boshqa hech narsani ko'rmaydi).
+      # Bo'sh bo'lsa moderatsiya jimgina o'chiq, API to'liq ishlayveradi.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-}
+      GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-20}
+      MODERATION_MAX_IMAGE_MB: ${MODERATION_MAX_IMAGE_MB:-8}
+      MODERATION_ENFORCE: ${MODERATION_ENFORCE:-false}
+      MODERATION_STRIKE_LIMIT: ${MODERATION_STRIKE_LIMIT:-3}
+      MODERATION_BAN_DAYS: ${MODERATION_BAN_DAYS:-730}
+      MODERATION_FAIL_CLOSED: ${MODERATION_FAIL_CLOSED:-false}
     volumes:
       - avatars:/data/avatars
       - uploads:/app/data/uploads

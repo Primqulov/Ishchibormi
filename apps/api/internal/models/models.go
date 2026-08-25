@@ -21,20 +21,30 @@ type User struct {
 	Rating       float64            `bson:"rating" json:"rating"`
 	ReviewsCount int                `bson:"reviewsCount" json:"reviewsCount"`
 	// Ikki tomonlama reyting: ishchi sifatida va ish beruvchi sifatida alohida.
-	WorkerRating         float64              `bson:"workerRating" json:"workerRating"`
-	WorkerReviewsCount   int                  `bson:"workerReviewsCount" json:"workerReviewsCount"`
-	EmployerRating       float64              `bson:"employerRating" json:"employerRating"`
-	EmployerReviewsCount int                  `bson:"employerReviewsCount" json:"employerReviewsCount"`
-	CompletedJobsCount   int                  `bson:"completedJobsCount" json:"completedJobsCount"`
-	IsPhoneVerified      bool                 `bson:"isPhoneVerified" json:"isPhoneVerified"`
-	IsBlocked            bool                 `bson:"isBlocked" json:"isBlocked"`
-	IsDeleted            bool                 `bson:"isDeleted" json:"isDeleted"`
-	LangPref             string               `bson:"langPref" json:"langPref"`
-	ThemePref            string               `bson:"themePref" json:"themePref"`
-	BlockedUserIDs       []primitive.ObjectID `bson:"blockedUserIds,omitempty" json:"blockedUserIds"`
-	OnboardingCompleted  bool                 `bson:"onboardingCompleted" json:"onboardingCompleted"`
-	CreatedAt            time.Time            `bson:"createdAt" json:"createdAt"`
-	UpdatedAt            time.Time            `bson:"updatedAt" json:"updatedAt"`
+	WorkerRating         float64 `bson:"workerRating" json:"workerRating"`
+	WorkerReviewsCount   int     `bson:"workerReviewsCount" json:"workerReviewsCount"`
+	EmployerRating       float64 `bson:"employerRating" json:"employerRating"`
+	EmployerReviewsCount int     `bson:"employerReviewsCount" json:"employerReviewsCount"`
+	CompletedJobsCount   int     `bson:"completedJobsCount" json:"completedJobsCount"`
+	IsPhoneVerified      bool    `bson:"isPhoneVerified" json:"isPhoneVerified"`
+	IsBlocked            bool    `bson:"isBlocked" json:"isBlocked"`
+	// ModerationBannedUntil — avtomatik moderatsiya bloki tugash vaqti.
+	//
+	// IsBlocked dan ATAYLAB alohida: u admin qo'lidagi bayroq. Ikkalasini
+	// bitta maydonda birlashtirsak, 2 yildan keyin blokni kim (admin yoki
+	// tizim) qo'yganini bilib bo'lmasdi. Bu maydon esa vaqt o'tishi bilan
+	// o'z-o'zidan kuchini yo'qotadi.
+	//
+	// Haqiqiy manba `moderation_strikes` (telefon bo'yicha) — bu nusxa faqat
+	// mavjud seansni darhol to'xtatish uchun.
+	ModerationBannedUntil *time.Time           `bson:"moderationBannedUntil,omitempty" json:"-"`
+	IsDeleted             bool                 `bson:"isDeleted" json:"isDeleted"`
+	LangPref              string               `bson:"langPref" json:"langPref"`
+	ThemePref             string               `bson:"themePref" json:"themePref"`
+	BlockedUserIDs        []primitive.ObjectID `bson:"blockedUserIds,omitempty" json:"blockedUserIds"`
+	OnboardingCompleted   bool                 `bson:"onboardingCompleted" json:"onboardingCompleted"`
+	CreatedAt             time.Time            `bson:"createdAt" json:"createdAt"`
+	UpdatedAt             time.Time            `bson:"updatedAt" json:"updatedAt"`
 
 	// Self-deletion releases the account's identity: phone and telegramId are
 	// unset (freeing the unique indexes so the number can register again as a
@@ -94,8 +104,16 @@ type Category struct {
 	CreatedBy       primitive.ObjectID `bson:"createdBy,omitempty" json:"createdBy"`
 	IsSystemDefault bool               `bson:"isSystemDefault" json:"isSystemDefault"`
 	IsActive        bool               `bson:"isActive" json:"isActive"`
-	UsageCount      int                `bson:"usageCount" json:"usageCount"`
-	CreatedAt       time.Time          `bson:"createdAt" json:"createdAt"`
+	// UsageCount — kategoriyada TARIXAN joylangan e'lonlar soni (faqat o'sadi).
+	// Admin panel uchun; ommaviy `/api/categories` javobida u ActiveCount bilan
+	// bir xil qiymatga almashtiriladi — category.Handler.List'ga qarang.
+	UsageCount int `bson:"usageCount" json:"usageCount"`
+	// ActiveCount — hozir feedda ko'rinib turgan (recruiting, o'chirilmagan,
+	// vaqti o'tmagan) e'lonlar soni. Bazada saqlanmaydi: e'lon vaqt o'tishi
+	// bilan o'z-o'zidan "faol emas"ga aylanadi, shuning uchun har so'rovda
+	// `elons` ustidan hisoblanadi.
+	ActiveCount int       `bson:"-" json:"activeCount"`
+	CreatedAt   time.Time `bson:"createdAt" json:"createdAt"`
 }
 
 // Elon (job listing)
@@ -128,6 +146,13 @@ type Elon struct {
 	AcceptedCount int    `bson:"acceptedCount" json:"acceptedCount"`
 	ViewsCount    int    `bson:"viewsCount" json:"viewsCount"`
 	IsDeleted     bool   `bson:"isDeleted" json:"isDeleted"`
+	// ModerationPending — e'lon AI tekshiruvidan O'TMASDAN chop etilgan
+	// (kvota tugagan yoki xizmat uzilgan paytda). Keyinchalik qo'lda ko'rib
+	// chiqish uchun belgi.
+	//
+	// json:"-" ataylab: foydalanuvchi tekshiruv o'tkazib yuborilganini
+	// bilmasligi kerak.
+	ModerationPending bool `bson:"moderationPending,omitempty" json:"-"`
 	// Denormalized moderation flag so public feed/sitemap queries can hide all
 	// listings immediately when an owner is blocked without an expensive join.
 	OwnerBlocked bool       `bson:"ownerBlocked,omitempty" json:"-"`

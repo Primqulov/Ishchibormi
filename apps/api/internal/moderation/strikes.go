@@ -1,0 +1,238 @@
+package moderation
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+// StrikeStore — moderatsiya buzilishlarini sanaydi va chegaraga yetganda
+// hisobni muddatli bloklaydi.
+//
+// # Nega TELEFON bo'yicha, foydalanuvchi id bo'yicha emas
+//
+// Hisobni o'chirish (internal/account.softDelete) telefon raqamini user
+// hujjatidan UZIB oladi (`$unset phone`) va uni `deletedPhone` ga arxivlaydi.
+// Shu raqam bilan qayta ro'yxatdan o'tilsa auth.upsertUser BUTUNLAY YANGI
+// hujjat yaratadi. Ya'ni sanoq user hujjatida tursa, "o'chir — qayta
+// ro'yxatdan o't" jazoni nolga qaytaradigan oddiy usul bo'lardi.
+//
+// Shu sabab yozuv alohida `moderation_strikes` kolleksiyasida, telefon
+// raqami kaliti bilan saqlanadi va hisob o'chirilganda ham tegilmaydi.
+type StrikeStore struct {
+	col   *mongo.Collection
+	users *mongo.Collection
+	elons *mongo.Collection
+	limit int
+	ban   time.Duration
+}
+
+const (
+	// DefaultStrikeLimit — necha marta buzilishdan keyin blok.
+	DefaultStrikeLimit = 3
+	// DefaultBanDuration — blok muddati (2 yil).
+	DefaultBanDuration = 2 * 365 * 24 * time.Hour
+)
+
+// Buzilish turlari — hammasi BITTA umumiy hisobga qo'shiladi.
+const (
+	KindElon    = "elon"    // e'lon matni yoki rasmi
+	KindProfile = "profile" // ism / "Men haqimda" / ko'nikmalar
+	KindAvatar  = "avatar"  // profil rasmi
+)
+
+// maxStoredEvents — yozuvda saqlanadigan oxirgi hodisalar soni. Cheklov
+// kerak: aks holda hujjat cheksiz o'sib borardi.
+const maxStoredEvents = 20
+
+// StrikeEvent — bitta buzilish.
+type StrikeEvent struct {
+	Kind   string    `bson:"kind" json:"kind"`
+	Detail string    `bson:"detail,omitempty" json:"detail,omitempty"`
+	At     time.Time `bson:"at" json:"at"`
+}
+
+// StrikeRecord — bitta telefon raqami bo'yicha yig'ilgan holat.
+type StrikeRecord struct {
+	ID      primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Phone   string             `bson:"phone" json:"phone"`
+	Strikes int                `bson:"strikes" json:"strikes"`
+	// BannedUntil — blok tugash vaqti. nil yoki o'tmishda bo'lsa blok yo'q.
+	BannedUntil *time.Time    `bson:"bannedUntil,omitempty" json:"bannedUntil,omitempty"`
+	Events      []StrikeEvent `bson:"events,omitempty" json:"events,omitempty"`
+	UpdatedAt   time.Time     `bson:"updatedAt" json:"updatedAt"`
+}
+
+// Banned — hozir blokdami.
+func (r *StrikeRecord) Banned(now time.Time) bool {
+	return r != nil && r.BannedUntil != nil && r.BannedUntil.After(now)
+}
+
+// NewStrikeStore do'kon quradi. limit/ban musbat bo'lmasa standart qiymatlar.
+func NewStrikeStore(db *mongo.Database, limit int, ban time.Duration) *StrikeStore {
+	if limit <= 0 {
+		limit = DefaultStrikeLimit
+	}
+	if ban <= 0 {
+		ban = DefaultBanDuration
+	}
+	return &StrikeStore{
+		col:   db.Collection("moderation_strikes"),
+		users: db.Collection("users"),
+		elons: db.Collection("elons"),
+		limit: limit,
+		ban:   ban,
+	}
+}
+
+// Limit — bloklashgacha ruxsat etilgan buzilishlar soni.
+func (s *StrikeStore) Limit() int {
+	if s == nil {
+		return DefaultStrikeLimit
+	}
+	return s.limit
+}
+
+// BanDuration — blok muddati.
+func (s *StrikeStore) BanDuration() time.Duration {
+	if s == nil {
+		return DefaultBanDuration
+	}
+	return s.ban
+}
+
+// ErrNoPhone — foydalanuvchining telefon raqami topilmadi (sanoqni
+// bog'lash mumkin emas).
+var ErrNoPhone = errors.New("moderation: user has no phone")
+
+// RecordByUser — foydalanuvchi id'si bo'yicha buzilishni qayd etadi.
+//
+// Telefon raqami user hujjatidan olinadi: barcha chaqiruv joylarida
+// (e'lon, profil, avatar) qo'lda id bor, telefon esa yo'q.
+func (s *StrikeStore) RecordByUser(ctx context.Context, userID primitive.ObjectID, kind, detail string) (*StrikeRecord, error) {
+	if s == nil {
+		return nil, nil
+	}
+	var u struct {
+		Phone string `bson:"phone"`
+	}
+	if err := s.users.FindOne(ctx, bson.M{"_id": userID},
+		options.FindOne().SetProjection(bson.M{"phone": 1})).Decode(&u); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(u.Phone) == "" {
+		return nil, ErrNoPhone
+	}
+	return s.record(ctx, u.Phone, userID, kind, detail)
+}
+
+// record — sanoqni oshiradi va chegaraga yetilsa bloklaydi.
+func (s *StrikeStore) record(ctx context.Context, phone string, userID primitive.ObjectID, kind, detail string) (*StrikeRecord, error) {
+	now := time.Now()
+	ev := StrikeEvent{Kind: kind, Detail: detail, At: now}
+
+	// $inc + $push bitta atomik yangilanishda: ikki parallel so'rov
+	// (masalan e'lon va profil bir vaqtda) sanoqni yo'qotmasligi kerak.
+	update := bson.M{
+		"$inc":         bson.M{"strikes": 1},
+		"$set":         bson.M{"updatedAt": now},
+		"$setOnInsert": bson.M{"phone": phone},
+		"$push": bson.M{"events": bson.M{
+			"$each":  bson.A{ev},
+			"$slice": -maxStoredEvents,
+		}},
+	}
+	opts := options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)
+	var rec StrikeRecord
+	if err := s.col.FindOneAndUpdate(ctx, bson.M{"phone": phone}, update, opts).Decode(&rec); err != nil {
+		return nil, err
+	}
+
+	// Chegaraga yetdi — bloklaymiz. Allaqachon bloklangan bo'lsa muddatni
+	// uzaytirmaymiz: jazo bir marta beriladi, har bir keyingi urinish uni
+	// cheksiz cho'zib yubormasligi kerak.
+	if rec.Strikes >= s.limit && !rec.Banned(now) {
+		until := now.Add(s.ban)
+		if _, err := s.col.UpdateOne(ctx, bson.M{"_id": rec.ID},
+			bson.M{"$set": bson.M{"bannedUntil": until, "updatedAt": now}}); err != nil {
+			return &rec, err
+		}
+		rec.BannedUntil = &until
+		s.applyBan(ctx, userID, until)
+	}
+	return &rec, nil
+}
+
+// applyBan — blokni foydalanuvchi hujjatiga va uning e'lonlariga ko'chiradi.
+//
+// `isBlocked` ATAYLAB tegilmaydi: u admin qo'lidagi bayroq va uni bu yerda
+// yoqib qo'ysak, 2 yil o'tgach kim o'chirishini bilib bo'lmasdi. Buning
+// o'rniga alohida `moderationBannedUntil` maydoni ishlatiladi — u vaqt
+// o'tishi bilan o'z-o'zidan kuchini yo'qotadi.
+//
+// `ownerBlocked` esa e'lonlarni ommaviy feeddan darhol olib tashlaydi
+// (admin bloklashda ham xuddi shunday qilinadi).
+func (s *StrikeStore) applyBan(ctx context.Context, userID primitive.ObjectID, until time.Time) {
+	if userID.IsZero() {
+		return
+	}
+	_, _ = s.users.UpdateOne(ctx, bson.M{"_id": userID},
+		bson.M{"$set": bson.M{"moderationBannedUntil": until, "updatedAt": time.Now()}})
+	_, _ = s.elons.UpdateMany(ctx, bson.M{"ownerId": userID},
+		bson.M{"$set": bson.M{"ownerBlocked": true, "updatedAt": time.Now()}})
+}
+
+// BanByPhone — shu raqam bloklanganmi. Login oqimi shundan foydalanadi:
+// hisob o'chirilgan bo'lsa ham yozuv joyida qoladi.
+//
+// Muddati o'tgan blok jimgina tozalanadi va sanoq nolga tushadi — aks holda
+// 2 yildan keyin qaytgan foydalanuvchi birinchi xatosida darhol qayta
+// bloklanardi, ya'ni jazo amalda abadiy bo'lib qolardi.
+func (s *StrikeStore) BanByPhone(ctx context.Context, phone string) (until time.Time, banned bool, err error) {
+	if s == nil || strings.TrimSpace(phone) == "" {
+		return time.Time{}, false, nil
+	}
+	var rec StrikeRecord
+	err = s.col.FindOne(ctx, bson.M{"phone": phone}).Decode(&rec)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	now := time.Now()
+	if rec.Banned(now) {
+		return *rec.BannedUntil, true, nil
+	}
+	if rec.BannedUntil != nil {
+		// Muddat tugagan — yozuvni tiklaymiz.
+		_, _ = s.col.UpdateOne(ctx, bson.M{"_id": rec.ID}, bson.M{
+			"$set":   bson.M{"strikes": 0, "updatedAt": now},
+			"$unset": bson.M{"bannedUntil": ""},
+		})
+	}
+	return time.Time{}, false, nil
+}
+
+// BanMessage — foydalanuvchiga ko'rsatiladigan blok xabari.
+func BanMessage(until time.Time) string {
+	return fmt.Sprintf("Hisobingiz qoidabuzarlik sababli %s gacha bloklandi.",
+		until.Format("2006-01-02"))
+}
+
+// WarnMessage — blokgacha qolgan urinishlar haqida ogohlantirish.
+// Klient buni modal oynada ko'rsatadi.
+func WarnMessage(strikes, limit int) string {
+	if strikes >= limit {
+		return ""
+	}
+	return fmt.Sprintf("Ogohlantirish %d/%d — %d marta takrorlansa hisobingiz bloklanadi.",
+		strikes, limit, limit)
+}

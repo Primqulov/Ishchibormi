@@ -9,6 +9,7 @@ import (
 
 	"github.com/ishchibormi/backend/config"
 	"github.com/ishchibormi/backend/internal/models"
+	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -21,14 +22,18 @@ type Handler struct {
 	otp    *OTPRepo
 	users  *mongo.Collection
 	review *reviewGate
+	// strikes — moderatsiya buzilishlari hisobi. Login oqimi undan telefon
+	// bo'yicha blokni tekshiradi.
+	strikes *moderation.StrikeStore
 }
 
 func NewHandler(cfg config.Config, db *mongo.Database) *Handler {
 	return &Handler{
-		cfg:    cfg,
-		otp:    NewOTPRepo(db, cfg.OTPTTL, cfg.OTPLength),
-		users:  db.Collection("users"),
-		review: newReviewGate(cfg),
+		cfg:     cfg,
+		otp:     NewOTPRepo(db, cfg.OTPTTL, cfg.OTPLength),
+		users:   db.Collection("users"),
+		review:  newReviewGate(cfg),
+		strikes: moderation.NewStrikeStore(db, cfg.ModerationStrikeLimit, cfg.ModerationBanDuration),
 	}
 }
 
@@ -121,6 +126,14 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if phone == "" {
 		httpx.Err(w, httpx.NewError(401, "no_phone_bound", "bot has not bound phone yet"))
+		return
+	}
+	// Telefon bo'yicha moderatsiya bloki — hisob o'chirilib qayta ro'yxatdan
+	// o'tilgan bo'lsa ham ushlaydi (yozuv alohida kolleksiyada, telefon
+	// kaliti bilan turadi).
+	if until, banned, berr := h.strikes.BanByPhone(ctx, phone); berr == nil && banned {
+		httpx.Err(w, httpx.NewErrorWithDetails(403, "account_banned",
+			moderation.BanMessage(until), map[string]any{"bannedUntil": until}))
 		return
 	}
 	user, err := h.upsertUser(ctx, phone, tgID)
@@ -393,6 +406,15 @@ func RequireActiveUser(users *mongo.Collection) func(http.Handler) http.Handler 
 			}
 			if u.IsBlocked || u.IsDeleted {
 				httpx.Err(w, httpx.NewError(403, "account_disabled", "account is blocked or deleted"))
+				return
+			}
+			// Avtomatik moderatsiya bloki — mavjud seansni darhol to'xtatadi.
+			// Muddati o'tgach o'z-o'zidan kuchini yo'qotadi, hech kim qo'lda
+			// ochishi shart emas.
+			if u.ModerationBannedUntil != nil && u.ModerationBannedUntil.After(time.Now()) {
+				httpx.Err(w, httpx.NewErrorWithDetails(403, "account_banned",
+					moderation.BanMessage(*u.ModerationBannedUntil),
+					map[string]any{"bannedUntil": *u.ModerationBannedUntil}))
 				return
 			}
 			// The user document is already loaded here, so tagging the request

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/auth"
 	"github.com/ishchibormi/backend/internal/models"
+	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/upload"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/storage"
@@ -21,6 +22,9 @@ import (
 type Handler struct {
 	Users   *mongo.Collection
 	Storage *storage.Service
+
+	// Ixtiyoriy kontent tekshiruvi (AttachModerator orqali).
+	guard *moderation.Guard
 }
 
 func NewHandler(db *mongo.Database, s *storage.Service) *Handler {
@@ -49,6 +53,43 @@ type updateMeReq struct {
 	ThemePref *string  `json:"themePref"`
 }
 
+// AttachModerator ixtiyoriy kontent tekshiruvini ulaydi. Guard o'chiq bo'lsa
+// profilni saqlash oqimi bir zarracha o'zgarmaydi.
+func (h *Handler) AttachModerator(g *moderation.Guard) { h.guard = g }
+
+// profileReasonPrefix — rad etish sababining boshlanishi.
+const profileReasonPrefix = "Profil saqlanmadi"
+
+// moderateProfile — profilning ERKIN MATNLI maydonlarini tekshiradi.
+//
+// Faqat shu so'rovda O'ZGARTIRILAYOTGAN maydonlar tekshiriladi: bular
+// ko'rsatkich (*string) bo'lgani uchun nil = "tegilmadi". Ya'ni faqat
+// mintaqasini o'zgartirgan foydalanuvchi uchun tashqi chaqiruv bo'lmaydi.
+//
+// Region/District tekshirilmaydi — ular oldindan belgilangan ro'yxatdan
+// tanlanadi, erkin matn emas. Avatar rasmi ham bu yerda tekshirilmaydi:
+// u /api/uploads orqali yuklanadi va o'sha yerda ushlanishi kerak.
+func (h *Handler) moderateProfile(ctx context.Context, uid primitive.ObjectID, req updateMeReq) (bool, error) {
+	if !h.guard.On() {
+		return false, nil
+	}
+	parts := make([]string, 0, 4)
+	if req.FirstName != nil {
+		parts = append(parts, *req.FirstName)
+	}
+	if req.LastName != nil {
+		parts = append(parts, *req.LastName)
+	}
+	if req.Bio != nil {
+		parts = append(parts, *req.Bio)
+	}
+	if req.Skills != nil {
+		parts = append(parts, strings.Join(req.Skills, ", "))
+	}
+	out, err := h.guard.CheckText(ctx, uid, "profile", profileReasonPrefix, parts...)
+	return out == moderation.OutcomeSkipped, err
+}
+
 func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	uid, _ := primitive.ObjectIDFromHex(httpx.UserID(r))
 	var req updateMeReq
@@ -71,6 +112,14 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	// Kontent moderatsiyasi — arzon validatsiyalardan KEYIN, bazaga
+	// yozishdan va eski avatarni o'chirishdan OLDIN: rad etilgan so'rov
+	// hech qanday iz qoldirmasin.
+	modSkipped, err := h.moderateProfile(r.Context(), uid, req)
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	// If avatar is changing, delete the previous file from S3 (best-effort).
 	if req.AvatarURL != nil {
 		var prev models.User
@@ -80,7 +129,9 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	set := bson.M{"updatedAt": time.Now()}
+	// AI kvotasi tugagan paytda saqlangan profil — keyin qo'lda ko'riladi.
+	// Foydalanuvchi buni bilmaydi (models.User.ModerationPending json:"-").
+	set := bson.M{"updatedAt": time.Now(), "moderationPending": modSkipped}
 	if req.FirstName != nil {
 		set["firstName"] = strings.TrimSpace(*req.FirstName)
 	}

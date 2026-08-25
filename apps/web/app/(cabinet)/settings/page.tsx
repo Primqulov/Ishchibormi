@@ -7,8 +7,9 @@ import {
   User as UserIcon, Settings as SettingsIcon, History as HistoryIcon, Briefcase,
   FileText, LifeBuoy, ShieldCheck, Check, Moon, Sun,
 } from "lucide-react";
-import { api, Category, User } from "@/lib/api";
+import { api, APIError, Category, User } from "@/lib/api";
 import { Shell } from "@/components/Shell";
+import { ModerationModal, isModerationError } from "@/components/ModerationModal";
 import { AvatarUploader } from "@/components/ui/ImageUpload";
 import { useScript } from "@/lib/i18n";
 import { T, useT } from "@/components/T";
@@ -54,8 +55,12 @@ export default function Settings() {
     });
   }, []);
 
+  // Moderatsiya rad etgan profil — modal oynada sabab va ogohlantirish bilan.
+  const [modErr, setModErr] = useState<APIError | null>(null);
+
   async function save() {
     setSaving(true);
+    setModErr(null);
     try {
       const updated = await api.patch<User>("/api/me", {
         firstName: first, lastName: last, bio, region, district, skills,
@@ -64,6 +69,9 @@ export default function Settings() {
       qc.setQueryData(["me"], updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) {
+      if (isModerationError(e)) setModErr(e);
+      else throw e;
     } finally {
       setSaving(false);
     }
@@ -208,6 +216,7 @@ export default function Settings() {
           <DeleteAccountCard />
         </div>
       </div>
+          <ModerationModal error={modErr} onClose={() => setModErr(null)} />
     </Shell>
   );
 }

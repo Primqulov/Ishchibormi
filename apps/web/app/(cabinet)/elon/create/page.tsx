@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { api, Category, Elon, Gender, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
+import { api, APIError, Category, Elon, Gender, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
 import { Shell } from "@/components/Shell";
+import { ModerationModal, isModerationError } from "@/components/ModerationModal";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { MultiImageUploader } from "@/components/ui/ImageUpload";
 import { MapPicker, LatLng } from "@/components/ui/MapPicker";
@@ -73,6 +74,9 @@ export default function CreateElon() {
   });
   const [state, setState] = useState<"idle" | "ok" | "err">("idle");
   const [errMsg, setErrMsg] = useState("");
+  // Moderatsiya rad etgan e'lon — modal oynada sabab va ogohlantirish bilan
+  // ko'rsatiladi (oddiy xato matni bunday holat uchun yetarli emas).
+  const [modErr, setModErr] = useState<APIError | null>(null);
 
   const { data: cats } = useQuery<Category[]>({
     queryKey: ["categories"],
@@ -108,7 +112,10 @@ export default function CreateElon() {
       return api.post<Elon>("/api/elons", body);
     },
     onSuccess: () => setState("ok"),
-    onError: (e: any) => { setErrMsg(e?.message || ""); setState("err"); },
+    onError: (e: any) => {
+      if (isModerationError(e)) { setModErr(e); setState("idle"); return; }
+      setErrMsg(e?.message || ""); setState("err");
+    },
   });
 
   const live = useMemo(() => {
@@ -321,6 +328,7 @@ export default function CreateElon() {
           </div>
         </form>
       </div>
+      <ModerationModal error={modErr} onClose={() => setModErr(null)} />
     </Shell>
   );
 }

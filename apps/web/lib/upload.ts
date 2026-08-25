@@ -58,10 +58,15 @@ export function uploadFile(file: File, kind: UploadKind, opts: UploadOpts = {}):
             )
           );
         } else {
+          // Error o'rniga UploadError: moderatsiya rad etganda `code` va
+          // `details` kerak bo'ladi (modal oyna sabab va ogohlantirishni
+          // alohida ko'rsatadi). Oddiy Error ularni yo'qotardi.
           reject(
-            new Error(
+            new UploadError(
+              data?.error?.code || "upload_failed",
               data?.error?.message ||
-                "Faylni yuklab bo'lmadi. Ma'lumotlarni tekshirib, qayta urinib ko'ring."
+                "Faylni yuklab bo'lmadi. Ma'lumotlarni tekshirib, qayta urinib ko'ring.",
+              data?.error?.details
             )
           );
         }
@@ -84,4 +89,21 @@ export async function deleteUploaded(urlOrKey: { url?: string; key?: string }): 
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+/**
+ * Fayl yuklashda backend qaytargan xato — `message` dan tashqari `code` va
+ * `details` ni ham saqlaydi. Error'dan meros olgani uchun mavjud
+ * `e?.message` chaqiruvlari o'zgarishsiz ishlayveradi.
+ */
+export class UploadError extends Error {
+  code: string;
+  details?: Record<string, any>;
+
+  constructor(code: string, message: string, details?: Record<string, any>) {
+    super(message);
+    this.name = "UploadError";
+    this.code = code;
+    this.details = details;
+  }
 }

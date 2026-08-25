@@ -84,6 +84,12 @@ export function getAdminRole(): string | null {
 export interface APIError {
   code: string;
   message: string;
+  /**
+   * Backend'ning strukturali qo'shimchasi (error.details). Moderatsiya rad
+   * etganda modal oyna shundan sabab va ogohlantirishni alohida oladi:
+   * { reason, warning?, strikes?, strikeLimit?, bannedUntil? }
+   */
+  details?: Record<string, any>;
 }
 
 function connectionError(): APIError {
@@ -236,6 +242,13 @@ export interface Category {
   icon?: string;
   isSystemDefault?: boolean;
   isActive: boolean;
+  /** Hozir feedda ko'rinib turgan (faol, vaqti o'tmagan) e'lonlar soni. */
+  activeCount: number;
+  /**
+   * Tarixan joylangan e'lonlar soni. Ommaviy `/api/categories` javobida u
+   * `activeCount` bilan bir xil qiymatga ega; tarixiy jami faqat admin
+   * endpointidan keladi. Yangi kodda `activeCount` ishlatilsin.
+   */
   usageCount: number;
   createdAt?: string;
 }

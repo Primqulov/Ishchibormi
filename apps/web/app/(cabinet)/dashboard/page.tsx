@@ -164,7 +164,7 @@ export default function Dashboard() {
                   </span>
                   <div>
                     <div className="text-[13.5px] font-bold heading leading-tight"><T>{c.name}</T></div>
-                    <div className="text-[11.5px] subtle mt-0.5">{c.usageCount} <T>ta</T></div>
+                    <div className="text-[11.5px] subtle mt-0.5">{c.activeCount} <T>ta</T></div>
                   </div>
                 </Link>
               ))}

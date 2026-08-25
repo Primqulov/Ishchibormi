@@ -23,6 +23,7 @@ import (
 	"github.com/ishchibormi/backend/internal/category"
 	"github.com/ishchibormi/backend/internal/elon"
 	"github.com/ishchibormi/backend/internal/feedback"
+	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/notification"
 	"github.com/ishchibormi/backend/internal/push"
 	"github.com/ishchibormi/backend/internal/report"
@@ -30,6 +31,7 @@ import (
 	"github.com/ishchibormi/backend/internal/user"
 	"github.com/ishchibormi/backend/pkg/db"
 	"github.com/ishchibormi/backend/pkg/envfile"
+	"github.com/ishchibormi/backend/pkg/gemini"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/logger"
 	"github.com/ishchibormi/backend/pkg/storage"
@@ -85,6 +87,38 @@ func main() {
 		log.Info("fcm push disabled (FCM_CREDENTIALS_FILE not set)")
 	}
 
+	// Kontent moderatsiyasi (Google Gemini) — ixtiyoriy. GEMINI_API_KEY
+	// berilmasa jimgina o'chiq: /api/moderation/* 503 qaytaradi va e'lon
+	// yaratish oqimi umuman tegilmaydi. Kalit hech qachon logga chiqmaydi —
+	// faqat yoqilgan/o'chiq holati va model nomi.
+	modSvc := moderation.New(gemini.New(
+		cfg.GeminiAPIKey, cfg.GeminiBaseURL, cfg.GeminiModel, cfg.GeminiTimeout))
+	modH := moderation.NewHandler(modSvc, cfg.ModerationMaxImageBytes)
+	// Guard — e'lon, profil va taklif/shikoyat oqimlarida BIR XIL siyosat
+	// (bayroq + fail-open/closed). Uni har bir domenda qayta yozish
+	// xavfsizlik qoidasini uch joyda ushlab turishni anglatardi.
+	// Buzilishlar hisobi TELEFON raqami bo'yicha yuritiladi — hisobni
+	// o'chirib qayta ro'yxatdan o'tish jazoni nolga qaytarmasligi uchun.
+	modStrikes := moderation.NewStrikeStore(mdb, cfg.ModerationStrikeLimit, cfg.ModerationBanDuration)
+	modGuard := moderation.NewGuard(modSvc, modStrikes, moderation.GuardOptions{
+		Enforce:    cfg.ModerationEnforce,
+		FailClosed: cfg.ModerationFailClosed,
+	})
+	if modSvc.Enabled() {
+		log.Info("content moderation ready", "model", modSvc.Model(),
+			"enforce", cfg.ModerationEnforce, "failClosed", cfg.ModerationFailClosed,
+			"strikeLimit", modStrikes.Limit(), "banDays", int(modStrikes.BanDuration().Hours()/24))
+		// Productionda fail-open — ataylab qo'yilgan vaqtinchalik holat.
+		// Jimgina qolsa, moderatsiya "ishlayapti" deb o'ylanadi, aslida esa
+		// tashqi xizmat uzilgan paytda hamma e'lon tekshirilmasdan o'tadi.
+		if cfg.ModerationFailOpenInProd() {
+			log.Warn("moderation runs FAIL-OPEN in production — unchecked listings will be published whenever the moderation service is unavailable",
+				"fix", "unset MODERATION_FAIL_CLOSED or set it to true")
+		}
+	} else {
+		log.Info("content moderation disabled (GEMINI_API_KEY not set)")
+	}
+
 	// S3 storage — optional. If creds aren't set, upload endpoints return 503.
 	var s3svc *storage.Service
 	if cfg.AWSS3Bucket != "" {
@@ -115,10 +149,20 @@ func main() {
 	accountH := account.NewHandler(cfg, mdb, s3svc)
 	catH := category.NewHandler(mdb)
 	elonH := elon.NewHandler(mdb, s3svc, notif)
+	// Moderatsiyani e'lon yaratish oqimiga ulaymiz. MODERATION_ELON_ENFORCE
+	// o'chiq (standart) bo'lsa bu chaqiruv POST /api/elons xatti-harakatini
+	// o'zgartirmaydi — moderatsiya faqat /api/moderation/* orqali ishlaydi.
+	elonH.AttachModerator(modGuard, cfg.ModerationMaxImageBytes)
 	appH := application.NewHandler(mdb, notif)
 	repH := report.NewHandler(mdb)
 	fbH := feedback.NewHandler(mdb)
+	// Profil (bio, ism, ko'nikmalar) va taklif/shikoyat matni ham shu
+	// guard orqali tekshiriladi.
+	userH.AttachModerator(modGuard)
+	fbH.AttachModerator(modGuard)
 	uploadH := upload.NewHandler(s3svc)
+	// Profil rasmi yuklash paytida tekshiriladi.
+	uploadH.AttachModerator(modGuard)
 	adminH := admin.NewHandler(cfg, mdb, notif, s3svc)
 	// Background scheduler: delivers due scheduled broadcasts (checks every
 	// minute). Stops when ctx is cancelled on shutdown.
@@ -169,8 +213,15 @@ func main() {
 	// Refresh legitimately fires on every 401 from the mobile interceptor, so
 	// the budget is generous — this only caps offline brute-force of refresh
 	// tokens and accidental client retry-loops.
-	refreshLimiter := httpx.NewLimiter(30, 0.1)   // 30 burst, 1 / 10s
-	uploadLimiter := httpx.NewLimiter(12, 0.1)    // 12 burst, then 1 / 10s per authenticated user
+	refreshLimiter := httpx.NewLimiter(30, 0.1) // 30 burst, 1 / 10s
+	uploadLimiter := httpx.NewLimiter(12, 0.1)  // 12 burst, then 1 / 10s per authenticated user
+	// Har bir moderatsiya so'rovi pullik tashqi API chaqiruvi — budjet
+	// e'lon joylash tezligiga moslangan, undan sal kengroq (klient e'lonni
+	// yuborishdan oldin bir necha marta tekshirishi mumkin).
+	moderationLimiter := httpx.NewLimiter(20, 0.2) // 20 burst, then 1 / 5s per authenticated user
+	// Profilni saqlash odatda kamdan-kam bo'ladi (onboarding + vaqti-vaqti
+	// bilan tahrir), lekin endi u ham tashqi tekshiruv chaqiradi.
+	profileLimiter := httpx.NewLimiter(15, 0.1)   // 15 burst, then 1 / 10s
 	publicReadLimiter := httpx.NewLimiter(120, 5) // generous public-query budget per client IP
 	// Authenticated writes that leave permanent, publicly visible or
 	// admin-facing residue. Keyed by user id, not IP: the point is to bound what
@@ -195,6 +246,8 @@ func main() {
 	deleteLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	refreshLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	uploadLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
+	moderationLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
+	profileLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	publicReadLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 	// These three refill slowly, so their buckets need a correspondingly longer
 	// idle threshold — evicting one before it has refilled would hand the owner
@@ -259,7 +312,12 @@ func main() {
 			r.Use(auth.RequireActiveUser(authH.Users()))
 
 			r.Get("/me", userH.Me)
-			r.Patch("/me", userH.UpdateMe)
+			// Profil saqlash endi kontent tekshiruvidan o'tadi, ya'ni pullik
+			// tashqi chaqiruv qiladi — limitsiz qoldirish abuz vektori
+			// bo'lardi. Kalit foydalanuvchi id'si: bir hisob nima
+			// ishlab chiqarishini cheklaymiz.
+			r.With(profileLimiter.MiddlewareKey("profile", httpx.UserID)).
+				Patch("/me", userH.UpdateMe)
 
 			// Mobil qurilmaning FCM push tokenini ro'yxatga olish (login'dan
 			// keyin / token yangilanganda) va o'chirish (logout'da).
@@ -322,6 +380,17 @@ func main() {
 			r.With(auth.DenyReviewAccount,
 				uploadLimiter.MiddlewareKey("upload", httpx.UserID)).Post("/uploads", uploadH.Upload)
 			r.With(auth.DenyReviewAccount).Delete("/uploads", uploadH.Delete)
+
+			// Kontent moderatsiyasi (Google Gemini).
+			// Autentifikatsiya ostida ATAYLAB: har bir chaqiruv pullik tashqi
+			// so'rov, ochiq endpoint pul sarflaydigan abuz vektori bo'lardi.
+			// Klient e'lonni yuborishdan OLDIN shu yerga murojaat qiladi.
+			r.Group(func(r chi.Router) {
+				r.Use(moderationLimiter.MiddlewareKey("moderation", httpx.UserID))
+				r.Post("/moderation/text", modH.Text)
+				r.Post("/moderation/image", modH.Image)
+				r.Post("/moderation/check", modH.Check)
+			})
 		})
 
 		// Admin

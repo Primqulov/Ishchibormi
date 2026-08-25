@@ -1,12 +1,14 @@
 package feedback
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/models"
+	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -19,6 +21,33 @@ type Handler struct {
 	Users         *mongo.Collection
 	Admins        *mongo.Collection
 	Notifications *mongo.Collection
+
+	// Ixtiyoriy kontent tekshiruvi (AttachModerator orqali).
+	guard *moderation.Guard
+}
+
+// AttachModerator ixtiyoriy kontent tekshiruvini ulaydi. Guard o'chiq bo'lsa
+// taklif/shikoyat yuborish oqimi bir zarracha o'zgarmaydi.
+func (h *Handler) AttachModerator(g *moderation.Guard) { h.guard = g }
+
+// feedbackReasonPrefix — rad etish sababining boshlanishi.
+const feedbackReasonPrefix = "Xabar yuborilmadi"
+
+// moderateFeedback — mavzu va xabar matnini tekshiradi.
+//
+// Bu yerda tekshiruv ayniqsa muhim: xabar HAR BIR faol adminga alohida
+// bildirishnoma hujjati bo'lib tarqaladi (pastdagi siklga qarang), ya'ni
+// bitta so'rov ko'p joyga ko'chadi.
+func (h *Handler) moderateFeedback(ctx context.Context, uid primitive.ObjectID, subject, message string) error {
+	if !h.guard.On() {
+		return nil
+	}
+	// uid ataylab primitive.NilObjectID emas: xabar rad etilsa ham u
+	// bloklash hisobiga qo'shilmaydi — foydalanuvchi so'ragan uch manba
+	// e'lon, profil matni va profil rasmi. Shikoyat yozganlik uchun
+	// bloklash noto'g'ri bo'lardi.
+	_, err := h.guard.CheckText(ctx, primitive.NilObjectID, "feedback", feedbackReasonPrefix, subject, message)
+	return err
 }
 
 func NewHandler(db *mongo.Database) *Handler {
@@ -56,6 +85,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	ftype := req.Type
 	if ftype != "suggestion" && ftype != "complaint" {
 		ftype = "suggestion"
+	}
+	// Kontent moderatsiyasi — uzunlik tekshiruvlaridan KEYIN, bazaga
+	// yozishdan va adminlarga tarqatishdan OLDIN.
+	if err := h.moderateFeedback(r.Context(), uid, req.Subject, msg); err != nil {
+		httpx.Err(w, err)
+		return
 	}
 
 	var u models.User

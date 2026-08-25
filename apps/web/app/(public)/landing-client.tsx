@@ -316,8 +316,8 @@ export default function Landing() {
                     <CategoryIcon icon={c.icon} name={c.name} className="h-5 w-5" />
                   </span>
                   <div className="text-[15px] font-bold heading mt-1"><T>{c.name}</T></div>
-                  {typeof c.usageCount === "number" && (
-                    <div className="text-[12px] subtle">{c.usageCount} <T>ta e'lon</T></div>
+                  {typeof c.activeCount === "number" && (
+                    <div className="text-[12px] subtle">{c.activeCount} <T>ta e'lon</T></div>
                   )}
                 </Link>
               ))}

@@ -2,6 +2,8 @@
 import { useRef, useState } from "react";
 import { Camera, Loader2, Trash2 } from "lucide-react";
 import { uploadFile, deleteUploaded, UploadKind } from "@/lib/upload";
+import { APIError } from "@/lib/api";
+import { ModerationModal, isModerationError } from "@/components/ModerationModal";
 import { Avatar } from "./Avatar";
 
 interface AvatarUploaderProps {
@@ -21,6 +23,9 @@ export function AvatarUploader({ value, name, onChange, kind = "avatar", scope }
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(0);
   const [err, setErr] = useState("");
+  // Moderatsiya rad etgan rasm — modal oynada sabab va ogohlantirish bilan
+  // ko'rsatiladi (kichik qizil matn bunday jiddiy holat uchun yetarli emas).
+  const [modErr, setModErr] = useState<APIError | null>(null);
 
   async function handle(f: File) {
     if (!f.type.startsWith("image/")) { setErr("Faqat rasm qabul qilinadi"); return; }
@@ -32,7 +37,8 @@ export function AvatarUploader({ value, name, onChange, kind = "avatar", scope }
       onChange(res.url);
       if (old) deleteUploaded({ url: old }).catch(() => {});
     } catch (e: any) {
-      setErr(e?.message || "Xatolik");
+      if (isModerationError(e)) setModErr(e);
+      else setErr(e?.message || "Xatolik");
     } finally {
       setBusy(false);
     }
@@ -79,6 +85,7 @@ export function AvatarUploader({ value, name, onChange, kind = "avatar", scope }
         )}
       </div>
       {err && <p className="text-xs text-danger mt-1">{err}</p>}
+      <ModerationModal error={modErr} onClose={() => setModErr(null)} />
     </div>
   );
 }
@@ -96,6 +103,7 @@ export function MultiImageUploader({ value, onChange, max = 6, kind = "elon", sc
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [modErr, setModErr] = useState<APIError | null>(null);
 
   async function handle(files: FileList | null) {
     if (!files) return;
@@ -113,7 +121,8 @@ export function MultiImageUploader({ value, onChange, max = 6, kind = "elon", sc
         next.push(r.url);
         onChange([...next]);
       } catch (e: any) {
-        setErr(e?.message || "Rasm yuklashda xatolik yuz berdi.");
+        if (isModerationError(e)) setModErr(e);
+        else setErr(e?.message || "Rasm yuklashda xatolik yuz berdi.");
       }
     }
     setBusy(false);
@@ -161,6 +170,7 @@ export function MultiImageUploader({ value, onChange, max = 6, kind = "elon", sc
         onChange={(e) => { handle(e.target.files); e.target.value = ""; }}
       />
       {err && <p className="text-xs text-danger mt-1">{err}</p>}
+      <ModerationModal error={modErr} onClose={() => setModErr(null)} />
     </div>
   );
 }

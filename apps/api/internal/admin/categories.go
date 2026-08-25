@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ishchibormi/backend/internal/category"
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/internal/upload"
 	"github.com/ishchibormi/backend/pkg/httpx"
@@ -19,6 +20,11 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// ListCategories — barcha kategoriyalar (o'chirilganlari ham). Ommaviy
+// ro'yxatdan farqi: bu yerda `usageCount` tarixiy jami bo'lib qoladi, uning
+// yonida `activeCount` — hozir feedda ko'rinib turgan e'lonlar soni. Admin
+// ikkalasini ham ko'rishi kerak: jami — kategoriya umuman qanchalik
+// ishlatilganini, faol — bugun undan foyda bor-yo'qligini ko'rsatadi.
 func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
 	cur, err := h.Cats.Find(r.Context(), bson.M{}, options.Find().SetSort(bson.D{{Key: "name", Value: 1}}))
 	if err != nil {
@@ -32,6 +38,14 @@ func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
 		if err := cur.Decode(&c); err == nil {
 			out = append(out, c)
 		}
+	}
+	counts, err := category.ActiveCounts(r.Context(), h.Elons)
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	for i := range out {
+		out[i].ActiveCount = counts[out[i].ID]
 	}
 	httpx.JSON(w, 200, out)
 }

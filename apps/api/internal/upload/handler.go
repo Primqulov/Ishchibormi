@@ -14,6 +14,7 @@ import (
 
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/storage"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // Rasm siqishda uzun tomon uchun maksimal o'lcham (px), fayl turi bo'yicha.
@@ -25,9 +26,59 @@ var maxDimByKind = map[string]int{
 
 type Handler struct {
 	Storage *storage.Service
+
+	// Ixtiyoriy kontent tekshiruvi (AttachModerator orqali). Profil rasmi
+	// ham, e'lon rasmi ham SAQLASHDAN OLDIN tekshiriladi.
+	guard Moderator
+}
+
+// Moderator — profil rasmini tekshiruvchi.
+//
+// Interfeys ATAYLAB shu yerda e'lon qilingan: internal/moderation paketi
+// bu paketdagi ValidateImage'ni ishlatadi, ya'ni to'g'ridan-to'g'ri import
+// halqa hosil qilardi. internal/moderation.Guard shu interfeysni
+// qanoatlantiradi.
+type Moderator interface {
+	// On — tekshiruv ishlayaptimi.
+	On() bool
+	// CheckImage — rad etilsa tayyor HTTP xatosini qaytaradi (buzilish
+	// hisobga qo'shilgan holda), aks holda nil.
+	// CheckImageErr — rad etilsa tayyor HTTP xatosini qaytaradi (buzilish
+	// hisobga qo'shilgan holda), aks holda nil. Kvota tugagan bo'lsa ham
+	// nil qaytadi: kontent tekshirilmasdan o'tadi va foydalanuvchi buni
+	// sezmaydi.
+	CheckImageErr(ctx context.Context, userID primitive.ObjectID, label, code, prefix, mime string, data []byte) error
 }
 
 func NewHandler(s *storage.Service) *Handler { return &Handler{Storage: s} }
+
+// AttachModerator ixtiyoriy kontent tekshiruvini ulaydi. Guard o'chiq bo'lsa
+// fayl yuklash oqimi bir zarracha o'zgarmaydi.
+func (h *Handler) AttachModerator(m Moderator) { h.guard = m }
+
+// imageReasonPrefix — rasm rad etilganda ko'rsatiladigan sabab.
+const imageReasonPrefix = "Rasm qabul qilinmadi"
+
+// moderateUpload — rasmni SAQLASHDAN OLDIN tekshiradi.
+//
+// Nega aynan shu yerda: rasm bir marta storage'ga tushsa, u ommaviy URL'da
+// ochiq bo'ladi — profilga yoki e'longa biriktirilmagan bo'lsa ham. Ya'ni
+// keyinroq (profilni saqlashda yoki e'lon joylashda) tekshirish kech
+// bo'lardi: nomaqbul rasm allaqachon internetda turgan bo'ladi.
+//
+// label buzilish hisobiga qaysi tur sifatida yozilishini belgilaydi:
+// "avatar" -> profil rasmi, "elon-image" -> e'lon rasmi. Ikkalasi ham
+// BITTA umumiy hisobga qo'shiladi.
+func (h *Handler) moderateUpload(ctx context.Context, uid primitive.ObjectID, kind, mime string, data []byte) error {
+	if h.guard == nil || !h.guard.On() {
+		return nil
+	}
+	label := "elon-image"
+	if kind == "avatar" {
+		label = "avatar"
+	}
+	return h.guard.CheckImageErr(ctx, uid, label, "image_rejected", imageReasonPrefix, mime, data)
+}
 
 // allowed kinds & their constraints
 var allowed = map[string]struct {
@@ -107,6 +158,14 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ValidateImage(raw, ct) {
 		httpx.Err(w, httpx.NewError(http.StatusUnprocessableEntity, "invalid_image", "rasm buzilgan yoki o'lchami juda katta"))
+		return
+	}
+	// Kontent tekshiruvi — siqishdan OLDIN: model asl rasmni ko'rishi kerak,
+	// siqilgan variantni emas. Profil rasmi ham, e'lon rasmi ham shu yerdan
+	// o'tadi, ya'ni rad etilgan rasm storage'ga UMUMAN yozilmaydi.
+	ownerID, _ := primitive.ObjectIDFromHex(uid)
+	if err := h.moderateUpload(r.Context(), ownerID, kind, ct, raw); err != nil {
+		httpx.Err(w, err)
 		return
 	}
 	body := compressImage(raw, ct, maxDimByKind[kind])

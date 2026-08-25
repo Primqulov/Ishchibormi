@@ -89,16 +89,20 @@ export default function AdminCategories() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] text-sm table-fixed">
             <colgroup>
-              <col style={{ width: "26%" }} />
-              <col style={{ width: "16%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "18%" }} />
+              <col style={{ width: "24%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "13%" }} />
+              <col style={{ width: "17%" }} />
             </colgroup>
             <thead>
               <tr className="text-left text-[color:var(--text-muted)] border-b" style={{ borderColor: "var(--border)" }}>
-                <th className="py-3 px-4">Nomi</th><th className="px-4">Slug</th><th className="px-4">Foydalanish</th><th className="px-4">Tur</th><th className="px-4">Holat</th><th className="px-4 text-right">Amallar</th>
+                <th className="py-3 px-4">Nomi</th><th className="px-4">Slug</th>
+                <th className="px-4" title="Hozir feedda ko'rinib turgan e'lonlar">Faol e'lon</th>
+                <th className="px-4" title="Kategoriyada tarixan joylangan barcha e'lonlar">Jami</th>
+                <th className="px-4">Tur</th><th className="px-4">Holat</th><th className="px-4 text-right">Amallar</th>
               </tr>
             </thead>
             <tbody>
@@ -111,7 +115,8 @@ export default function AdminCategories() {
                     </div>
                   </td>
                   <td className="px-4 truncate">{c.slug}</td>
-                  <td className="px-4">{c.usageCount}</td>
+                  <td className="px-4">{c.activeCount}</td>
+                  <td className="px-4 text-[color:var(--text-muted)]">{c.usageCount}</td>
                   <td className="px-4">{c.isSystemDefault ? "tizim" : "admin"}</td>
                   <td className="px-4">
                     {isSuper ? (
@@ -136,7 +141,7 @@ export default function AdminCategories() {
                 </tr>
               ))}
               {cats.length === 0 && (
-                <tr><td colSpan={6} className="py-8 text-center text-[color:var(--text-muted)]">Turkumlar yo'q</td></tr>
+                <tr><td colSpan={7} className="py-8 text-center text-[color:var(--text-muted)]">Turkumlar yo'q</td></tr>
               )}
             </tbody>
           </table>

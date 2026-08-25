@@ -58,6 +58,23 @@ func (s *Service) writeLocal(key string, buf []byte) (*UploadResult, error) {
 	return &UploadResult{Key: key, URL: s.publicBaseURL + "/" + key}, nil
 }
 
+// readLocal — Download'ning lokal disk varianti. Hajm avval Stat bilan
+// tekshiriladi: katta faylni o'qib bo'lib keyin rad etish xotira sarfi.
+func (s *Service) readLocal(key string, maxBytes int64) ([]byte, error) {
+	full, err := s.resolveLocal(key)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := os.Stat(full)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > maxBytes {
+		return nil, fmt.Errorf("storage: file %q exceeds %d bytes", key, maxBytes)
+	}
+	return os.ReadFile(full)
+}
+
 func (s *Service) deleteLocal(key string) error {
 	full, err := s.resolveLocal(key)
 	if err != nil {

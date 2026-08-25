@@ -32,12 +32,23 @@ func elonsFilter(q url.Values) bson.M {
 			filter["categoryId"] = oid
 		}
 	}
+	// moderationPending=1 — AI kvotasi tugagan (yoki xizmat uzilgan) paytda
+	// TEKSHIRILMASDAN chop etilgan e'lonlar. Ularni qo'lda ko'rib chiqish
+	// uchun shu filtr kerak: aks holda ular oddiy e'lonlar orasida
+	// yo'qolib ketardi.
+	switch q.Get("moderationPending") {
+	case "1", "true":
+		filter["moderationPending"] = true
+	case "0", "false":
+		filter["moderationPending"] = bson.M{"$ne": true}
+	}
 	return filter
 }
 
 // ListElons: paginated + filterable. Query params:
 //
-//	page, limit, q (title), status, categoryId, region
+//	page, limit, q (title), status, categoryId, region,
+//	moderationPending=1|0 (AI tekshiruvidan o'tmagan e'lonlar)
 func (h *Handler) ListElons(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	page, limit, skip := pageParams(r)

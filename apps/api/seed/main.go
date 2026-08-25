@@ -66,21 +66,32 @@ type elonSeed struct {
 	PricingType        string // per_worker|total|negotiable
 	PriceAmount        int64
 	Status             string // draft|recruiting|filled|in_progress|completed|cancelled
+	// StartsInDays — startDate bugundan necha kun nariga qo'yilishi.
+	// Manfiy = vaqti o'tgan e'lon.
+	//
+	// Ilgari hammasi bugunga (09:00) qo'yilardi — ya'ni soat 15:00 dan keyin
+	// (09:00 + 6 soatlik feed grace) seed qilingan BARCHA e'lon vaqti o'tgan
+	// bo'lib qolar, feed bo'shab, kategoriya sanoqlari nolga tushardi. Endi
+	// ma'lumot ataylab aralash: bir qismi faol, bir qismi o'tgan — feed
+	// filtrini va kategoriya sanoqlarini lokal tekshirish uchun.
+	StartsInDays int
 }
 
+// Faol (recruiting + kelasi kun) e'lonlar kategoriya bo'yicha:
+// Yuk tashish — 2, Tozalash — 1, Maxsus — 1.
 var elonSeeds = []elonSeed{
-	{"Ofis tozalash", "Ofisdagi har kungi umumiy tozalash.", "Tozalash", 2, "per_worker", 90000, "recruiting"},
-	{"Hovli tozalash", "Katta hovlini yig'ishtirish va xashagini chiqarish.", "Tozalash", 2, "per_worker", 100000, "recruiting"},
-	{"Deraza yuvish", "Ofisdagi 20 ta derazani tozalash.", "Tozalash", 2, "per_worker", 80000, "completed"},
-	{"Ta'mirdan keyin tozalash", "Ta'mirdan keyin kvartirani umumiy tozalash.", "Tozalash", 3, "per_worker", 120000, "filled"},
-	{"Mebel tashishga ishchilar kerak", "3 xonali kvartiradan yangi uyga mebel tashish.", "Yuk tashish", 3, "per_worker", 150000, "recruiting"},
-	{"Uy ko'chirish", "1 xonali uyni Sergeli tumaniga ko'chirish.", "Yuk tashish", 2, "negotiable", 0, "recruiting"},
-	{"Yuk mashinada ko'chirish", "Buyumlarni boshqa shaharga olib borish.", "Yuk tashish", 4, "total", 1200000, "completed"},
-	{"Kuryer kerak (1 kunlik)", "Shahar bo'ylab paket yetkazib berish.", "Yuk tashish", 1, "per_worker", 120000, "in_progress"},
-	{"Santexnika xizmati", "Hammomdagi kran va lavabo ta'mirlash.", "Maxsus", 1, "total", 250000, "recruiting"},
-	{"Elektrik xizmati", "Uydagi rozetka va simlarni ta'mirlash.", "Maxsus", 1, "total", 180000, "recruiting"},
-	{"Mebel yig'ish", "IKEA tipidagi mebellarni yig'ish.", "Maxsus", 2, "per_worker", 120000, "completed"},
-	{"Devorlarni bo'yash", "Yangi yotoq xonasi devorlarini bo'yash.", "Maxsus", 2, "per_worker", 200000, "filled"},
+	{"Ofis tozalash", "Ofisdagi har kungi umumiy tozalash.", "Tozalash", 2, "per_worker", 90000, "recruiting", 1},
+	{"Hovli tozalash", "Katta hovlini yig'ishtirish va xashagini chiqarish.", "Tozalash", 2, "per_worker", 100000, "recruiting", -1},
+	{"Deraza yuvish", "Ofisdagi 20 ta derazani tozalash.", "Tozalash", 2, "per_worker", 80000, "completed", -3},
+	{"Ta'mirdan keyin tozalash", "Ta'mirdan keyin kvartirani umumiy tozalash.", "Tozalash", 3, "per_worker", 120000, "filled", 1},
+	{"Mebel tashishga ishchilar kerak", "3 xonali kvartiradan yangi uyga mebel tashish.", "Yuk tashish", 3, "per_worker", 150000, "recruiting", 1},
+	{"Uy ko'chirish", "1 xonali uyni Sergeli tumaniga ko'chirish.", "Yuk tashish", 2, "negotiable", 0, "recruiting", 2},
+	{"Yuk mashinada ko'chirish", "Buyumlarni boshqa shaharga olib borish.", "Yuk tashish", 4, "total", 1200000, "completed", -3},
+	{"Kuryer kerak (1 kunlik)", "Shahar bo'ylab paket yetkazib berish.", "Yuk tashish", 1, "per_worker", 120000, "in_progress", 0},
+	{"Santexnika xizmati", "Hammomdagi kran va lavabo ta'mirlash.", "Maxsus", 1, "total", 250000, "recruiting", 1},
+	{"Elektrik xizmati", "Uydagi rozetka va simlarni ta'mirlash.", "Maxsus", 1, "total", 180000, "recruiting", -1},
+	{"Mebel yig'ish", "IKEA tipidagi mebellarni yig'ish.", "Maxsus", 2, "per_worker", 120000, "completed", -3},
+	{"Devorlarni bo'yash", "Yangi yotoq xonasi devorlarini bo'yash.", "Maxsus", 2, "per_worker", 200000, "filled", 2},
 }
 
 func main() {
@@ -252,7 +263,7 @@ func main() {
 			PricingType:     pType,
 			PriceAmount:     total,
 			PerWorkerAmount: per,
-			StartDate:       now.Format("2006-01-02"),
+			StartDate:       now.AddDate(0, 0, e.StartsInDays).Format("2006-01-02"),
 			WorkTimeFrom:    "09:00",
 			WorkTimeTo:      "18:00",
 			ContactPhone:    owner.Phone,

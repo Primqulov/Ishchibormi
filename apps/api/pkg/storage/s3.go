@@ -171,6 +171,48 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 	return err
 }
 
+// DefaultDownloadCap — Download uchun standart hajm chegarasi. Yuklashda
+// e'lon rasmi 8 MiB bilan cheklangan, shu sabab bundan kattasi bo'lmasligi
+// kerak; chegara buzilgan/qo'lda qo'yilgan obyekt xotirani tugatmasligi uchun.
+const DefaultDownloadCap = 12 << 20
+
+// Download obyektning baytlarini kalit bo'yicha qaytaradi. maxBytes dan
+// katta obyekt xato bilan rad etiladi (qisman o'qilgan bayt qaytmaydi).
+//
+// Bu metod kontent moderatsiyasi uchun kerak: e'lon so'rovi faqat rasm
+// URL'larini olib keladi, moderatsiya esa rasmning haqiqiy baytlarini
+// ko'rishi shart. URL'ni moderatsiya xizmatiga berib qo'yish mumkin emas — lokal
+// muhitda (http://localhost:8080/uploads/...) u tashqaridan ochilmaydi.
+func (s *Service) Download(ctx context.Context, key string, maxBytes int64) ([]byte, error) {
+	if key == "" {
+		return nil, errors.New("storage: empty key")
+	}
+	if maxBytes <= 0 {
+		maxBytes = DefaultDownloadCap
+	}
+	if s.client == nil {
+		return s.readLocal(key, maxBytes)
+	}
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	// maxBytes+1 o'qiymiz: natija shundan uzun bo'lsa obyekt chegaradan
+	// katta ekanini bilamiz (Content-Length'ga ishonmasdan).
+	buf, err := io.ReadAll(io.LimitReader(out.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) > maxBytes {
+		return nil, fmt.Errorf("storage: object %q exceeds %d bytes", key, maxBytes)
+	}
+	return buf, nil
+}
+
 // DeleteByURL removes by a previously stored public URL. Safe to call with
 // URLs that don't belong to this bucket — those are silently ignored.
 func (s *Service) DeleteByURL(ctx context.Context, url string) error {

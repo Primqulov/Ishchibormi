@@ -3,20 +3,22 @@ package category
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/ishchibormi/backend/internal/models"
+	"github.com/ishchibormi/backend/pkg/elonquery"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type Handler struct {
 	Col           *mongo.Collection
+	Elons         *mongo.Collection
 	Notifications *mongo.Collection
 	Admins        *mongo.Collection
 }
@@ -24,15 +26,24 @@ type Handler struct {
 func NewHandler(db *mongo.Database) *Handler {
 	return &Handler{
 		Col:           db.Collection("categories"),
+		Elons:         db.Collection("elons"),
 		Notifications: db.Collection("notifications"),
 		Admins:        db.Collection("admins"),
 	}
 }
 
+// List — faol kategoriyalar, har biri uchun HOZIR feedda ko'rinib turgan
+// e'lonlar soni bilan.
+//
+// Ilgari bu yerda `usageCount` qaytarilardi va ro'yxat ham shu bo'yicha
+// saralanardi. `usageCount` — kategoriyada tarixan joylangan barcha e'lonlar
+// hisoblagichi: e'lon o'chirilsa, yakunlansa yoki vaqti o'tsa ham kamaymaydi,
+// shuning uchun UI'dagi son "kategoriyani ochsam nechta ish ko'raman" degan
+// savolga javob bermasdi. Endi sanoq `elons` ustidan feed filtri bilan
+// hisoblanadi — foydalanuvchi kategoriyaga kirganda ko'radigan e'lonlar soniga
+// aynan teng bo'ladi.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	cur, err := h.Col.Find(r.Context(),
-		bson.M{"isActive": true},
-		options.Find().SetSort(bson.D{{Key: "usageCount", Value: -1}, {Key: "name", Value: 1}}))
+	cur, err := h.Col.Find(r.Context(), bson.M{"isActive": true})
 	if err != nil {
 		httpx.Err(w, err)
 		return
@@ -45,7 +56,56 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			out = append(out, c)
 		}
 	}
+
+	counts, err := ActiveCounts(r.Context(), h.Elons)
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	for i := range out {
+		n := counts[out[i].ID]
+		out[i].ActiveCount = n
+		// Eski klientlar (jumladan chiqarib bo'lingan mobil ilova versiyalari)
+		// hali `usageCount` ni ko'rsatadi — ular ham to'g'ri sonni ko'rsin.
+		// Tarixiy jami faqat admin endpointida qoladi.
+		out[i].UsageCount = n
+	}
+	// Saralash Mongo'da emas, shu yerda: tartib endi hisoblangan maydonga
+	// bog'liq. Ko'p faol e'lonli kategoriya oldinda (dashboard/landing faqat
+	// dastlabki 6-8 tasini ko'rsatadi), teng bo'lsa — nom bo'yicha.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ActiveCount != out[j].ActiveCount {
+			return out[i].ActiveCount > out[j].ActiveCount
+		}
+		return out[i].Name < out[j].Name
+	})
 	httpx.JSON(w, 200, out)
+}
+
+// ActiveCounts — kategoriya ID -> faol e'lonlar soni. Bitta aggregate so'rovi
+// (N+1 emas). Xaritada yo'q kategoriya uchun 0 qaytadi. Ommaviy ro'yxat ham,
+// admin paneli ham shu funksiyadan foydalanadi — sonlar hech qachon farq
+// qilmasligi uchun.
+func ActiveCounts(ctx context.Context, elons *mongo.Collection) (map[primitive.ObjectID]int, error) {
+	cur, err := elons.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{Key: "$match", Value: elonquery.ActiveFilter(time.Now(), false)}},
+		bson.D{{Key: "$group", Value: bson.M{"_id": "$categoryId", "n": bson.M{"$sum": 1}}}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	counts := map[primitive.ObjectID]int{}
+	for cur.Next(ctx) {
+		var row struct {
+			ID primitive.ObjectID `bson:"_id"`
+			N  int                `bson:"n"`
+		}
+		if err := cur.Decode(&row); err == nil {
+			counts[row.ID] = row.N
+		}
+	}
+	return counts, cur.Err()
 }
 
 type createReq struct {

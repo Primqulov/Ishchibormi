@@ -207,6 +207,28 @@ jobs:
             # saqlaydi — yuqoridagi UPLOAD_PUBLIC_BASE shu holat uchun.
             set_env_if_set AWS_ACCESS_KEY_ID     '${{ secrets.AWS_ACCESS_KEY_ID }}'
             set_env_if_set AWS_SECRET_ACCESS_KEY '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+            # Kontent moderatsiyasi (Google Gemini). Kalit bo'sh bo'lsa
+            # serverdagi mavjud qiymat saqlanadi.
+            set_env_if_set GEMINI_API_KEY        '${{ secrets.GEMINI_API_KEY }}'
+
+            # ── Moderatsiyani yoqish ─────────────────────────────────────────
+            # Bayroq ATAYLAB kalit mavjudligidan kelib chiqib qo'yiladi.
+            #
+            # Sabab: config.go productionda MODERATION_ENFORCE=true bo'lsa-yu
+            # GEMINI_API_KEY bo'sh bo'lsa ishga tushishdan BOSH TORTADI
+            # (log.Fatal). Ya'ni bayroqni qo'lda yoqib, kalitni qo'shishni
+            # unutish butun API'ni o'chirib qo'yardi. Bu yerda bunday
+            # kombinatsiyani yaratib bo'lmaydi.
+            #
+            # Kalit yo'q bo'lsa moderatsiya jimgina o'chiq qoladi — API
+            # to'liq ishlayveradi (S3/FCM bilan bir xil naqsh).
+            if grep -qE '^GEMINI_API_KEY=.+' .env; then
+              set_env MODERATION_ENFORCE true
+              echo "  MODERATION_ENFORCE: true (GEMINI_API_KEY mavjud)"
+            else
+              set_env MODERATION_ENFORCE false
+              echo "  MODERATION_ENFORCE: false (GEMINI_API_KEY yo'q -> moderatsiya o'chiq)"
+            fi
 
             # ── Mobil push (FCM) ─────────────────────────────────────────────
             # Service-account fayli serverda ./secrets/ ostida turadi (secrets/

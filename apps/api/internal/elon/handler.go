@@ -2,17 +2,21 @@ package elon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/category"
 	"github.com/ishchibormi/backend/internal/models"
+	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/notification"
 	"github.com/ishchibormi/backend/internal/upload"
+	"github.com/ishchibormi/backend/pkg/elonquery"
 	"github.com/ishchibormi/backend/pkg/geocode"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/storage"
@@ -30,6 +34,11 @@ type Handler struct {
 	Applications *mongo.Collection
 	Storage      *storage.Service
 	Notify       *notification.Service
+
+	// Ixtiyoriy kontent tekshiruvi. AttachModerator chaqirilmasa (yoki
+	// guard o'chiq bo'lsa) e'lon yaratish/tahrirlash oqimi o'zgarmaydi.
+	guard         *moderation.Guard
+	maxImageBytes int64
 
 	// viewBumps — Get'dagi ko'rishlar hisobini oshirish navbati. Ilgari har bir
 	// GET alohida goroutine ochardi (katta trafikda chegarasiz goroutine); endi
@@ -113,6 +122,194 @@ func (req *upsertReq) computePrice() (pType string, total int64, perWorker int64
 	}
 }
 
+// AttachModerator ixtiyoriy kontent tekshiruvini ulaydi
+// (notification.Service.AttachPusher bilan bir xil naqsh: tashqi xizmat
+// konstruktorni o'zgartirmasdan, mavjud bo'lsa qo'shiladi).
+//
+// guard o'chiq bo'lsa hech narsa o'zgarmaydi — moderatsiya faqat
+// /api/moderation/* endpointlari orqali ishlatiladi.
+func (h *Handler) AttachModerator(g *moderation.Guard, maxImageBytes int64) {
+	h.guard = g
+	h.maxImageBytes = maxImageBytes
+}
+
+// Rad etish xabarlari. Yaratish va TAHRIRLASH ataylab farq qiladi:
+// tahrirda e'lon o'z joyida qoladi va faqat o'zgartirish saqlanmaydi —
+// "E'lon qabul qilinmadi" desak, foydalanuvchi e'loni o'chib ketdi deb
+// o'ylaydi.
+const (
+	elonCreateReasonPrefix = "E'lon qabul qilinmadi"
+	elonUpdateReasonPrefix = "O'zgartirish saqlanmadi"
+	// elonUpdateNote — tahrir rad etilganda qo'shiladigan tinchlantiruvchi
+	// jumla: foydalanuvchining birinchi savoli "e'lonim yo'qoldimi?" bo'ladi.
+	elonUpdateNote = "E'lon avvalgi holatida qoldi."
+)
+
+// withNote — rad etish xabariga qo'shimcha jumla qo'shadi.
+//
+// Faqat rad etish xatolariga (matn va rasm) tegadi: 503 (moderatsiya
+// ishlamayapti) kabi xatolarda "e'lon avvalgi holatida qoldi" deyish
+// o'rinsiz bo'lardi — u yerda tekshiruv umuman bo'lmagan.
+func withNote(err error, note string) error {
+	var he *httpx.HTTPError
+	if errors.As(err, &he) && (he.Code == "content_rejected" || he.Code == "image_rejected") {
+		return httpx.NewError(he.Status, he.Code, he.Message+" "+note)
+	}
+	return err
+}
+
+// moderateElon — e'lonni CHOP ETISHDAN OLDIN to'liq tekshiradi: sarlavha +
+// tavsif, so'ng (bo'lsa) har bir rasm.
+//
+// Tartib ataylab shunday: matn bitta arzon chaqiruv, rasm esa har biri
+// alohida. Matn rad etilsa rasmlarga umuman pul sarflanmaydi.
+//
+// Tashqi xizmat yiqilganda standart qaror — o'tkazib yuborish (fail-open):
+// Gemini uzilganda butun e'lon joylash oqimini to'xtatish bitta nomaqbul
+// e'lon o'tib ketishidan og'irroq zarar. FailClosed buni teskarisiga
+// o'giradi. Har ikki holatda ham xato logga yoziladi.
+func (h *Handler) moderateElon(ctx context.Context, uid primitive.ObjectID, req *upsertReq) (bool, error) {
+	if !h.guard.On() {
+		return false, nil
+	}
+	out, err := h.guard.CheckText(ctx, uid, "elon", elonCreateReasonPrefix, req.Title, req.Description)
+	if err != nil {
+		return false, err
+	}
+	skipped := out == moderation.OutcomeSkipped
+	imgSkipped, err := h.moderateImages(ctx, uid, req.Images, elonCreateReasonPrefix)
+	return skipped || imgSkipped, err
+}
+
+// moderateElonUpdate — TAHRIRLASHDA tekshiruv (PATCH /api/elons/{id}).
+//
+// Create'dan farqi: faqat O'ZGARGAN qism tekshiriladi.
+//   - matn — sarlavha yoki tavsif o'zgargan bo'lsagina;
+//   - rasm — faqat YANGI qo'shilganlari (eskilari e'lon joylanganda
+//     allaqachon tekshirilgan).
+//
+// Sabab: narxni yoki ish vaqtini o'zgartirgan tahrir tashqi so'rovga pul
+// sarflamasligi kerak. Ayni paytda foydalanuvchi toza e'lon joylab, keyin uni
+// tahrirlab nomaqbul matn yoki rasm qo'sha olmaydi — aynan shu teshik yopiladi.
+//
+// prev nil bo'lsa (avvalgi hujjat topilmadi) hammasi tekshiriladi — xavfsiz
+// tomonga og'amiz.
+func (h *Handler) moderateElonUpdate(ctx context.Context, uid primitive.ObjectID, req *upsertReq, prev *models.Elon) (bool, error) {
+	if !h.guard.On() {
+		return false, nil
+	}
+	skipped := false
+	if prev == nil || !sameText(req.Title, prev.Title) || !sameText(req.Description, prev.Description) {
+		out, err := h.guard.CheckText(ctx, uid, "elon-update", elonUpdateReasonPrefix, req.Title, req.Description)
+		if err != nil {
+			return false, withNote(err, elonUpdateNote)
+		}
+		skipped = out == moderation.OutcomeSkipped
+	}
+	if req.Images == nil {
+		// Rasm maydoni umuman yuborilmagan — mavjud rasmlar o'zgarmaydi.
+		return skipped, nil
+	}
+	var old []string
+	if prev != nil {
+		old = prev.Images
+	}
+	imgSkipped, err := h.moderateImages(ctx, uid, addedImages(req.Images, old), elonUpdateReasonPrefix)
+	if err != nil {
+		return false, withNote(err, elonUpdateNote)
+	}
+	return skipped || imgSkipped, nil
+}
+
+// sameText — bo'sh joylarni hisobga olmasdan taqqoslaydi.
+func sameText(a, b string) bool { return strings.TrimSpace(a) == strings.TrimSpace(b) }
+
+// addedImages — next da bor, prev da yo'q rasmlar (kirish tartibi saqlanadi).
+func addedImages(next, prev []string) []string {
+	if len(prev) == 0 {
+		return next
+	}
+	had := make(map[string]bool, len(prev))
+	for _, u := range prev {
+		had[u] = true
+	}
+	out := make([]string, 0, len(next))
+	for _, u := range next {
+		if !had[u] {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// moderateImages — e'lon rasmlarini tekshiradi.
+//
+// Rasmlar so'rovda URL bo'lib keladi (klient ularni avval /api/uploads ga
+// yuklagan), shuning uchun baytlar storage'dan qaytarib o'qiladi — URL'ni
+// Gemini'ga URL sifatida uzatib bo'lmaydi — u faqat inline baytlarni oladi.
+//
+// Chaqiruvlar parallel: e'londa 6 tagacha rasm bo'lishi mumkin, ketma-ket
+// tekshirish foydalanuvchini bir necha soniya kutishga majbur qilardi.
+func (h *Handler) moderateImages(ctx context.Context, uid primitive.ObjectID, urls []string, reasonPrefix string) (bool, error) {
+	if len(urls) == 0 || h.Storage == nil {
+		return false, nil
+	}
+	type outcome struct {
+		res *moderation.Result
+		err error
+	}
+	results := make([]outcome, len(urls))
+	var wg sync.WaitGroup
+	for i, url := range urls {
+		wg.Add(1)
+		go func(i int, url string) {
+			defer wg.Done()
+			data, err := h.Storage.Download(ctx, h.Storage.KeyFromURL(url), h.maxImageBytes)
+			if err != nil {
+				results[i] = outcome{err: fmt.Errorf("download %s: %w", url, err)}
+				return
+			}
+			res, err := h.guard.Service().CheckImage(ctx, sniffImageMIME(data), data)
+			results[i] = outcome{res: res, err: err}
+		}(i, url)
+	}
+	wg.Wait()
+
+	// Natijalarni KIRISH tartibida ko'rib chiqamiz, shunda bir nechta rasm
+	// muammoli bo'lsa ham javob doim bir xil (birinchi rasm haqida) bo'ladi.
+	skipped := false
+	for i, o := range results {
+		if o.err != nil {
+			// Kvota tugagan bo'lsa bu nil qaytaradi va rasm tekshirilmasdan
+			// o'tadi — e'lon "keyin ko'riladi" deb belgilanadi.
+			if err := h.guard.Unavailable("elon-image", o.err); err != nil {
+				return false, err
+			}
+			skipped = true
+			continue
+		}
+		if !o.res.Allowed {
+			// Rad etilgan rasm endi hech qaysi e'longa tegishli emas va
+			// storage'da yetim qolardi. Loyihaning o'z tozalash yordamchisi
+			// bilan o'chiramiz (best-effort, xatosi log qilinadi).
+			go upload.DeleteByURL(h.Storage, urls[i])
+			return false, h.guard.Reject(ctx, uid, "elon-image", "image_rejected", o.res, reasonPrefix)
+		}
+	}
+	return skipped, nil
+}
+
+// sniffImageMIME — baytlardan rasm turini aniqlaydi. Fayl nomiga yoki
+// saqlangan Content-Type'ga ishonilmaydi.
+func sniffImageMIME(data []byte) string {
+	n := len(data)
+	if n > 512 {
+		n = 512
+	}
+	return strings.ToLower(strings.TrimSpace(
+		strings.SplitN(http.DetectContentType(data[:n]), ";", 2)[0]))
+}
+
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	uid, _ := primitive.ObjectIDFromHex(httpx.UserID(r))
 	var req upsertReq
@@ -129,6 +326,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateURLs(&req, h.Storage, uid.Hex()); err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	// Kontent moderatsiyasi (matn + rasmlar) — arzon tekshiruvlardan KEYIN
+	// (bekorga tashqi so'rov qilinmasin), bazaga yozishdan OLDIN. Ya'ni rad
+	// etilgan e'lon bazaga umuman tushmaydi va feedda ko'rinmaydi.
+	modSkipped, err := h.moderateElon(r.Context(), uid, &req)
+	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
@@ -192,6 +397,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		// ro'yxatida ("mening e'lonlarim") ko'rinaveradi, shuning uchun
 		// reviewer to'liq oqimni sinay oladi.
 		IsReviewData: httpx.IsReviewActor(r.Context()),
+		// AI kvotasi tugagan paytda chop etilgan e'lon — keyin qo'lda
+		// ko'rib chiqiladi. Foydalanuvchi buni bilmaydi (json:"-").
+		ModerationPending: modSkipped,
 	}
 	res, err := h.Col.InsertOne(r.Context(), e)
 	if err != nil {
@@ -262,6 +470,23 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	// Avvalgi holat ikki joyda kerak: moderatsiya faqat O'ZGARGAN qismni
+	// tekshirishi uchun va quyidagi rasm farqi uchun. Ilgari u faqat rasm
+	// farqi uchun olinardi — endi bitta so'rov ikkalasiga xizmat qiladi.
+	var prev *models.Elon
+	{
+		var doc models.Elon
+		if err := h.Col.FindOne(r.Context(), bson.M{"_id": id, "ownerId": uid}).Decode(&doc); err == nil {
+			prev = &doc
+		}
+	}
+	// Kontent moderatsiyasi — geokodlash va bazaga yozishdan OLDIN, ya'ni rad
+	// etilgan tahrir hech qanday iz qoldirmaydi (rasm farqi ham bajarilmaydi).
+	modSkipped, err := h.moderateElonUpdate(r.Context(), uid, &req, prev)
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	pType, total, per := req.computePrice()
 	region, district := resolveLocation(r.Context(), req.Lat, req.Lng, req.Region, req.District)
 	locationURL := req.LocationURL
@@ -269,17 +494,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		locationURL = mapsURL(req.Lat, req.Lng)
 	}
 	// Image diff: delete any S3 images that are removed from the new list.
-	if req.Images != nil {
-		var prev models.Elon
-		if err := h.Col.FindOne(r.Context(), bson.M{"_id": id, "ownerId": uid}).Decode(&prev); err == nil {
-			keep := map[string]bool{}
-			for _, u := range req.Images {
-				keep[u] = true
-			}
-			for _, u := range prev.Images {
-				if !keep[u] {
-					go upload.DeleteByURL(h.Storage, u)
-				}
+	if req.Images != nil && prev != nil {
+		keep := map[string]bool{}
+		for _, u := range req.Images {
+			keep[u] = true
+		}
+		for _, u := range prev.Images {
+			if !keep[u] {
+				go upload.DeleteByURL(h.Storage, u)
 			}
 		}
 	}
@@ -301,6 +523,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		"contactPhone":    req.ContactPhone,
 		"gender":          normalizeGender(req.Gender),
 		"updatedAt":       time.Now(),
+		// Tekshirilmasdan saqlangan tahrir keyin qo'lda ko'riladi.
+		"moderationPending": modSkipped,
 	}
 	if req.Images != nil {
 		set["images"] = req.Images
@@ -434,23 +658,15 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	} else if page > 10_000 {
 		page = 10_000
 	}
-	filter := bson.M{
-		"isDeleted": bson.M{"$ne": true}, "ownerBlocked": bson.M{"$ne": true},
-		"status": "recruiting",
-	}
-	// Google Play demo hisobi yaratgan e'lonlar ommaviy feedga hech qachon
-	// tushmaydi. $ne true — maydon umuman yo'q bo'lgan (ya'ni barcha real)
-	// yozuvlarni ham qamrab oladi.
+	// Faol e'lon filtri — o'chirilmagan, egasi bloklanmagan, hali `recruiting`
+	// va vaqti o'tmagan (kechagi/eski e'lonlar va bugun bo'lib o'tganlari
+	// feedda ko'rinmaydi). Kategoriya sanoqlari ham shu filtrdan foydalanadi.
 	//
-	// Demo hisobning o'ziga esa ular ko'rinadi: reviewer e'lon joylagandan
-	// keyin uni feedda topa olmasa, ilova buzuq deb o'ylashi mumkin edi.
-	if !httpx.IsReviewActor(r.Context()) {
-		filter["isReviewData"] = bson.M{"$ne": true}
-	}
-	// Vaqti o'tgan e'lonlarni feeddan yashiramiz: belgilangan boshlanish
-	// vaqtidan (kun + soat) feedExpiryGrace dan ko'p o'tgan bo'lsa — ro'yxatda
-	// ko'rinmaydi (kechagi/eski e'lonlar va bugun bo'lib o'tganlari ham).
-	filter["$expr"] = notExpiredExpr(time.Now(), feedExpiryGrace)
+	// Google Play demo hisobi yaratgan e'lonlar ommaviy feedga hech qachon
+	// tushmaydi. Demo hisobning o'ziga esa ular ko'rinadi: reviewer e'lon
+	// joylagandan keyin uni feedda topa olmasa, ilova buzuq deb o'ylashi
+	// mumkin edi.
+	filter := elonquery.ActiveFilter(time.Now(), httpx.IsReviewActor(r.Context()))
 	if q != "" {
 		rx := primitive.Regex{Pattern: regexpEscape(q), Options: "i"}
 		filter["$or"] = []bson.M{{"title": rx}, {"description": rx}, {"locationText": rx}, {"categoryName": rx}}
@@ -567,13 +783,7 @@ func (h *Handler) Sitemap(w http.ResponseWriter, r *http.Request) {
 
 	// Demo e'lonlar sitemap'ga ham tushmaydi — aks holda ular Google'ga
 	// indekslanish uchun berilgan bo'lardi.
-	filter := bson.M{
-		"isDeleted":    bson.M{"$ne": true},
-		"ownerBlocked": bson.M{"$ne": true},
-		"isReviewData": bson.M{"$ne": true},
-		"status":       "recruiting",
-	}
-	filter["$expr"] = notExpiredExpr(time.Now(), feedExpiryGrace)
+	filter := elonquery.ActiveFilter(time.Now(), false)
 
 	// Barqaror tartib (_id) + proyeksiya — sahifalash to'g'ri ishlashi va
 	// so'rov yengil bo'lishi uchun. (Juda katta hajmda keyinchalik _id-range
@@ -632,7 +842,7 @@ func (h *Handler) MyElons(w http.ResponseWriter, r *http.Request) {
 		// Faol = hozir ishchilarga ko'rinadigan (feeddagi kabi): o'chirilmagan,
 		// hali ochiq (recruiting/filled/in_progress) va belgilangan vaqti o'tmagan.
 		open := e.Status == "recruiting" || e.Status == "filled" || e.Status == "in_progress"
-		if !e.IsDeleted && open && !isExpired(e, now, feedExpiryGrace) {
+		if !e.IsDeleted && open && !isExpired(e, now, elonquery.FeedExpiryGrace) {
 			active = append(active, e)
 		} else {
 			// Arxiv = vaqti o'tgan, yakunlangan yoki bekor qilingan e'lonlar.
@@ -643,46 +853,7 @@ func (h *Handler) MyElons(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 200, map[string]any{"active": active, "archived": archived})
 }
 
-// feedExpiryGrace — e'lon belgilangan boshlanish vaqtidan shuncha o'tgach
-// ommaviy feeddan chiqib ketadi (ish odatda shu oraliqda boshlanib bo'ladi).
-const feedExpiryGrace = 6 * time.Hour
-
-// notExpiredExpr — feeddagi e'lonni faqat boshlanish vaqti `grace` dan ko'p
-// o'tmagan bo'lsa qoldiradigan MongoDB `$expr` qaytaradi.
-//
-// `startDate` har xil klientlarda har xil saqlanadi: to'liq ISO sana-vaqt
-// (Flutter ilovasi) yoki faqat sana (web/seed). Shuning uchun kun startDate dan,
-// soat esa — startDate ichidan (to'liq bo'lsa), bo'lmasa workTimeFrom dan,
-// u ham bo'lmasa kun oxiri (23:59) deb olinadi. Naive (mintaqasiz) vaqtlar
-// Asia/Tashkent bo'yicha talqin qilinadi. Bo'sh yoki noto'g'ri sanalar uzoq
-// kelajak deb hisoblanadi — eski e'lonlar tasodifan yo'qolib qolmasligi uchun.
-func notExpiredExpr(now time.Time, grace time.Duration) bson.M {
-	startStr := bson.M{"$ifNull": bson.A{"$startDate", ""}}
-	workFrom := bson.M{"$ifNull": bson.A{"$workTimeFrom", ""}}
-	datePart := bson.M{"$substrBytes": bson.A{startStr, 0, 10}}
-	timePart := bson.M{"$cond": bson.A{
-		// startDate to'liq sana-vaqt bo'lsa ("...T14:30...") — soatni shundan olamiz.
-		bson.M{"$gt": bson.A{bson.M{"$strLenBytes": startStr}, 10}},
-		bson.M{"$substrBytes": bson.A{startStr, 11, 5}},
-		// aks holda workTimeFrom, u ham bo'lmasa — kun oxiri.
-		bson.M{"$cond": bson.A{
-			bson.M{"$gt": bson.A{bson.M{"$strLenBytes": workFrom}, 0}},
-			workFrom,
-			"23:59",
-		}},
-	}}
-	farFuture := now.AddDate(100, 0, 0)
-	startInstant := bson.M{"$dateFromString": bson.M{
-		"dateString": bson.M{"$concat": bson.A{datePart, "T", timePart}},
-		"format":     "%Y-%m-%dT%H:%M",
-		"timezone":   "Asia/Tashkent",
-		"onError":    farFuture,
-		"onNull":     farFuture,
-	}}
-	return bson.M{"$gte": bson.A{startInstant, now.Add(-grace)}}
-}
-
-// uzTZ — O'zbekiston vaqti (UTC+5, yozgi vaqt yo'q); notExpiredExpr'dagi
+// uzTZ — O'zbekiston vaqti (UTC+5, yozgi vaqt yo'q); elonquery.NotExpiredExpr'dagi
 // "Asia/Tashkent" bilan mos keladi.
 var uzTZ = time.FixedZone("UZT", 5*3600)
 
@@ -726,7 +897,7 @@ func validateStartDate(startDate string, now time.Time, allowPast bool) error {
 // ScheduledStart — e'lon belgilangan boshlanish vaqtini (instant) qaytaradi.
 // Kun startDate'dan, soat startDate ichidan (to'liq ISO sana-vaqt bo'lsa),
 // bo'lmasa workTimeFrom'dan, u ham bo'lmasa kun oxiri (23:59) deb olinadi;
-// naive vaqt Asia/Tashkent bo'yicha talqin qilinadi. Mantiq notExpiredExpr
+// naive vaqt Asia/Tashkent bo'yicha talqin qilinadi. Mantiq elonquery.NotExpiredExpr
 // (feed filtri) bilan bir xil. startDate bo'sh yoki noto'g'ri bo'lsa ok=false
 // qaytadi (belgilangan vaqt yo'q — chaqiruvchi shu holatni hisobga oladi).
 func ScheduledStart(e models.Elon) (time.Time, bool) {
