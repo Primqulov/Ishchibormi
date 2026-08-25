@@ -23,7 +23,10 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   `img-src 'self' data: blob: https: ${apiOrigin}`,
-  `connect-src 'self' ${apiOrigin} ${wsOrigin}`,
+  // nominatim — MapPicker'da tanlangan nuqtaning manzil matnini olish uchun
+  // (teskari geokodlash). Ro'yxatga qo'shilmasa fetch bloklanadi va xaritada
+  // joy tanlaganda manzil yozuvi umuman chiqmaydi.
+  `connect-src 'self' ${apiOrigin} ${wsOrigin} https://nominatim.openstreetmap.org`,
   "worker-src 'self' blob:",
   "manifest-src 'self'",
 ].join("; ");
