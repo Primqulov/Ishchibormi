@@ -6,8 +6,11 @@ import {
   MapPin, Send, ArrowRight, Search, Check, Plus, Minus, Tag,
   Phone, Mail, Instagram, Youtube, LifeBuoy, Users, Wallet,
   Star, ShieldCheck, Languages, Clock, AlertTriangle, RefreshCw,
+  Smartphone, Bell, Signal, Wifi, BatteryFull, Briefcase, Home,
+  ClipboardList, UserRound, Navigation,
 } from "lucide-react";
 import { AUTH_BOT, CONTACT, SOCIAL } from "@/lib/contact";
+import { GooglePlayBadge, PlayGlyph } from "@/components/GooglePlayBadge";
 import { api, Category, Elon, User, getAccess } from "@/lib/api";
 import { Logo } from "@/components/Logo";
 import { CategoryIcon } from "@/components/CategoryIcon";
@@ -16,6 +19,28 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { T, useT } from "@/components/T";
 import { fmtSum } from "@/lib/format";
 import { catTone } from "@/lib/cat-color";
+
+/** Ilovaning O'Z palitrasi — sayt mavzusiga BOG'LIQ EMAS.
+ *
+ * Flutter ilovasi faqat yorug' mavzuda ishlaydi (flutter-app/lib/app.dart:
+ * `theme: AppTheme.light`, `darkTheme` umuman yo'q). Shu sababli telefon maketi
+ * sayt qorong'i rejimga o'tganda ham yorug' qoladi: aks holda maket ilovada
+ * mavjud BO'LMAGAN ekranni ko'rsatgan bo'lardi. Qiymatlar app_colors.dart va
+ * globals.css dagi yorug' mavzu bilan bir xil.
+ *
+ * Ilovaga qorong'i mavzu qo'shilsa, bu yerni ham yangilash kerak.
+ */
+const APP_UI = {
+  screen: "#FFFFFF",
+  surface: "#F8F9FF",
+  border: "rgba(195,198,215,0.30)",
+  borderStrong: "rgba(195,198,215,0.60)",
+  brand: "#0038D8",
+  brandSoft: "#E5EEFF",
+  ink: "#0B1C30",
+  muted: "#434655",
+  subtle: "#737686",
+} as const;
 
 /** Figma "00 · Landing sahifa". */
 export default function Landing() {
@@ -67,11 +92,12 @@ export default function Landing() {
       >
         <div className="mx-auto max-w-shell flex h-[72px] md:h-20 items-center gap-8 px-5 md:px-[100px]">
           <Logo />
-          <nav className="hidden lg:flex items-center gap-10 text-sm font-semibold muted">
+          <nav className="hidden lg:flex items-center gap-6 xl:gap-10 text-sm font-semibold muted">
             <a href="#qanday" className="hover:text-[color:var(--brand)] transition"><T>Qanday ishlaydi</T></a>
             <a href="#imkoniyatlar" className="hover:text-[color:var(--brand)] transition"><T>Imkoniyatlar</T></a>
             <a href="#kategoriyalar" className="hover:text-[color:var(--brand)] transition"><T>Kategoriyalar</T></a>
             <a href="#narxlar" className="hover:text-[color:var(--brand)] transition"><T>Narxlar</T></a>
+            <a href="#ilova" className="hover:text-[color:var(--brand)] transition"><T>Ilova</T></a>
             <a href="#savollar" className="hover:text-[color:var(--brand)] transition"><T>Savollar</T></a>
           </nav>
           <div className="flex-1" />
@@ -137,6 +163,19 @@ export default function Landing() {
                   <T>Ish e'lonlarini ko'rish</T>
                 </Link>
               </div>
+
+              {/* Ilova haqida birinchi ekrandayoq xabar beramiz, lekin asosiy
+                  CTA bilan raqobatlashmasin — shuning uchun tugma emas,
+                  sokin havola. To'liq blok pastda ("#ilova"). */}
+              <a
+                href="#ilova"
+                className="mt-4 inline-flex items-center gap-2 text-[13.5px] font-semibold transition hover:opacity-80"
+                style={{ color: "var(--brand)" }}
+              >
+                <PlayGlyph className="h-4 w-4 shrink-0" />
+                <T>Android ilovasi Google Play'da — bepul</T>
+                <ArrowRight size={14} />
+              </a>
               <div className="mt-5 flex items-center gap-2.5 flex-wrap">
                 <div className="flex items-center">
                   {["A", "M", "S", "D", "+"].map((l, i) => (
@@ -335,6 +374,203 @@ export default function Landing() {
           </div>
         </section>
 
+        {/* ── Android ilova ───────────────────────────────────────────
+             Sharhlardan KEYIN: odam avval "bu nima va ishonsa bo'ladimi"
+             degan savolga javob oladi, keyin ilovani yuklaydi.
+             Gradient band ATAYLAB — yon qo'shnilari (Sharhlar / Telegram)
+             och fonli, shuning uchun bu blok sahifada aniq ajralib turadi va
+             ilova borligi e'tibordan qochmaydi. */}
+        <section id="ilova" className="gradient-hero text-white px-5 md:px-[100px] py-16 md:py-24">
+          <div className="mx-auto max-w-shell grid lg:grid-cols-[minmax(0,1fr)_300px] gap-10 lg:gap-14 items-center">
+            <div className="min-w-0">
+              <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3.5 py-1.5 text-[11.5px] font-bold uppercase tracking-[1px]">
+                <Smartphone size={13} /><T>Android ilova</T>
+              </span>
+              <h2 className="mt-4 text-[28px] sm:text-[34px] font-black tracking-[-0.8px] leading-tight">
+                <T>Ishlar doim cho'ntagingizda</T>
+              </h2>
+              <p className="mt-3 text-[15px] text-white/80 leading-relaxed max-w-2xl">
+                <T>Ishchi Bormi ilovasini Google Play'dan bepul yuklab oling. Yangi e'lon chiqishi bilan telefoningizga bildirishnoma keladi — saytni ochib turishingiz shart emas.</T>
+              </p>
+
+              <ul className="mt-6 grid sm:grid-cols-2 gap-x-10 gap-y-3 max-w-2xl">
+                {[
+                  "Yangi ish chiqsa — darhol bildirishnoma",
+                  "Ishlarni xaritada ko'rib, eng yaqinini tanlang",
+                  "Arizangiz holatini kuzatib boring",
+                  "Bepul, reklamasiz",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2.5 text-[14px] text-white/85">
+                    <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white/20">
+                      <Check size={12} />
+                    </span>
+                    <T>{item}</T>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-8">
+                <GooglePlayBadge variant="onBrand" />
+              </div>
+            </div>
+
+            {/* Telefon maketi — ilovaning HAQIQIY bosh ekrani.
+                Xayoliy ekran emas: salomlashish, qidiruv, ko'k "E'lon berish"
+                banneri, kategoriya kafellari, ish kartochkasi va markazida "+"
+                bo'lgan pastki panel — hammasi ilovadagi joylashuvda. Odam
+                do'konga o'tishdan oldin nimani yuklayotganini ko'rib turadi.
+
+                Ranglar sayt o'zgaruvchilaridan emas, [APP_UI] dan: ilova faqat
+                yorug' mavzuda ishlaydi. */}
+            <div className="justify-self-center lg:justify-self-end w-[280px] shrink-0" aria-hidden="true">
+              <div className="rounded-[36px] bg-[#0B0F1A] p-[7px] shadow-pop ring-1 ring-white/20">
+                <div className="overflow-hidden rounded-[30px]" style={{ background: APP_UI.screen }}>
+
+                  {/* Holat qatori — soat, kamera teshigi, tarmoq belgilari */}
+                  <div className="relative flex items-center justify-between px-4 pt-2.5 pb-1"
+                       style={{ color: APP_UI.ink }}>
+                    <span className="text-[10px] font-bold">09:41</span>
+                    <span className="absolute left-1/2 top-2 h-[9px] w-[9px] -translate-x-1/2 rounded-full bg-[#0B0F1A]" />
+                    <span className="flex items-center gap-1">
+                      <Signal size={9} strokeWidth={3} />
+                      <Wifi size={9} strokeWidth={3} />
+                      <BatteryFull size={13} strokeWidth={2} />
+                    </span>
+                  </div>
+
+                  {/* Ilova paneli */}
+                  <div className="flex items-center justify-between px-4 pt-1.5 pb-2">
+                    <span className="text-[13px] font-black tracking-[-0.3px]" style={{ color: APP_UI.brand }}>
+                      Ishchi Bormi
+                    </span>
+                    <Bell size={13} strokeWidth={2.5} style={{ color: APP_UI.brand }} />
+                  </div>
+
+                  {/* Salomlashish */}
+                  <div className="px-4">
+                    <div className="text-[13px] font-black tracking-[-0.3px]" style={{ color: APP_UI.ink }}>
+                      <T>Assalomu alaykum!</T>
+                    </div>
+                    <div className="text-[10.5px]" style={{ color: APP_UI.muted }}>
+                      <T>Bugun qanday ishlar bor?</T>
+                    </div>
+                  </div>
+
+                  {/* Qidiruv maydoni */}
+                  <div className="mx-4 mt-2.5 flex items-center gap-2 rounded-xl px-3 py-2"
+                       style={{ background: APP_UI.surface, border: `1px solid ${APP_UI.borderStrong}` }}>
+                    <Search size={11} className="shrink-0" style={{ color: APP_UI.subtle }} />
+                    <span className="text-[10.5px]" style={{ color: APP_UI.subtle }}><T>Ish qidirish…</T></span>
+                  </div>
+
+                  {/* Ko'k banner — ish beruvchiga chaqiriq */}
+                  <div className="relative mx-4 mt-2.5 overflow-hidden rounded-xl px-3.5 py-3"
+                       style={{ background: APP_UI.brand }}>
+                    <Briefcase
+                      size={70}
+                      strokeWidth={1.5}
+                      className="pointer-events-none absolute -right-3 -bottom-3 text-white/10"
+                    />
+                    <div className="relative text-[12px] font-black leading-tight text-white">
+                      <T>Yangi vazifangiz bormi?</T>
+                    </div>
+                    <div className="relative mt-1 text-[9.5px] text-white/80"><T>Tez va oson ishchi toping.</T></div>
+                    <div className="relative mt-2 inline-block rounded-lg bg-white px-2.5 py-1 text-[9.5px] font-bold"
+                         style={{ color: APP_UI.brand }}>
+                      <T>E'lon berish</T>
+                    </div>
+                  </div>
+
+                  {/* Kategoriyalar */}
+                  <div className="mt-3 flex items-center justify-between px-4">
+                    <span className="text-[11.5px] font-black" style={{ color: APP_UI.ink }}>
+                      <T>Kategoriyalar</T>
+                    </span>
+                    <span className="text-[9.5px] font-bold" style={{ color: APP_UI.brand }}><T>Barchasi</T></span>
+                  </div>
+                  <div className="mt-1.5 flex gap-2 px-4">
+                    {[
+                      { e: "\u{1F69A}", l: "Yuk tashish" },
+                      { e: "\u{1F527}", l: "Maxsus" },
+                      { e: "\u{1F9F9}", l: "Tozalash" },
+                    ].map((c) => (
+                      <div key={c.l} className="flex-1 text-center">
+                        <div className="grid h-11 place-items-center rounded-xl text-[17px]"
+                             style={{ background: APP_UI.brandSoft }}>
+                          {c.e}
+                        </div>
+                        <div className="mt-1 text-[8.5px] font-bold leading-tight" style={{ color: APP_UI.ink }}>
+                          <T>{c.l}</T>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Yaqin atrofdagi ishlar */}
+                  <div className="mt-3 px-4 text-[11.5px] font-black" style={{ color: APP_UI.ink }}>
+                    <T>Yaqin atrofdagi ishlar</T>
+                  </div>
+                  <div className="mx-4 mt-1.5 rounded-xl p-2.5"
+                       style={{ background: APP_UI.surface, border: `1px solid ${APP_UI.border}` }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="rounded px-1.5 py-0.5 text-[7.5px] font-black uppercase tracking-[0.4px]"
+                            style={{ background: APP_UI.brandSoft, color: APP_UI.brand }}>
+                        <T>Yuk tashish</T>
+                      </span>
+                      <span className="text-[12px] font-black leading-none" style={{ color: APP_UI.brand }}>
+                        200k UZS
+                      </span>
+                    </div>
+                    <div className="mt-1.5 text-[11px] font-bold" style={{ color: APP_UI.ink }}>
+                      <T>Yuk tushurish</T>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-[8px]" style={{ color: APP_UI.subtle }}>
+                      <span className="inline-flex items-center gap-0.5"><MapPin size={8} /><T>Toshkent</T></span>
+                      <span className="inline-flex items-center gap-0.5"><Clock size={8} /><T>1 soat oldin</T></span>
+                      <span className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-bold"
+                            style={{ background: APP_UI.brandSoft, color: APP_UI.brand }}>
+                        <Navigation size={7} />8.1 km
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Pastki panel — markazda "+" tugmasi */}
+                  <div className="mt-3 flex items-end justify-between px-3 pb-2.5 pt-2"
+                       style={{ borderTop: `1px solid ${APP_UI.border}` }}>
+                    {[
+                      { I: Home, l: "Asosiy", on: true },
+                      { I: ClipboardList, l: "Ishlar", on: false },
+                    ].map(({ I, l, on }) => (
+                      <span key={l} className="flex flex-1 flex-col items-center gap-0.5"
+                            style={{ color: on ? APP_UI.brand : APP_UI.subtle }}>
+                        <I size={13} strokeWidth={on ? 2.6 : 2} />
+                        <span className="text-[7.5px] font-bold"><T>{l}</T></span>
+                      </span>
+                    ))}
+                    <span className="flex flex-1 flex-col items-center gap-0.5">
+                      <span className="grid h-8 w-8 -mt-4 place-items-center rounded-full text-white shadow-blue"
+                            style={{ background: APP_UI.brand }}>
+                        <Plus size={16} strokeWidth={3} />
+                      </span>
+                      <span className="text-[7.5px] font-bold" style={{ color: APP_UI.subtle }}><T>E'lon</T></span>
+                    </span>
+                    {[
+                      { I: Bell, l: "Xabarlar" },
+                      { I: UserRound, l: "Profil" },
+                    ].map(({ I, l }) => (
+                      <span key={l} className="flex flex-1 flex-col items-center gap-0.5"
+                            style={{ color: APP_UI.subtle }}>
+                        <I size={13} strokeWidth={2} />
+                        <span className="text-[7.5px] font-bold"><T>{l}</T></span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* ── Telegram ────────────────────────────────────────────── */}
         <section className="px-5 md:px-[100px] py-16 md:py-24" style={{ background: "var(--card)" }}>
           <div className="mx-auto max-w-shell rounded-[22px] p-7 sm:p-10 grid lg:grid-cols-2 gap-8 items-center"
@@ -345,10 +581,10 @@ export default function Landing() {
                 <Send size={12} /><T>Telegram</T>
               </span>
               <h2 className="mt-4 text-[26px] sm:text-[30px] font-black heading tracking-[-0.8px] leading-tight">
-                <T>Ilova o'rnatish shart emas</T>
+                <T>Ilovasiz ham ishlaydi</T>
               </h2>
               <p className="mt-3 text-[15px] muted leading-relaxed">
-                <T>Ro'yxatdan o'tish va bildirishnomalar Telegram orqali ishlaydi. Internet sekin bo'lsa ham ishlaydi, telefon xotirasini egallamaydi.</T>
+                <T>Ilovani o'rnatmoqchi bo'lmasangiz, ro'yxatdan o'tish va bildirishnomalar Telegram orqali ham ishlaydi. Internet sekin bo'lsa ham ishlaydi, telefon xotirasini egallamaydi.</T>
               </p>
               <ul className="mt-5 flex flex-col gap-2.5">
                 {["Telegram kod bilan 30 soniyada kirish", "Ariza qabul qilinganda bildirishnoma", "Yangi e'lonlar haqida xabar"].map((s) => (

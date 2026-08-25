@@ -22,6 +22,24 @@ export const AUTH_BOT: SocialLink = {
   href: `https://t.me/${AUTH_BOT_USERNAME}`,
 };
 
+// ── Android ilova ────────────────────────────────────────────────────────────
+// Play Store sahifasi. Paket nomi flutter-app/android/app/build.gradle.kts
+// dagi applicationId bilan bir xil bo'lishi SHART — App Links tasdiqlanishi
+// ham shu paketga bog'liq (ishchibormi.uz/.well-known/assetlinks.json).
+//
+// Havolada `pcampaignid=web_share` kabi ulashish parametrlari ATAYLAB yo'q:
+// ular Play ilovasi havolani ulashganda qo'shadigan vaqtinchalik belgilar,
+// saytdagi doimiy havolada ular kerak emas.
+export const APP_PACKAGE = "uz.ishchibormi.app";
+
+export const APP = {
+  playStore: `https://play.google.com/store/apps/details?id=${APP_PACKAGE}`,
+  // Ilovaning minSdk 24 = Android 7.0 (flutter-app build'ining birlashtirilgan
+  // manifestidan olingan). Flutter SDK yangilanganda bu qiymat ham o'zgarishi
+  // mumkin — o'zgarsa shu yerni yangilang.
+  minAndroid: "Android 7.0+",
+} as const;
+
 export const SOCIAL = {
   // Rasmiy Telegram kanali
   telegram: { label: "@Ishchibormi", href: "https://t.me/Ishchibormi" },
