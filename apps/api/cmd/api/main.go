@@ -458,6 +458,8 @@ func main() {
 				r.Use(httpx.RequireRole())
 				r.Post("/categories/icon", adminH.UploadCategoryIcon)
 				r.Patch("/categories/{id}/active", adminH.SetCategoryActive)
+				// Avtomatik moderatsiya blokini ochish — faqat superadmin.
+				r.Delete("/users/{id}/moderation-ban", adminH.LiftModerationBan)
 				r.Post("/categories", adminH.CreateCategory)
 				r.Put("/categories/{id}", adminH.UpdateCategory)
 				r.Delete("/categories/{id}", adminH.DeleteCategory)

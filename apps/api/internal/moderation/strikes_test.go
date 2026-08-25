@@ -250,3 +250,84 @@ func TestWarnMessage(t *testing.T) {
 		t.Errorf("chegaraga yetilganda ogohlantirish = %q, bo'sh kutilgan (blok xabari beriladi)", got)
 	}
 }
+
+// TestLiftBanByUser — superadmin blokni ochganda uchala iz ham tozalanishi
+// kerak: strike yozuvi, user hujjatidagi muddat va e'lonlardagi yashirish.
+func TestLiftBanByUser(t *testing.T) {
+	db := strikeDB(t)
+	store := NewStrikeStore(db, 2, 2*365*24*time.Hour)
+	ctx := context.Background()
+	const phone = "+998901113311"
+	uid := seedUser(t, db, phone)
+
+	// Foydalanuvchining e'loni ham bo'lsin — blokda u yashirinadi.
+	if _, err := db.Collection("elons").InsertOne(ctx,
+		bson.M{"ownerId": uid, "title": "Test", "ownerBlocked": false}); err != nil {
+		t.Fatalf("seed elon: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := store.RecordByUser(ctx, uid, KindElon, "x"); err != nil {
+			t.Fatalf("buzilish: %v", err)
+		}
+	}
+	if _, banned, _ := store.BanByPhone(ctx, phone); !banned {
+		t.Fatal("blok qo'yilmadi")
+	}
+	if n, _ := db.Collection("elons").CountDocuments(ctx, bson.M{"ownerId": uid, "ownerBlocked": true}); n != 1 {
+		t.Errorf("blokda e'lon yashirilmadi (ownerBlocked=true: %d)", n)
+	}
+
+	if err := store.LiftBanByUser(ctx, uid); err != nil {
+		t.Fatalf("LiftBanByUser: %v", err)
+	}
+
+	if _, banned, _ := store.BanByPhone(ctx, phone); banned {
+		t.Error("blok hali kuchda")
+	}
+	if n, _ := store.col.CountDocuments(ctx, bson.M{"phone": phone}); n != 0 {
+		t.Errorf("strike yozuvi qoldi (%d) — keyingi bitta buzilish darhol qayta bloklardi", n)
+	}
+	var u struct {
+		BannedUntil *time.Time `bson:"moderationBannedUntil"`
+	}
+	if err := db.Collection("users").FindOne(ctx, bson.M{"_id": uid}).Decode(&u); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	if u.BannedUntil != nil {
+		t.Errorf("moderationBannedUntil tozalanmadi: %v", u.BannedUntil)
+	}
+	if n, _ := db.Collection("elons").CountDocuments(ctx, bson.M{"ownerId": uid, "ownerBlocked": true}); n != 0 {
+		t.Errorf("e'lonlar ochilmadi (ownerBlocked=true: %d)", n)
+	}
+}
+
+// TestLiftBanKeepsAdminBlock — admin QO'LDA bloklagan foydalanuvchining
+// e'lonlari moderatsiya blokini ochganda ham yashirinligicha qolishi kerak:
+// bu ikki blok bir-biridan mustaqil.
+func TestLiftBanKeepsAdminBlock(t *testing.T) {
+	db := strikeDB(t)
+	store := NewStrikeStore(db, 1, time.Hour)
+	ctx := context.Background()
+	uid := seedUser(t, db, "+998901113322")
+
+	// Admin qo'lda bloklagan.
+	if _, err := db.Collection("users").UpdateOne(ctx, bson.M{"_id": uid},
+		bson.M{"$set": bson.M{"isBlocked": true}}); err != nil {
+		t.Fatalf("admin block: %v", err)
+	}
+	if _, err := db.Collection("elons").InsertOne(ctx,
+		bson.M{"ownerId": uid, "title": "Test", "ownerBlocked": true}); err != nil {
+		t.Fatalf("seed elon: %v", err)
+	}
+	if _, err := store.RecordByUser(ctx, uid, KindElon, "x"); err != nil {
+		t.Fatalf("buzilish: %v", err)
+	}
+
+	if err := store.LiftBanByUser(ctx, uid); err != nil {
+		t.Fatalf("LiftBanByUser: %v", err)
+	}
+	if n, _ := db.Collection("elons").CountDocuments(ctx, bson.M{"ownerId": uid, "ownerBlocked": true}); n != 1 {
+		t.Errorf("admin bloki bekor qilindi — e'lonlar ochilib ketdi (ownerBlocked=true: %d)", n)
+	}
+}

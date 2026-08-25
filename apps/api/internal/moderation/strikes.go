@@ -221,6 +221,49 @@ func (s *StrikeStore) BanByPhone(ctx context.Context, phone string) (until time.
 	return time.Time{}, false, nil
 }
 
+// LiftBanByUser — foydalanuvchining avtomatik moderatsiya blokini bekor
+// qiladi (admin qarori bilan).
+//
+// Uch narsa birga bajariladi, chunki blok uch joyda iz qoldirgan:
+//  1. `moderation_strikes` yozuvi — TELEFON bo'yicha. O'chirilmasa sanoq
+//     chegarada qolib, keyingi bitta buzilish darhol qayta bloklardi.
+//  2. user hujjatidagi `moderationBannedUntil` — mavjud seansni to'xtatadi.
+//  3. e'lonlardagi `ownerBlocked` — ular feeddan yashiringan edi.
+//
+// `isBlocked` ga TEGILMAYDI: u admin qo'lidagi alohida bayroq. Admin
+// foydalanuvchini qo'lda ham bloklagan bo'lsa, moderatsiya blokini ochish
+// uni tiklab yubormasligi kerak — shu sabab e'lonlar ham faqat qo'lda blok
+// yo'q bo'lgandagina ochiladi.
+func (s *StrikeStore) LiftBanByUser(ctx context.Context, userID primitive.ObjectID) error {
+	if s == nil {
+		return errors.New("moderation: strike store not configured")
+	}
+	var u struct {
+		Phone     string `bson:"phone"`
+		IsBlocked bool   `bson:"isBlocked"`
+	}
+	if err := s.users.FindOne(ctx, bson.M{"_id": userID},
+		options.FindOne().SetProjection(bson.M{"phone": 1, "isBlocked": 1})).Decode(&u); err != nil {
+		return err
+	}
+	if strings.TrimSpace(u.Phone) != "" {
+		if _, err := s.col.DeleteOne(ctx, bson.M{"phone": u.Phone}); err != nil {
+			return err
+		}
+	}
+	if _, err := s.users.UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
+		"$unset": bson.M{"moderationBannedUntil": ""},
+		"$set":   bson.M{"updatedAt": time.Now()},
+	}); err != nil {
+		return err
+	}
+	if !u.IsBlocked {
+		_, _ = s.elons.UpdateMany(ctx, bson.M{"ownerId": userID, "ownerBlocked": true},
+			bson.M{"$set": bson.M{"ownerBlocked": false, "updatedAt": time.Now()}})
+	}
+	return nil
+}
+
 // BanMessage — foydalanuvchiga ko'rsatiladigan blok xabari.
 func BanMessage(until time.Time) string {
 	return fmt.Sprintf("Hisobingiz qoidabuzarlik sababli %s gacha bloklandi.",

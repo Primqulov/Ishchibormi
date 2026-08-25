@@ -37,7 +37,10 @@ type User struct {
 	//
 	// Haqiqiy manba `moderation_strikes` (telefon bo'yicha) — bu nusxa faqat
 	// mavjud seansni darhol to'xtatish uchun.
-	ModerationBannedUntil *time.Time           `bson:"moderationBannedUntil,omitempty" json:"-"`
+	// JSON'da ochiq (omitempty): admin paneli bloklangan foydalanuvchini
+	// va blok tugash sanasini ko'rsatishi kerak. Bloklanmaganlar uchun
+	// maydon umuman chiqmaydi.
+	ModerationBannedUntil *time.Time           `bson:"moderationBannedUntil,omitempty" json:"moderationBannedUntil,omitempty"`
 	IsDeleted             bool                 `bson:"isDeleted" json:"isDeleted"`
 	LangPref              string               `bson:"langPref" json:"langPref"`
 	ThemePref             string               `bson:"themePref" json:"themePref"`

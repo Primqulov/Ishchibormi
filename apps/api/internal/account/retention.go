@@ -76,17 +76,17 @@ func NewPurger(db *mongo.Database, s *storage.Service, retentionDays int, log *s
 		retentionDays = DefaultRetentionDays
 	}
 	return &Purger{
-		users:       db.Collection("users"),
-		elons:       db.Collection("elons"),
-		apps:        db.Collection("applications"),
-		notifs:      db.Collection("notifications"),
-		reports:     db.Collection("reports"),
-		feedback:    db.Collection("feedback"),
-		codes:       db.Collection("delete_codes"),
-		otps:        db.Collection("otp_codes"),
-		storage:     s,
-		retention:   time.Duration(retentionDays) * 24 * time.Hour,
-		log:         log,
+		users:     db.Collection("users"),
+		elons:     db.Collection("elons"),
+		apps:      db.Collection("applications"),
+		notifs:    db.Collection("notifications"),
+		reports:   db.Collection("reports"),
+		feedback:  db.Collection("feedback"),
+		codes:     db.Collection("delete_codes"),
+		otps:      db.Collection("otp_codes"),
+		storage:   s,
+		retention: time.Duration(retentionDays) * 24 * time.Hour,
+		log:       log,
 	}
 }
 
@@ -285,4 +285,3 @@ func (p *Purger) purgeUser(ctx context.Context, u models.User) error {
 	}
 	return nil
 }
-

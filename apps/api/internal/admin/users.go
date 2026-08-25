@@ -221,3 +221,31 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	h.audit(r, "user_delete", id.Hex(), "soft-delete")
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }
+
+// LiftModerationBan — avtomatik moderatsiya blokini bekor qiladi.
+//
+// DELETE /api/admin/users/{id}/moderation-ban
+//
+// FAQAT SUPERADMIN: route superadmin guruhida turadi (cmd/api/main.go).
+// Sabab — bu jazoni bekor qilish, ya'ni moderator yoki support xodimi
+// o'zboshimchalik bilan qiladigan amal emas.
+//
+// Qo'lda qo'yilgan blokga (isBlocked) TEGMAYDI — u alohida tugma orqali
+// boshqariladi.
+func (h *Handler) LiftModerationBan(w http.ResponseWriter, r *http.Request) {
+	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
+		return
+	}
+	if h.Strikes == nil {
+		httpx.Err(w, httpx.NewError(503, "moderation_disabled", "moderatsiya sozlanmagan"))
+		return
+	}
+	if err := h.Strikes.LiftBanByUser(r.Context(), id); err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	h.audit(r, "moderation_ban_lift", id.Hex(), "")
+	httpx.JSON(w, 200, map[string]bool{"ok": true})
+}

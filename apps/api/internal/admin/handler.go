@@ -10,6 +10,7 @@ import (
 
 	"github.com/ishchibormi/backend/config"
 	"github.com/ishchibormi/backend/internal/models"
+	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/notification"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/storage"
@@ -37,6 +38,9 @@ type Handler struct {
 	Apps       *mongo.Collection
 	Storage    *storage.Service
 
+	// Strikes — avtomatik moderatsiya bloklarini ochish uchun (superadmin).
+	Strikes *moderation.StrikeStore
+
 	// loginGuard caps failed logins per admin username — see loginguard.go.
 	loginGuard *loginGuard
 }
@@ -55,6 +59,7 @@ func NewHandler(cfg config.Config, db *mongo.Database, n *notification.Service, 
 		Notify:     n,
 		Apps:       db.Collection("applications"),
 		Storage:    s,
+		Strikes:    moderation.NewStrikeStore(db, cfg.ModerationStrikeLimit, cfg.ModerationBanDuration),
 		loginGuard: newLoginGuard(),
 	}
 }

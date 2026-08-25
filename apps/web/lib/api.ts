@@ -230,6 +230,15 @@ export interface User {
   completedJobsCount: number;
   isPhoneVerified: boolean;
   isBlocked: boolean;
+  /**
+   * Avtomatik moderatsiya bloki tugash vaqti (ISO). Bloklanmagan
+   * foydalanuvchida umuman kelmaydi.
+   *
+   * `isBlocked` dan ATAYLAB alohida: u admin qo'lda qo'ygan bayroq, bu esa
+   * nomaqbul kontent uchun tizim qo'ygan MUDDATLI blok. Faqat superadmin
+   * uni muddatidan oldin ocha oladi.
+   */
+  moderationBannedUntil?: string;
   langPref?: "latin" | "cyrillic";
   themePref?: "light" | "dark";
   onboardingCompleted?: boolean;

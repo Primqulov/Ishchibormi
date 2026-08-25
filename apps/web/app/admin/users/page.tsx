@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { api, User, Paged, downloadAdminCsv } from "@/lib/api";
+import { api, User, Paged, downloadAdminCsv, getAdminRole } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 
@@ -13,6 +13,11 @@ export default function AdminUsers() {
   const [blocked, setBlocked] = useState("");
   const [verified, setVerified] = useState("");
   const [delId, setDelId] = useState("");
+  // Moderatsiya blokini faqat superadmin ocha oladi — backend ham shu
+  // qoidani qo'llaydi (superadmin route guruhi). Tugmani boshqa rolga
+  // ko'rsatsak, u bosib 403 olardi.
+  const [isSuper, setIsSuper] = useState(false);
+  const [liftId, setLiftId] = useState("");
   const limit = 20;
 
   const load = useCallback(async () => {
@@ -25,8 +30,23 @@ export default function AdminUsers() {
   }, [page, q, region, blocked, verified]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setIsSuper(getAdminRole() === "superadmin"); }, []);
   // Filtr o'zgarsa 1-sahifaga qaytamiz.
   useEffect(() => { setPage(1); }, [q, region, blocked, verified]);
+
+  // moderationBanUntil — blok hozir kuchdami va qachongacha.
+  // Muddati o'tgan blok blok emas: backend ham shu qoidaga amal qiladi.
+  function bannedUntil(u: User): Date | null {
+    if (!u.moderationBannedUntil) return null;
+    const d = new Date(u.moderationBannedUntil);
+    return d.getTime() > Date.now() ? d : null;
+  }
+
+  async function liftBan(id: string) {
+    await api.delete(`/api/admin/users/${id}/moderation-ban`, { auth: "admin" } as any);
+    setLiftId("");
+    load();
+  }
 
   async function block(id: string, isBlocked: boolean) {
     await api.post(`/api/admin/users/${id}/block`, { isBlocked }, { auth: "admin" } as any);
@@ -102,17 +122,34 @@ export default function AdminUsers() {
                   <td className="px-4 whitespace-nowrap">{u.phone}</td>
                   <td className="px-4 truncate">{u.region}</td>
                   <td className="px-4">
-                    <span className="inline-flex justify-center w-[92px] text-xs font-medium px-2 py-0.5 rounded-full border"
-                      style={u.isBlocked
-                        ? { color: "var(--danger, #dc2626)", borderColor: "var(--danger, #dc2626)" }
-                        : { color: "var(--success, #16a34a)", borderColor: "var(--success, #16a34a)" }}>
-                      {u.isBlocked ? "Bloklangan" : "Faol"}
-                    </span>
+                    <div className="flex flex-col gap-1 items-start">
+                      <span className="inline-flex justify-center w-[92px] text-xs font-medium px-2 py-0.5 rounded-full border"
+                        style={u.isBlocked
+                          ? { color: "var(--danger, #dc2626)", borderColor: "var(--danger, #dc2626)" }
+                          : { color: "var(--success, #16a34a)", borderColor: "var(--success, #16a34a)" }}>
+                        {u.isBlocked ? "Bloklangan" : "Faol"}
+                      </span>
+                      {/* Avtomatik moderatsiya bloki — muddati bilan, chunki u
+                          o'z-o'zidan tugaydi va superadmin qachon tugashini
+                          bilib turishi kerak. */}
+                      {bannedUntil(u) && (
+                        <span className="inline-flex text-[11px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
+                          style={{ color: "#d97706", borderColor: "#d97706" }}
+                          title="Nomaqbul kontent uchun avtomatik blok">
+                          Moderatsiya: {bannedUntil(u)!.toLocaleDateString("uz-UZ")} gacha
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4">
                     <div className="flex gap-2 justify-end">
                       <Link href={`/admin/users/${u.id}`} className="btn-secondary btn-sm">Batafsil</Link>
                       <button onClick={() => block(u.id, !u.isBlocked)} className="btn-secondary btn-sm">{u.isBlocked ? "Ochish" : "Bloklash"}</button>
+                      {isSuper && bannedUntil(u) && (
+                        <button onClick={() => setLiftId(u.id)} className="btn-secondary btn-sm" style={{ color: "#d97706", borderColor: "#d97706" }}>
+                          Blokni ochish
+                        </button>
+                      )}
                       <button onClick={() => setDelId(u.id)} className="btn-danger btn-sm">O'chirish</button>
                     </div>
                   </td>
@@ -132,6 +169,21 @@ export default function AdminUsers() {
         </>
       }>
         <p className="text-sm muted">Foydalanuvchi o'chiriladi. Davom etasizmi?</p>
+      </Modal>
+
+      {/* Moderatsiya blokini ochish — faqat superadmin uchun ko'rinadi. */}
+      <Modal open={!!liftId} onClose={() => setLiftId("")} title="Moderatsiya blokini ochasizmi?" footer={
+        <>
+          <button onClick={() => setLiftId("")} className="btn-secondary">Yo'q</button>
+          <button onClick={() => liftBan(liftId)} className="btn-primary">Ha, ochish</button>
+        </>
+      }>
+        <p className="text-sm muted">
+          Foydalanuvchi nomaqbul kontent uchun avtomatik bloklangan.
+          Blok muddatidan oldin bekor qilinadi va buzilishlar hisobi nolga
+          tushadi — aks holda keyingi bitta buzilish uni darhol qayta
+          bloklardi.
+        </p>
       </Modal>
     </div>
   );
