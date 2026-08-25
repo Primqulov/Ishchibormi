@@ -6,6 +6,7 @@ import { Shell } from "@/components/Shell";
 import { MapPicker, LatLng } from "@/components/ui/MapPicker";
 import { T, useT } from "@/components/T";
 import { fmtThousands, onlyDigits, fmtPhone } from "@/lib/format";
+import { PhoneInput } from "@/components/ui/PhoneInput";
 
 export default function EditElon() {
   const { id } = useParams<{ id: string }>();
@@ -90,10 +91,15 @@ export default function EditElon() {
 
         <label className="block">
           <span className="text-sm font-medium"><T>Aloqa telefon raqami</T></span>
-          <input className="input mt-1 max-w-[260px]" inputMode="numeric"
+          {/* E'lon berish formasi bilan bir xil maydon: "+998" o'zgarmas
+              prefiks. Bu yerda raqam OLDINDAN TO'LDIRILGAN bo'ladi — u
+              profildan olingan "default" emas, e'londa saqlangan haqiqiy
+              qiymat, ya'ni tahrirlashda ko'rinishi kerak. */}
+          <PhoneInput
+            className="mt-1 max-w-[260px]"
             value={e.contactPhone || ""}
-            onChange={(ev) => setE({ ...e, contactPhone: fmtPhone(ev.target.value) })}
-            placeholder="+998 90 020 25 35" />
+            onChange={(contactPhone) => setE({ ...e, contactPhone })}
+          />
         </label>
 
         <div className="flex justify-end gap-2">

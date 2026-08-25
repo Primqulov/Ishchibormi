@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { api, Category, Elon, User, Gender, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
+import { api, Category, Elon, Gender, GENDER_LABEL, GENDER_OPTIONS } from "@/lib/api";
 import { Shell } from "@/components/Shell";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { MultiImageUploader } from "@/components/ui/ImageUpload";
@@ -10,6 +10,7 @@ import { MapPicker, LatLng } from "@/components/ui/MapPicker";
 import { CheckCircle2, AlertTriangle, User2 } from "lucide-react";
 import { T, useT } from "@/components/T";
 import { fmtSum, fmtThousands, onlyDigits, fmtPhone, phoneDigits } from "@/lib/format";
+import { PhoneInput } from "@/components/ui/PhoneInput";
 
 type Form = {
   title: string;
@@ -65,7 +66,9 @@ export default function CreateElon() {
     priceAmount: "",
     startDate: MIN_DATE,
     workTimeFrom: hm(minMoment),
-    contactPhone: "+998 ",
+    // Faqat milliy qism ("90 123 45 67"). "+998" prefiksini PhoneInput
+    // chizadi va u foydalanuvchi tomonidan o'zgartirilmaydi.
+    contactPhone: "",
     images: [],
   });
   const [state, setState] = useState<"idle" | "ok" | "err">("idle");
@@ -76,12 +79,11 @@ export default function CreateElon() {
     queryFn: () => api.get<Category[]>("/api/categories"),
   });
 
-  // Aloqa raqamini foydalanuvchi profilidan oldindan to'ldirish.
-  useEffect(() => {
-    api.get<User>("/api/me").then((u) => {
-      if (u.phone) setForm((f) => ({ ...f, contactPhone: fmtPhone(u.phone) }));
-    }).catch(() => {});
-  }, []);
+  // Aloqa raqami ATAYLAB oldindan to'ldirilmaydi. Ilgari u profildagi raqam
+  // bilan to'lardi, lekin e'londagi raqam ko'pincha boshqa bo'ladi (ishni
+  // boshqa odam qabul qiladi, ish joyining raqami boshqa, ...). Tayyor turgan
+  // raqam esa o'zgartirilmasdan yuborilib ketardi. Endi ish beruvchi bog'lanish
+  // raqamini har safar o'zi yozadi.
 
   const create = useMutation({
     mutationFn: async () => {
@@ -296,13 +298,11 @@ export default function CreateElon() {
           </div>
 
           <Field label="Aloqa telefon raqami *">
-            <input
-              className="input sm:max-w-[280px]"
+            <PhoneInput
               required
-              inputMode="numeric"
+              className="sm:max-w-[280px]"
               value={form.contactPhone}
-              onChange={(e) => setForm({ ...form, contactPhone: fmtPhone(e.target.value) })}
-              placeholder="+998 90 020 25 35"
+              onChange={(contactPhone) => setForm({ ...form, contactPhone })}
             />
           </Field>
 

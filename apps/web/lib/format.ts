@@ -42,6 +42,23 @@ export function fmtPhone(raw: string): string {
   return "+998" + (parts.length ? " " + parts.join(" ") : "");
 }
 
+/**
+ * Milliy qismni guruhlab qaytaradi: "901234567" -> "90 123 45 67".
+ *
+ * [fmtPhone] dan farqi: "+998" QO'SHMAYDI. Formalarda "+998" alohida,
+ * o'zgarmas prefiks sifatida chiziladi (components/ui/PhoneInput.tsx), shuning
+ * uchun maydonning o'z matnida faqat milliy qism turadi.
+ *
+ * Kiruvchi qiymat xohlagan ko'rinishda bo'lishi mumkin — "+998901234567" ni
+ * ko'chirib qo'yilsa ham [phoneDigits] mamlakat kodini olib tashlaydi.
+ */
+export function fmtPhoneLocal(raw: string): string {
+  const d = phoneDigits(raw);
+  return [d.slice(0, 2), d.slice(2, 5), d.slice(5, 7), d.slice(7, 9)]
+    .filter(Boolean)
+    .join(" ");
+}
+
 // phoneDigits: faqat 9 xonali milliy qism (998siz).
 export function phoneDigits(raw: string): string {
   let d = onlyDigits(raw);
