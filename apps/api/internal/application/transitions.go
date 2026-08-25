@@ -1,6 +1,9 @@
 package application
 
 import (
+	"strings"
+	"time"
+
 	"github.com/ishchibormi/backend/internal/models"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -72,4 +75,33 @@ func canCancel(status string) bool {
 // condition that flips an accepted application to "completed".
 func bothConfirmed(a models.Application) bool {
 	return a.EmployerConfirmedDone && a.WorkerConfirmedDone
+}
+
+// startDay normalizes an elon's startDate down to its calendar day
+// (YYYY-MM-DD), or "" when the value is missing or unparseable.
+//
+// startDate is stored in two shapes depending on which client wrote the elon:
+// a bare date ("2026-08-25", web/seed) or a full ISO instant carrying the work
+// hour ("2026-08-25T14:30:00.000", the Flutter app). The "one job per day"
+// rule is about the *day*, so it must never compare the raw strings — two jobs
+// on the same date starting at 08:00 and at 14:00 are the same day but
+// different strings. Same day-part rule as elon.ScheduledStart.
+func startDay(startDate string) string {
+	s := strings.TrimSpace(startDate)
+	if len(s) < 10 {
+		return ""
+	}
+	day := s[:10]
+	if _, err := time.Parse("2006-01-02", day); err != nil {
+		return ""
+	}
+	return day
+}
+
+// sameDay reports whether two startDate values fall on the same calendar day.
+// An unparseable date is never "the same day" as anything — an elon with no
+// usable schedule must not block or cancel applications elsewhere.
+func sameDay(a, b string) bool {
+	da, db := startDay(a), startDay(b)
+	return da != "" && da == db
 }

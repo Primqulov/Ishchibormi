@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -98,25 +99,9 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	// Bir kunga bitta ish: ishchi shu sanaga allaqachon qabul qilingan (hali
 	// yakunlanmagan) ishi bo'lsa, ariza yuborilmaydi — ogohlantirish ishchiga
 	// ko'rsatiladi (ish beruvchiga emas).
-	if elon.StartDate != "" {
-		acur, aerr := h.Apps.Find(r.Context(), bson.M{"workerId": uid, "status": "accepted"})
-		if aerr == nil {
-			var otherElonIDs []primitive.ObjectID
-			for acur.Next(r.Context()) {
-				var oa models.Application
-				if acur.Decode(&oa) == nil {
-					otherElonIDs = append(otherElonIDs, oa.ElonID)
-				}
-			}
-			_ = acur.Close(r.Context())
-			if len(otherElonIDs) > 0 {
-				n, _ := h.Elons.CountDocuments(r.Context(), bson.M{"_id": bson.M{"$in": otherElonIDs}, "startDate": elon.StartDate})
-				if n > 0 {
-					httpx.Err(w, httpx.NewError(409, "worker_busy_day", "Siz shu kunga boshqa ishga qabul qilingansiz. Avvalgi ish yakunlangach ariza yuborishingiz mumkin."))
-					return
-				}
-			}
-		}
+	if len(h.workerAppsOnDay(r.Context(), uid, "accepted", startDay(elon.StartDate), primitive.NilObjectID)) > 0 {
+		httpx.Err(w, httpx.NewError(409, "worker_busy_day", "Siz shu kunga boshqa ishga qabul qilingansiz. Avvalgi ish yakunlangach ariza yuborishingiz mumkin."))
+		return
 	}
 	worker, err := loadUser(r.Context(), h.Users, uid)
 	if err != nil {
@@ -260,6 +245,15 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, decision string
 				fmt.Sprintf("Bu arizada %d kishi, ammo atigi %d o'rin qoldi. Kamroq kishilik arizani tanlang.", people, slotsRemaining(pre.WorkersNeeded, pre.AcceptedCount))))
 			return
 		}
+		// Bir kunga bitta ish: ishchi shu kunga boshqa ishga allaqachon qabul
+		// qilingan bo'lsa, ikkinchisiga qabul qilib bo'lmaydi. Odatda bunday
+		// ariza pastdagi avtomatik bekor qilish bilan yopilgan bo'ladi; bu
+		// tekshiruv eski (tuzatishdan oldingi) ma'lumotlarni va ikki ish
+		// beruvchi bir vaqtda qabul qilib yuborishini ushlab qoladi.
+		if len(h.workerAppsOnDay(r.Context(), app.WorkerID, "accepted", startDay(pre.StartDate), appID)) > 0 {
+			httpx.Err(w, httpx.NewError(409, "worker_busy_day", "Bu ishchi shu kunga boshqa ishga qabul qilingan."))
+			return
+		}
 	}
 	set := bson.M{"status": decision, "decidedAt": now}
 	transition, err := h.Apps.UpdateOne(r.Context(),
@@ -326,54 +320,27 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, decision string
 				}
 			}
 		}
-		// Bir kunga bitta ish: ishchi endi shu sanaga band. Uning shu kunga
-		// yuborilgan boshqa kutilayotgan arizalarini avtomatik bekor qilamiz —
-		// boshqa ish beruvchilar band ishchini qabul qilib qo'ymasligi uchun.
-		if elon.StartDate != "" {
-			pcur, perr := h.Apps.Find(r.Context(), bson.M{"workerId": app.WorkerID, "status": "pending", "_id": bson.M{"$ne": appID}})
-			if perr == nil {
-				var pend []models.Application
-				for pcur.Next(r.Context()) {
-					var pa models.Application
-					if pcur.Decode(&pa) == nil {
-						pend = append(pend, pa)
-					}
-				}
-				_ = pcur.Close(r.Context())
-				if len(pend) > 0 {
-					ids := make([]primitive.ObjectID, 0, len(pend))
-					for _, pa := range pend {
-						ids = append(ids, pa.ElonID)
-					}
-					sameDay := map[primitive.ObjectID]bool{}
-					ecur, eerr := h.Elons.Find(r.Context(), bson.M{"_id": bson.M{"$in": ids}, "startDate": elon.StartDate})
-					if eerr == nil {
-						for ecur.Next(r.Context()) {
-							var se models.Elon
-							if ecur.Decode(&se) == nil {
-								sameDay[se.ID] = true
-							}
-						}
-						_ = ecur.Close(r.Context())
-					}
-					cancelledAny := false
-					for _, pa := range pend {
-						if !sameDay[pa.ElonID] {
-							continue
-						}
-						_, _ = h.Apps.UpdateOne(r.Context(), bson.M{"_id": pa.ID, "status": "pending"}, bson.M{"$set": bson.M{
-							"status": "cancelled", "cancelledBy": "worker",
-							"cancelReason": "Shu kunga boshqa ishga qabul qilindi (avtomatik bekor qilindi)",
-							"decidedAt":    now,
-						}})
-						cancelledAny = true
-						h.Notify.Push(r.Context(), pa.EmployerID, "application_cancelled", "Ariza bekor qilindi", pa.ElonTitle+" — ishchi shu kunga boshqa ishga qabul qilindi", &models.RelatedEntity{Type: "application", ID: pa.ID})
-					}
-					if cancelledAny {
-						h.Notify.Push(r.Context(), app.WorkerID, "application_cancelled", "Arizalaringiz bekor qilindi", "Shu kunga boshqa kutilayotgan arizalaringiz avtomatik bekor qilindi", nil)
-					}
-				}
+		// Bir kunga bitta ish: ishchi endi shu sanaga band. Uning aynan shu
+		// kunga yuborilgan boshqa kutilayotgan arizalarini avtomatik bekor
+		// qilamiz — boshqa ish beruvchilar band ishchini qabul qilib
+		// qo'ymasligi uchun. Boshqa kunlardagi arizalarga tegilmaydi.
+		cancelledAny := false
+		for _, pa := range h.workerAppsOnDay(r.Context(), app.WorkerID, "pending", startDay(elon.StartDate), appID) {
+			res, uerr := h.Apps.UpdateOne(r.Context(), bson.M{"_id": pa.ID, "status": "pending"}, bson.M{"$set": bson.M{
+				"status": "cancelled", "cancelledBy": "worker",
+				"cancelReason": "Shu kunga boshqa ishga qabul qilindi (avtomatik bekor qilindi)",
+				"decidedAt":    now,
+			}})
+			// Ariza shu orada boshqa holatga o'tgan bo'lsa (masalan ish beruvchi
+			// rad etib ulgurgan) — hech nima o'zgarmadi, xabar ham yubormaymiz.
+			if uerr != nil || res.ModifiedCount != 1 {
+				continue
 			}
+			cancelledAny = true
+			h.Notify.Push(r.Context(), pa.EmployerID, "application_cancelled", "Ariza bekor qilindi", pa.ElonTitle+" — ishchi shu kunga boshqa ishga qabul qilindi", &models.RelatedEntity{Type: "application", ID: pa.ID})
+		}
+		if cancelledAny {
+			h.Notify.Push(r.Context(), app.WorkerID, "application_cancelled", "Arizalaringiz bekor qilindi", "Shu kunga boshqa kutilayotgan arizalaringiz avtomatik bekor qilindi", nil)
 		}
 	} else {
 		h.Notify.Push(r.Context(), app.WorkerID, "application_rejected", "Arizangiz rad etildi", app.ElonTitle, &models.RelatedEntity{Type: "application", ID: appID})
@@ -601,6 +568,81 @@ func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
 	}
 	h.liveAppAvatars(r.Context(), out)
 	httpx.JSON(w, 200, out)
+}
+
+// sameDayElonFilter — startDate'i `day` (YYYY-MM-DD) kuniga to'g'ri keladigan
+// e'lonlar filtri. startDate ikki xil ko'rinishda saqlanadi — yalang sana
+// ("2026-08-25") yoki to'liq ISO sana-vaqt ("2026-08-25T14:30:00.000") — shuning
+// uchun tenglik emas, kun prefiksi bo'yicha solishtiramiz. Regex satr boshiga
+// bog'langani uchun indeksdan foydalana oladi.
+func sameDayElonFilter(day string) bson.M {
+	return bson.M{"startDate": primitive.Regex{Pattern: "^" + regexp.QuoteMeta(day)}}
+}
+
+// workerAppsOnDay — ishchining `status` holatidagi, e'loni `day` kuniga
+// rejalashtirilgan arizalari. `except` berilsa o'sha ariza hisobga olinmaydi
+// (masalan hozir qabul qilinayotgani). `day` bo'sh bo'lsa — e'londa sana yo'q,
+// "bir kunga bitta ish" qoidasi qo'llanmaydi va hech nima qaytmaydi.
+//
+// Ikki so'rov: avval ishchining arizalari (workerId+status indeksi), so'ng
+// aynan o'sha arizalarning e'lonlari orasidan kun bo'yicha filtr — ikkala
+// to'plam ham bitta ishchining faol arizalari bilan chegaralangan.
+func (h *Handler) workerAppsOnDay(ctx context.Context, workerID primitive.ObjectID, status, day string, except primitive.ObjectID) []models.Application {
+	if day == "" {
+		return nil
+	}
+	filter := bson.M{"workerId": workerID, "status": status}
+	if !except.IsZero() {
+		filter["_id"] = bson.M{"$ne": except}
+	}
+	cur, err := h.Apps.Find(ctx, filter)
+	if err != nil {
+		return nil
+	}
+	var apps []models.Application
+	for cur.Next(ctx) {
+		var a models.Application
+		if cur.Decode(&a) == nil {
+			apps = append(apps, a)
+		}
+	}
+	_ = cur.Close(ctx)
+	if len(apps) == 0 {
+		return nil
+	}
+
+	elonIDs := make([]primitive.ObjectID, 0, len(apps))
+	for _, a := range apps {
+		elonIDs = append(elonIDs, a.ElonID)
+	}
+	dayFilter := sameDayElonFilter(day)
+	dayFilter["_id"] = bson.M{"$in": elonIDs}
+	ecur, err := h.Elons.Find(ctx, dayFilter, options.Find().SetProjection(bson.M{"_id": 1, "startDate": 1}))
+	if err != nil {
+		return nil
+	}
+	onDay := map[primitive.ObjectID]bool{}
+	for ecur.Next(ctx) {
+		var e struct {
+			ID        primitive.ObjectID `bson:"_id"`
+			StartDate string             `bson:"startDate"`
+		}
+		// Regex — indeksdan foydalanadigan tez old-filtr; kun tengligiga
+		// yakuniy qarorni sameDay chiqaradi, ya'ni qoida bitta (testlangan)
+		// joyda turadi va kutilmagan saqlangan qiymat o'tib ketmaydi.
+		if ecur.Decode(&e) == nil && sameDay(e.StartDate, day) {
+			onDay[e.ID] = true
+		}
+	}
+	_ = ecur.Close(ctx)
+
+	var out []models.Application
+	for _, a := range apps {
+		if onDay[a.ElonID] {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func loadUser(ctx context.Context, col *mongo.Collection, id primitive.ObjectID) (*models.User, error) {
