@@ -35,11 +35,21 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 
 // Logout revokes all outstanding tokens for this admin by advancing the token
 // version, then writes an audit trail entry.
+//
+// Chiqish ATAYLAB barcha qurilmalarni qamraydi (veb ham, mobil ilova ham).
+// "Faqat shu qurilmadan chiqish" degan yumshoqroq variant ham bo'lardi, lekin
+// chiqish tugmasi bosiladigan asosiy holat — begona kompyuter yoki yo'qolgan
+// telefon; unda yarim chorasi umuman chora emas.
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	aid, _ := primitive.ObjectIDFromHex(httpx.AdminID(r))
 	var a models.Admin
 	_ = h.Admins.FindOne(r.Context(), bson.M{"_id": aid}).Decode(&a)
 	_, _ = h.Admins.UpdateOne(r.Context(), bson.M{"_id": aid}, bson.M{"$inc": bson.M{"tokenVersion": 1}})
+	// tokenVersion oshgani sessiyalarni allaqachon kuchsizlantiradi; hujjatlarni
+	// o'chirish esa refresh so'rovini bazadayoq to'xtatadi va kolleksiyada
+	// o'lik yozuv qoldirmaydi.
+	h.revokeSessions(r.Context(), aid)
+	h.clearRefreshCookie(w)
 	h.auditRaw(r.Context(), aid, "logout", a.Username, "")
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }

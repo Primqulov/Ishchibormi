@@ -32,6 +32,19 @@ type Config struct {
 	JWTAdminTTL      time.Duration
 	JWTRefreshTTL    time.Duration
 
+	// AdminIdleTTL — admin sessiyasi qancha vaqt FOYDALANILMASA yopiladi.
+	//
+	// JWTAdminTTL dan farqi bor: u access tokenning umri (o'g'irlangan
+	// token tez o'lsin uchun ataylab qisqa), bu esa "qachongacha parol va
+	// 2FA qayta so'ralmaydi" degan oyna. Har bir so'rov oynani boshidan
+	// boshlaydi, ya'ni ishlab turgan admin hech qachon chiqarilmaydi.
+	//
+	// Oyna HISOB bo'yicha yagona: veb panel va mobil admin ilovasi uni
+	// bo'lishadi. Bittasida ishlash ikkinchisini ham tirik saqlaydi;
+	// ikkalasiga ham tegilmasa ikkalasi birdan yopiladi.
+	// Mexanizm: internal/admin/refresh.go va session.go.
+	AdminIdleTTL time.Duration
+
 	CORSOrigins []string
 
 	AdminSeedUser string
@@ -230,9 +243,11 @@ func Load() Config {
 		// tokenni ataylab saqlamaydi (XSS yuzasini qisqartirish uchun) — web
 		// seansi shu muddat bilan tugaydi va foydalanuvchi qayta OTP orqali
 		// kiradi. O'g'irlangan token ilgari 15 kun yashardi; endi ko'pi 3 kun.
-		JWTAccessTTL:    time.Duration(envInt("JWT_ACCESS_TTL_MIN", 4320)) * time.Minute,
-		JWTAdminTTL:     time.Duration(envInt("JWT_ADMIN_TTL_MIN", 30)) * time.Minute,
-		JWTRefreshTTL:   time.Duration(envInt("JWT_REFRESH_TTL_HRS", 720)) * time.Hour,
+		JWTAccessTTL:  time.Duration(envInt("JWT_ACCESS_TTL_MIN", 4320)) * time.Minute,
+		JWTAdminTTL:   time.Duration(envInt("JWT_ADMIN_TTL_MIN", 30)) * time.Minute,
+		JWTRefreshTTL: time.Duration(envInt("JWT_REFRESH_TTL_HRS", 720)) * time.Hour,
+		// 72 soat = 3 kun.
+		AdminIdleTTL:    time.Duration(envInt("ADMIN_IDLE_TTL_HOURS", 72)) * time.Hour,
 		CORSOrigins:     envList("CORS_ORIGINS", "http://localhost:3000"),
 		AdminSeedUser:   envStr("ADMIN_SEED_USER", "admin"),
 		AdminSeedPass:   envStr("ADMIN_SEED_PASS", "Admin123!"),
@@ -357,6 +372,13 @@ func (c Config) mustValidate() {
 	}
 	if c.JWTAdminTTL < 5*time.Minute || c.JWTAdminTTL > time.Hour {
 		problems = append(problems, "JWT_ADMIN_TTL_MIN must be between 5 and 60 minutes")
+	}
+	// Yuqori chegara sessiyaning qat'iy umri bilan bir xil (30 kun): undan
+	// katta oyna hech qachon ishga tushmasdi, ya'ni jimgina yolg'on sozlama
+	// bo'lardi. Quyi chegara bir soat — undan qisqasi kun bo'yi ishlaydigan
+	// adminni bekorga chiqarib yuborardi.
+	if c.AdminIdleTTL < time.Hour || c.AdminIdleTTL > 30*24*time.Hour {
+		problems = append(problems, "ADMIN_IDLE_TTL_HOURS must be between 1 and 720 hours")
 	}
 	if c.OTPLength < 6 || c.OTPLength > 8 || c.OTPTTL < time.Minute || c.OTPTTL > 10*time.Minute {
 		problems = append(problems, "OTP_LENGTH/OTP_TTL_SECONDS must stay within 6-8 digits and 60-600 seconds")

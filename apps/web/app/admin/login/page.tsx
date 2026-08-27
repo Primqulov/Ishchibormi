@@ -5,7 +5,9 @@ import { api, setAdminToken } from "@/lib/api";
 
 export default function AdminLogin() {
   const router = useRouter();
-  const [u, setU] = useState("admin");
+  // Bo'sh: oldindan yozilgan "admin" haqiqiy foydalanuvchi nomi emas edi va
+  // har kirishda o'chirishga to'g'ri kelardi.
+  const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [code, setCode] = useState("");
   const [needCode, setNeedCode] = useState(false);

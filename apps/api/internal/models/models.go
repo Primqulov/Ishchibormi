@@ -363,8 +363,49 @@ type Admin struct {
 	// Incremented whenever credentials, role, active state, or logout changes
 	// the session. Admin JWTs carry the matching value and are rejected when it
 	// differs, providing immediate revocation for privileged sessions.
-	TokenVersion int       `bson:"tokenVersion,omitempty" json:"-"`
-	CreatedAt    time.Time `bson:"createdAt" json:"createdAt"`
+	TokenVersion int `bson:"tokenVersion,omitempty" json:"-"`
+	// LastActivityAt — bu hisob OXIRGI marta qachon ishlatilgani, klientdan
+	// qat'i nazar. Veb panel ham, mobil admin ilovasi ham SHU maydonni
+	// yangilaydi, chunki "foydalanilmasa chiqarib yuborish" oynasi hisob
+	// bo'yicha yagona: bir joyda ishlash ikkinchisini ham tirik saqlashi
+	// kerak (config.AdminIdleTTL, internal/admin/refresh.go).
+	//
+	// Har so'rovda emas, daqiqada bir marta yoziladi — aniqligi 3 kunlik oyna
+	// uchun yetarli, yozuv yuki esa nolga yaqin.
+	LastActivityAt time.Time `bson:"lastActivityAt,omitempty" json:"lastActivityAt,omitempty"`
+	CreatedAt      time.Time `bson:"createdAt" json:"createdAt"`
+}
+
+// AdminSession — bitta qurilmadagi admin sessiyasi (veb brauzer yoki mobil
+// ilova). Access token qisqa umr ko'radi; uni yangilab turadigan refresh
+// token shu yerda yashaydi.
+//
+// Xom token SAQLANMAYDI — faqat SHA-256 xeshi. Bazani o'qiy olgan hujum
+// shundan tokenni tiklay olmaydi. Butun mexanizm va nega aynan shunday
+// qilingani: internal/admin/refresh.go.
+type AdminSession struct {
+	ID      primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	AdminID primitive.ObjectID `bson:"adminId" json:"adminId"`
+	// TokenHash — hozir kuchda bo'lgan refresh tokenning xeshi.
+	TokenHash string `bson:"tokenHash" json:"-"`
+	// PrevTokenHash/PrevValidUntil — aylantirishdan keyingi qisqa imtiyoz
+	// oynasi: javob mijozga yetib bormasa (tarmoq uzilishi) eski token
+	// PrevValidUntil gacha qabul qilinaveradi va admin bekorga chiqarib
+	// yuborilmaydi.
+	PrevTokenHash  string    `bson:"prevTokenHash,omitempty" json:"-"`
+	PrevValidUntil time.Time `bson:"prevValidUntil,omitempty" json:"-"`
+	// TokenVersion — sessiya ochilgan paytdagi Admin.TokenVersion. Farq qilsa
+	// (logout, parol yoki rol o'zgarishi) sessiya kuchdan qoladi.
+	TokenVersion int    `bson:"tokenVersion" json:"-"`
+	Platform     string `bson:"platform,omitempty" json:"platform,omitempty"`
+	// IP — sessiya ochilgan manzil. Faqat audit uchun; klientga chiqmaydi.
+	IP         string    `bson:"ip,omitempty" json:"-"`
+	CreatedAt  time.Time `bson:"createdAt" json:"createdAt"`
+	LastUsedAt time.Time `bson:"lastUsedAt" json:"lastUsedAt"`
+	// ExpiresAt — QAT'IY yuqori chegara (faollikdan qat'i nazar) va TTL
+	// indeksi uchun belgi. 3 kunlik "foydalanilmasa" oynasi bu yerda emas,
+	// Admin.LastActivityAt da hisoblanadi.
+	ExpiresAt time.Time `bson:"expiresAt" json:"expiresAt"`
 }
 
 // Broadcast — admin ommaviy bildirishnomasi tarixi. Yuborish fon jarayonida

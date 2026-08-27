@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { API_BASE, api, Category, getAdminRole, getAdminToken } from "@/lib/api";
+import { adminBase, api, Category, getAdminRole, getAdminToken } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { CategoryIcon } from "@/components/CategoryIcon";
 
@@ -39,9 +39,14 @@ export default function AdminCategories() {
     try {
       const body = new FormData();
       body.append("file", file, file.name);
-      const res = await fetch(`${API_BASE}/api/admin/categories/icon`, {
+      // adminBase(), API_BASE emas: admin API endi faqat boshqaruv
+      // subdomenida javob beradi — ommaviy domenda bu yo'l 404.
+      // Bu chaqiruv FormData yuborgani uchun api.post'dan o'tmaydi (u
+      // JSON qo'yadi), shuning uchun manzil bu yerda alohida tanlanadi.
+      const res = await fetch(`${adminBase()}/api/admin/categories/icon`, {
         method: "POST",
         headers: { Authorization: `Bearer ${getAdminToken() || ""}` },
+        credentials: "include",
         body,
       });
       const data = await res.json().catch(() => null);

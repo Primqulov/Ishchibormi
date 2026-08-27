@@ -25,8 +25,11 @@ import (
 var validRoles = map[string]bool{"superadmin": true, "moderator": true, "support": true}
 
 type Handler struct {
-	Cfg        config.Config
-	Admins     *mongo.Collection
+	Cfg    config.Config
+	Admins *mongo.Collection
+	// Sessions — admin refresh tokenlari (bitta qurilma = bitta
+	// hujjat). Mexanizm: refresh.go.
+	Sessions   *mongo.Collection
 	Users      *mongo.Collection
 	Elons      *mongo.Collection
 	Cats       *mongo.Collection
@@ -49,6 +52,7 @@ func NewHandler(cfg config.Config, db *mongo.Database, n *notification.Service, 
 	return &Handler{
 		Cfg:        cfg,
 		Admins:     db.Collection("admins"),
+		Sessions:   db.Collection("admin_sessions"),
 		Users:      db.Collection("users"),
 		Elons:      db.Collection("elons"),
 		Cats:       db.Collection("categories"),

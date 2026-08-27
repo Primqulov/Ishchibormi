@@ -76,6 +76,7 @@ Har bir paketda `handler.go` bor; funksiyalari HTTP endpoint'larga bog'langan.
 | Paket | Fayl | Vazifasi |
 |-------|------|----------|
 | `auth` | `handler.go`, `otp.go` | OTP so'rash/tekshirish, JWT (access/refresh) chiqarish, refresh, foydalanuvchini upsert qilish. `otp.go` — OTP kodlarini Mongo TTL kolleksiyada saqlaydi. |
+| `admin` (sessiya) | `refresh.go`, `session.go` | Admin sessiyasi: qisqa umrli access token + aylanuvchi refresh token (veb — HttpOnly cookie, mobil — javob tanasi). 3 kun foydalanilmasa hisobning barcha sessiyalari yopiladi; oyna veb va ilova uchun BIRGA yuritiladi. |
 | `user` | `handler.go` | `Me`/`UpdateMe` (o'z profili), `GetPublic` (ochiq profil), `Search` (qidirish), `Block`/`Unblock`. |
 | `category` | `handler.go` | `List` (turkumlar). Turkumlarni faqat admin belgilaydi. |
 | `elon` | `handler.go`, `price_test.go` | E'lon CRUD + `Feed` + `MyElons`. Narx hisoblash (`computePrice`), muddat tekshiruvi (`isExpired`/`notExpiredExpr`), **ish sanasi 3 kun ichida ekanini tekshirish (`validateStartDate`)**. Geokodlash orqali viloyat/tuman aniqlanadi. |
@@ -155,9 +156,15 @@ Bazaviy prefiks: `/api`. Autentifikatsiya: `Authorization: Bearer <accessToken>`
 | DELETE | `/api/uploads` | `upload.Delete` | Faylni o'chirish. |
 
 ### 4.3 Admin (`/api/admin`, alohida admin JWT)
+
+> Bu yo'llar **faqat boshqaruv subdomenida** javob beradi. `ishchibormi.uz` va
+> `api.ishchibormi.uz` da ular 404 — panel va uning API'si oddiy foydalanuvchi
+> biladigan domenlarda umuman ko'rinmaydi (`deploy/Caddyfile`).
+
 | Metod | Yo'l | Handler | Vazifasi |
 |-------|------|---------|----------|
 | POST | `/api/admin/login` | `admin.Login` | Admin kirishi (rate-limit). |
+| POST | `/api/admin/refresh` | `admin.Refresh` | Sessiyani yangilash — access token + aylanuvchi refresh token. |
 | GET | `/api/admin/dashboard` | `admin.Dashboard` | Statistika. |
 | GET | `/api/admin/users` | `admin.ListUsers` | Foydalanuvchilar. |
 | POST | `/api/admin/users/{id}/block` | `admin.BlockUser` | Bloklash. |
@@ -203,7 +210,8 @@ Next.js App Router. Uch guruh: ochiq `(public)`, kabinet `(cabinet)`, admin `adm
   `history`, `notifications`, `feedback`, `process`, `profile`, `settings`,
   `onboarding` (+ `layout.tsx`).
 - **`admin/`** — `login`, `page` (dashboard), `users`, `elons`, `categories`,
-  `reports`, `feedback`, `notifications`, `audit`.
+  `reports`, `feedback`, `notifications`, `audit`. Bu guruh faqat boshqaruv
+  subdomenida ochiladi; ommaviy domenda `middleware.ts` uni 404 qiladi.
 
 ### 6.2 Yordamchilar — `lib/`
 `api.ts` (API klient), `i18n.ts` (uz/ru/en + lotin/kirill), `format.ts`,

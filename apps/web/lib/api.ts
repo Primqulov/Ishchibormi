@@ -3,6 +3,25 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080";
 export const WS_BASE = process.env.NEXT_PUBLIC_WS_BASE || "ws://localhost:8080";
 
+/**
+ * Admin so'rovlari qaysi manzilga ketishi.
+ *
+ * Productionda — SAME-ORIGIN (bo'sh prefiks). Bu bezak emas, shart: admin
+ * sessiyasini uzoq tutib turadigan refresh token HttpOnly cookie'da yuradi va
+ * brauzer bunday cookie'ni faqat o'z originiga ishonchli yuboradi. Panel esa
+ * faqat boshqaruv subdomenida ochiladi (middleware.ts) va u yerda Caddy
+ * `/api/*` ni backendga o'zi uzatadi — ya'ni "same-origin" har doim to'g'ri.
+ *
+ * Xost nomi bu yerda ATAYLAB yozilmagan: bitta build ommaviy saytga ham
+ * xizmat qiladi, ya'ni nom brauzerga yuklanadigan JS ichiga tushib, maxfiy
+ * bo'lmay qolardi.
+ *
+ * Lokal ishlashda (`next dev` `/api/*` ni uzatmaydi) — odatdagi API_BASE.
+ */
+export function adminBase(): string {
+  return process.env.NODE_ENV === "production" ? "" : API_BASE;
+}
+
 const ACCESS_KEY = "ib-access";
 const ADMIN_KEY = "ib-admin";
 // Legacy key: the refresh token used to be persisted here. The web app never
@@ -40,6 +59,50 @@ export function getAdminToken(): string | null {
   return sessionStorage.getItem(ADMIN_KEY);
 }
 
+/**
+ * Admin access tokenini yangilaydi.
+ *
+ * Access token ataylab qisqa umr ko'radi (30 daqiqa) — o'g'irlangani tez
+ * o'lishi uchun. Uni yangilab turadigan refresh token esa HttpOnly cookie'da
+ * bo'lgani uchun bu yerdagi kod uni ko'rmaydi ham: brauzer so'rovga o'zi
+ * qo'shadi. Backend 3 kunlik "foydalanilmasa chiqarish" oynasini shu yerda
+ * tekshiradi (apps/api/internal/admin/refresh.go).
+ *
+ * Bitta uchuvchi so'rov: sahifada bir vaqtda bir necha so'rov 401 olsa,
+ * hammasi shu bitta yangilashni kutadi — aks holda ular bir-birining
+ * tokenini almashtirib yuborardi (refresh token har chaqiruvda aylanadi).
+ */
+let adminRefreshInFlight: Promise<boolean> | null = null;
+
+async function runAdminRefresh(): Promise<boolean> {
+  try {
+    const res = await fetch(`${adminBase()}/api/admin/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Client-Platform": "web" },
+      // Cookie same-origin'da avtomatik ketadi; lokal ishlashda (3000 -> 8080)
+      // esa faqat shu bayroq bilan yuboriladi.
+      credentials: "include",
+      body: "{}",
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data?.accessToken) return false;
+    setAdminToken(data.accessToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function adminRefresh(): Promise<boolean> {
+  if (!adminRefreshInFlight) {
+    adminRefreshInFlight = runAdminRefresh().finally(() => {
+      adminRefreshInFlight = null;
+    });
+  }
+  return adminRefreshInFlight;
+}
+
 // downloadAdminCsv triggers a browser download of an admin CSV export. The admin
 // JWT goes in the Authorization header (fetch + blob), never in the URL —
 // query-string tokens end up in proxy access logs and browser history.
@@ -47,9 +110,15 @@ export async function downloadAdminCsv(path: string, params?: URLSearchParams) {
   if (typeof document === "undefined") return;
   const qs = params && params.toString() ? `?${params}` : "";
   try {
-    const res = await fetch(`${API_BASE}${path}${qs}`, {
-      headers: { Authorization: `Bearer ${getAdminToken() || ""}` },
-    });
+    const fetchCsv = () =>
+      fetch(`${adminBase()}${path}${qs}`, {
+        headers: { Authorization: `Bearer ${getAdminToken() || ""}` },
+        credentials: "include",
+      });
+    let res = await fetchCsv();
+    // Eksport odatda uzoq ochiq turgan sahifadan bosiladi — aynan shu paytda
+    // access token eskirgan bo'lishi mumkin. Bir marta yangilab qayta uramiz.
+    if (res.status === 401 && (await adminRefresh())) res = await fetchCsv();
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -137,7 +206,9 @@ function responseError(status: number, data: any): APIError {
 
 async function request<T>(
   path: string,
-  opts: RequestInit & { auth?: "user" | "admin" | "none" } = {}
+  // _retried — 401 dan keyingi bitta qayta urinish belgisi. Usiz token
+  // yangilanmaydigan holatda so'rov cheksiz aylanib qolardi.
+  opts: RequestInit & { auth?: "user" | "admin" | "none"; _retried?: boolean } = {}
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -163,7 +234,14 @@ async function request<T>(
   // oflayn holatni online qurilmadagi backend nosozligidan ajratamiz.
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+    res = await fetch(`${auth === "admin" ? adminBase() : API_BASE}${path}`, {
+      ...opts,
+      headers,
+      // Admin refresh cookie'si so'rov bilan birga ketsin. Foydalanuvchi
+      // oqimida cookie umuman yo'q (faqat Bearer token), shuning uchun u
+      // yerda o'zgarish sezilmaydi.
+      ...(auth === "admin" ? { credentials: "include" as RequestCredentials } : {}),
+    });
   } catch {
     throw connectionError();
   }
@@ -199,6 +277,13 @@ async function request<T>(
     // qilishga yo'naltiramiz. Aks holda panel har bir amalni "invalid token"
     // bilan rad etib, foydalanuvchini kirgan holatda qotirib qo'yadi.
     if (res.status === 401 && auth === "admin") {
+      // 401 "sessiya tugadi" degani EMAS. Access token atigi 30 daqiqa
+      // yashaydi, shuning uchun avval uni jimgina yangilab ko'ramiz: 3 kunlik
+      // oyna ochiq bo'lsa admin buni umuman sezmaydi va shu so'rov qaytadan
+      // yuboriladi. Faqat yangilash ham rad etilsa — haqiqatan chiqaramiz.
+      if (!opts._retried && (await adminRefresh())) {
+        return request<T>(path, { ...opts, _retried: true });
+      }
       setAdminToken(null);
       if (typeof window !== "undefined" && window.location.pathname !== "/admin/login") {
         window.location.replace("/admin/login?session=expired");

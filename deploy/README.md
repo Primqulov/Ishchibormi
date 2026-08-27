@@ -6,19 +6,85 @@ Ishga tushirish bilan bog'liq fayllar. Ilova kodi bu yerda emas — u `apps/` da
 |------|----------|
 | `docker-compose.dev.yml` | Lokal dev overlay (APP_ENV=dev, OTP_DEV_RETURN, localhost CORS) |
 | `server-setup.sh` | Yangi Hetzner Cloud serverni noldan tayyorlaydi (Docker, Caddy, ufw, swap, deploy user, cron) |
-| `Caddyfile` | Xostdagi Caddy konfiguratsiyasi — TLS + `/api`,`/uploads` → backend, qolgani → Next.js |
+| `Caddyfile` | Xostdagi Caddy konfiguratsiyasi — TLS, uchta xost (ommaviy sayt, mobil API, boshqaruv paneli) |
 | `backup-mongo.sh` | Konteyner Mongo'ning kunlik gzip zaxirasi (7 kun saqlanadi) |
 
 ## Production — Hetzner Cloud server
 
 ```
 Internet → :443 Caddy (xost, avtomatik Let's Encrypt)
-              ├── /api/*, /uploads/*, /healthz → 127.0.0.1:8080  (Go API)
-              └── qolgan hamma narsa          → 127.0.0.1:3000  (Next.js)
+  │
+  ├── ishchibormi.uz
+  │     ├── /admin*, /api/admin/*  → 404  (panel bu domenda YO'Q)
+  │     ├── /api/*, /uploads/*     → 127.0.0.1:8080  (Go API)
+  │     └── qolgan hamma narsa     → 127.0.0.1:3000  (Next.js)
+  │
+  ├── api.ishchibormi.uz            (mobil ilova)
+  │     ├── /api/admin/*           → 404
+  │     └── qolgani                → 127.0.0.1:8080
+  │
+  └── <boshqaruv subdomeni>         (nomi repoda yo'q — pastga qarang)
+        ├── /api/*                 → 127.0.0.1:8080  (basic-auth'siz)
+        └── qolgani (panel)        → 127.0.0.1:3000  (basic-auth ortida)
 
 docker compose: mongo + backend + bot + frontend
                 (barchasi faqat 127.0.0.1 ga bog'langan)
 ```
+
+## Boshqaruv (admin) paneli — alohida subdomen
+
+Panel ilgari `ishchibormi.uz/admin` da edi, ya'ni login formasi saytga kirgan
+har kimga ochiq turardi. Endi u alohida xostda, uch qatlam ortida:
+
+1. **Boshqa xost** — ommaviy domenlarning ikkalasida ham `/admin` va
+   `/api/admin/*` 404 (Caddy), Next.js middleware'ida ham xuddi shu qoida
+   takrorlangan (`apps/web/middleware.ts`).
+2. **Nomi repoda yo'q** — bu repo ochiq, shuning uchun xost nomi faqat
+   serverda: Caddy uni `/etc/caddy/panel.env` dan, Next.js esa `.env` dagi
+   `ADMIN_PANEL_HOST` dan oladi. **Ikkalasi bir xil bo'lishi shart.**
+3. **Basic-auth** — panel sahifalariga yetib borish uchun ham alohida parol
+   kerak. `/api/*` ATAYLAB basic-auth'siz: mobil admin ilovasi
+   `Authorization` sarlavhasini Bearer token uchun band qiladi.
+
+### Serverda bir martalik sozlash
+
+```bash
+# 1) Caddy uchun maxfiy qiymatlar
+sudo install -m 640 -o root -g caddy /dev/null /etc/caddy/panel.env
+sudo tee /etc/caddy/panel.env >/dev/null <<'EOF'
+IB_PANEL_HOST=boshqaruv-xxxxxx.ishchibormi.uz
+IB_PANEL_USER=ib-panel
+# Xeshni `caddy hash-password` chiqaradi. Bir tirnoq ichida yozilishi SHART:
+# bcrypt xeshi `$` belgilarini o'z ichiga oladi.
+IB_PANEL_HASH='$2a$10$...'
+EOF
+
+# 2) systemd Caddy'ga shu faylni ko'rsatsin
+sudo mkdir -p /etc/systemd/system/caddy.service.d
+sudo tee /etc/systemd/system/caddy.service.d/panel-env.conf >/dev/null <<'EOF'
+[Service]
+EnvironmentFile=/etc/caddy/panel.env
+EOF
+sudo systemctl daemon-reload
+
+# 3) Konfiguratsiyani o'rnatish
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl restart caddy   # EnvironmentFile o'zgarganda reload yetmaydi
+```
+
+DNS'da subdomen uchun A-yozuv server IP'siga yo'naltirilgan bo'lishi kerak —
+Caddy sertifikatni o'zi oladi.
+
+Sozlama berilmasa blok **inert**: xost `panel.localhost` ga tushadi va parol
+xeshi hech kim bilmaydigan tasodifiy qiymatniki. Ya'ni env fayl yo'qolsa ham
+Caddy ishga tushaveradi va asosiy sayt o'chib qolmaydi.
+
+> **Nomi o'zgarsa** uchta joyni birga yangilash kerak:
+> 1. `/etc/caddy/panel.env` → `sudo systemctl restart caddy`
+> 2. `ADMIN_PANEL_HOST` (GitHub secret + serverdagi `.env`) → `docker compose up -d frontend`
+>    (qiymat runtime'da o'qiladi, qayta build shart emas)
+> 3. admin mobil ilovasidagi `ApiConfig.prodBaseUrl` → APK qayta yig'iladi
 
 Caddy ATAYLAB compose ichida emas, xostda: `docker compose down` qilinganda
 ham 80/443 va sertifikatlar joyida qoladi, ya'ni deploy paytida domen o'lmaydi.
@@ -35,7 +101,8 @@ Undan keyingi har bir deploy — `main`'ga push (`.github/workflows/ci-cd.yml`).
 
 Kerakli GitHub secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`,
 `PROJECT_DIR`, `TELEGRAM_BOT_TOKEN`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`,
-`BOT_SHARED_SECRET`, `ADMIN_SEED_PASS` (S3 va `MONGO_URI` — ixtiyoriy).
+`BOT_SHARED_SECRET`, `ADMIN_SEED_PASS`, `ADMIN_PANEL_HOST`
+(S3, `MONGO_URI` va `GEMINI_API_KEY` — ixtiyoriy).
 
 ## Nega asosiy `docker-compose.yml` ildizda qoldi
 

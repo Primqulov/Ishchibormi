@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api, getAdminToken, setAdminToken, getAdminRole, AdminRole } from "@/lib/api";
+import { api, getAdminToken, setAdminToken, getAdminRole, adminRefresh, AdminRole } from "@/lib/api";
 
 // roles: which non-superadmin roles may see the item. undefined => everyone;
 // [] => superadmin only. superadmin always sees everything.
@@ -25,8 +25,27 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // first client render agree (null), avoiding a hydration mismatch.
   const [role, setRole] = useState<AdminRole | null>(null);
   useEffect(() => {
-    if (pathname !== "/admin/login" && !getAdminToken()) router.replace("/admin/login");
-    setRole(getAdminRole() as AdminRole | null);
+    let cancelled = false;
+    (async () => {
+      // Access token sessionStorage'da yashaydi, ya'ni brauzer yopilganda
+      // yo'qoladi. Lekin sessiyaning uzoq muddatli qismi — HttpOnly
+      // cookie'dagi refresh token — tirik bo'lishi mumkin. Shuning uchun
+      // login sahifasiga otishdan OLDIN bir marta uni so'rab ko'ramiz.
+      // Aynan shu qadam "brauzerni yopib ochsam, yana paroldan boshlayapman"
+      // holatini yo'q qiladi.
+      if (pathname !== "/admin/login" && !getAdminToken()) {
+        const restored = await adminRefresh();
+        if (cancelled) return;
+        if (!restored) {
+          router.replace("/admin/login");
+          return;
+        }
+      }
+      if (!cancelled) setRole(getAdminRole() as AdminRole | null);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [pathname, router]);
   if (pathname === "/admin/login") return <>{children}</>;
   const logout = async () => {

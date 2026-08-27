@@ -159,6 +159,11 @@ func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	if revokeSessions {
+		// Parol almashdi yoki 2FA o'chirildi — bu hisobning saqlangan refresh
+		// sessiyalari (veb va mobil) endi kuchsiz; ularni darhol o'chiramiz.
+		h.revokeSessions(r.Context(), id)
+	}
 	h.audit(r, "admin_update", id.Hex(), "")
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }
@@ -178,6 +183,8 @@ func (h *Handler) DeleteAdmin(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	// Hisob yo'q bo'ldi — uning sessiya hujjatlari ham qolmasin.
+	h.revokeSessions(r.Context(), id)
 	h.audit(r, "admin_delete", id.Hex(), "")
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }

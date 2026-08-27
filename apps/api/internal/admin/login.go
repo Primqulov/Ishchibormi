@@ -94,9 +94,22 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	// Sessiyaning uzoq muddatli qismi. Aynan shu 3 kunlik "foydalanilmasa
+	// chiqarish" oynasini ochadi; access token esa qisqa qolaveradi, ya'ni
+	// o'g'irlangani tez o'ladi. Batafsil: refresh.go.
+	//
+	// Boshqa qurilmalardagi sessiyalar ATAYLAB tegilmaydi: telefondan kirish
+	// veb paneldagi ochiq sessiyani yopib qo'ymasligi kerak.
+	refresh, err := h.startSession(r.Context(), &a, httpx.ClientPlatform(r), httpx.ClientIP(r))
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	// Kirishning o'zi ham faollik — oyna shu daqiqadan boshlanadi.
+	h.touchActivity(r.Context(), a.ID, time.Time{}, now)
 	h.loginGuard.clear(req.Username)
 	h.auditRaw(r.Context(), a.ID, "login_success", a.Username, "")
-	httpx.JSON(w, 200, map[string]any{"accessToken": tok, "admin": a})
+	h.respondSession(w, r, &a, tok, refresh)
 }
 
 // burnTOTPCounter advances the admin's replay high-water mark, but only if it

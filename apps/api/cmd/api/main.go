@@ -205,12 +205,23 @@ func main() {
 	r.Use(httpx.AccessLog)
 	r.Use(httpx.Recover)
 	r.Use(httpx.SecurityHeaders)
-	// Auth is a Bearer token in the Authorization header (not cookies), so
-	// AllowCredentials is intentionally left off — the browser never needs to
-	// send cookies cross-origin here.
+	// Foydalanuvchi oqimida auth — Authorization sarlavhasidagi Bearer token,
+	// cookie umuman ishlatilmaydi.
+	//
+	// AllowCredentials esa YOQILGAN va u faqat BITTA narsa uchun kerak: admin
+	// panelining refresh cookie'si (internal/admin/refresh.go). Productionda
+	// panel va admin API bitta originda bo'lgani uchun bu yo'l umuman ishga
+	// tushmaydi; lokal ishlashda esa panel :3000 da, backend :8080 da turadi
+	// va bayroqsiz cookie yuborilmasdi — ya'ni dasturchi sessiya oqimini
+	// sinab ko'ra olmasdi.
+	//
+	// Xavf qo'shmaydi: ruxsat etilgan originlar ro'yxati aniq (config
+	// wildcard'ni umuman qabul qilmaydi), cookie esa HttpOnly + SameSite=Strict
+	// — begona sayt uni brauzerga yubortira olmaydi.
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: cfg.CORSOrigins,
-		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
+		AllowedOrigins:   cfg.CORSOrigins,
+		AllowCredentials: true,
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
 		// X-Client-Platform — brauzer klienti o'zini tanitadi (httpx.
 		// ClientPlatformHeader). Standart bo'lmagan sarlavha, ya'ni ruxsat
 		// berilmasa brauzer preflight'da so'rovni butunlay to'xtatadi.
@@ -419,9 +430,15 @@ func main() {
 
 		// Admin
 		r.With(loginLimiter.Middleware("admin-login")).Post("/admin/login", adminH.Login)
+		// Admin sessiyasini yangilash. ATAYLAB autentifikatsiyasiz: chaqiruv
+		// paytida access token allaqachon eskirgan bo'ladi, ya'ni AdminAuth uni
+		// o'tkaza olmasdi. Dalil sifatida refresh tokenning o'zi xizmat qiladi
+		// (internal/admin/refresh.go). Budjet foydalanuvchi refreshi bilan bir
+		// xil: haqiqiy klient uni har 401 da chaqiradi.
+		r.With(refreshLimiter.Middleware("admin-refresh")).Post("/admin/refresh", adminH.Refresh)
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(httpx.AdminAuth(cfg.JWTAccessSecret))
-			r.Use(admin.RequireActiveAdmin(adminH.Admins))
+			r.Use(adminH.RequireActiveAdmin())
 
 			// Overview — read-only, any authenticated admin (incl. support).
 			r.Get("/dashboard", adminH.Dashboard)

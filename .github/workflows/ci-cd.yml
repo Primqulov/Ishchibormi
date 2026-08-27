@@ -151,6 +151,12 @@ jobs:
             # Bu maxfiy emas, shuning uchun oddiy set_env.
             set_env JWT_ACCESS_TTL_MIN 4320
 
+            # Admin sessiyasi 3 kun foydalanilmasa yopiladi (veb va mobil
+            # ilova uchun BIRGALIKDA — batafsil .env.example da). Maxfiy
+            # emas, lekin serverdagi .env gitignore qilingani uchun har
+            # deploy'da majburan yoziladi.
+            set_env ADMIN_IDLE_TTL_HOURS 72
+
             # Fayl yuklash manzili. S3 sozlanmagan bo'lsa backend rasmlarni
             # lokal diskda saqlaydi va ularni /uploads ostida o'zi tarqatadi
             # (Caddy /uploads/* ni backend'ga yo'naltiradi). APP_ENV=production
@@ -210,6 +216,17 @@ jobs:
             # Kontent moderatsiyasi (Google Gemini). Kalit bo'sh bo'lsa
             # serverdagi mavjud qiymat saqlanadi.
             set_env_if_set GEMINI_API_KEY        '${{ secrets.GEMINI_API_KEY }}'
+            # Boshqaruv (admin) paneli xosti. MAXFIY: repo ochiq, shuning
+            # uchun nom faqat GitHub secret orqali keladi. Next.js middleware
+            # shu qiymat bo'yicha ommaviy domenda /admin ni 404 qiladi va
+            # panelni faqat o'sha xostda ko'rsatadi.
+            #
+            # Secret bo'sh bo'lsa serverdagi mavjud qiymat saqlanadi — ya'ni
+            # secret'ni qo'shishni unutish panelni o'chirib qo'ymaydi.
+            #
+            # Qiymat frontend konteynerida RUNTIME da o'qiladi; docker
+            # compose uni .env dan oladi, ya'ni shu yerda yozilishi kifoya.
+            set_env_if_set ADMIN_PANEL_HOST      '${{ secrets.ADMIN_PANEL_HOST }}'
 
             # ── Moderatsiyani yoqish ─────────────────────────────────────────
             # Bayroq ATAYLAB kalit mavjudligidan kelib chiqib qo'yiladi.

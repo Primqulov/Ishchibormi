@@ -44,6 +44,82 @@ www.ishchibormi.uz {
 	redir https://ishchibormi.uz{uri} permanent
 }
 
+# ── Boshqaruv (admin) paneli — alohida, nomi oshkor qilinmagan subdomen ──────
+#
+# NEGA ALOHIDA: panel ilgari ishchibormi.uz/admin da turardi, ya'ni saytga
+# kirgan istalgan odam login formasini ochib, parol terib ko'rishi mumkin edi.
+# Endi u uch qatlam ortida:
+#   1) BOSHQA XOST — ommaviy domenlarda /admin va /api/admin/* umuman yo'q
+#      (pastdagi bloklarda 404 qilingan);
+#   2) NOMI REPODA YO'Q — xost {$IB_PANEL_HOST} orqali serverdan keladi
+#      (/etc/caddy/panel.env, systemd EnvironmentFile). Bu repo OCHIQ,
+#      shuning uchun nomni bu yerga yozib bo'lmaydi;
+#   3) BASIC-AUTH — panel sahifalariga yetib borish uchun ham alohida parol
+#      kerak, ya'ni admin login formasi begonaga umuman ko'rinmaydi.
+#
+# Sozlamalar berilmasa blok INERT bo'ladi: xost `panel.localhost` ga tushadi
+# (tashqaridan yetib bo'lmaydi) va parol xeshi hech kim bilmaydigan tasodifiy
+# qiymatniki. Shu tufayli env fayl yo'qolsa ham Caddy ishga tushaveradi va
+# asosiy sayt o'chib qolmaydi.
+#
+# /api/* ATAYLAB basic-auth'siz. Sabab texnik: mobil admin ilovasi
+# Authorization sarlavhasini Bearer token uchun band qiladi va u yerga
+# ikkinchi qiymat sig'maydi. API o'z himoyasi bilan qoladi — majburiy 2FA,
+# bcrypt parol, hisob bo'yicha urinish budjeti, IP rate-limit va fail2ban.
+{$IB_PANEL_HOST:panel.localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		# DENY, SAMEORIGIN emas: panel hech qanday freym ichida ochilmasin.
+		X-Frame-Options "DENY"
+		# Boshqaruv manzili tashqi saytlarga Referer bo'lib chiqib ketmasin —
+		# maxfiy subdomen nomi aynan shunday sizib chiqadi.
+		Referrer-Policy "no-referrer"
+		X-Robots-Tag "noindex, nofollow, noarchive"
+		-Server
+	}
+
+	request_body {
+		max_size 12MB
+	}
+
+	# Panel API'si SHU xostda turadi, ya'ni brauzer uchun same-origin. Bu
+	# shart: admin sessiyasini uzoq tutib turadigan refresh token HttpOnly
+	# cookie'da yuradi (apps/api/internal/admin/refresh.go), cookie esa
+	# ishonchli faqat o'z originiga boradi.
+	@api path /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+			header_up -True-Client-IP
+			header_up -CF-Connecting-IP
+			header_up -X-Forwarded-Host
+		}
+	}
+
+	handle {
+		basic_auth {
+			{$IB_PANEL_USER:panel} "{$IB_PANEL_HASH:$2a$10$Pru50YiAJtVwW4KIEJgSZO72fW03S38s4vJLunZL2/NAZzt5Xu/KC}"
+		}
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+			header_up -True-Client-IP
+			header_up -CF-Connecting-IP
+		}
+	}
+
+	log {
+		output file /var/log/caddy/ishchibormi-panel.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+	}
+}
+
 # Mobil ilova (Play Market) uchun API subdomeni.
 #
 # NEGA ALOHIDA: flutter-app dagi ApiConfig.prodBaseUrl = https://api.ishchibormi.uz
@@ -78,15 +154,29 @@ api.ishchibormi.uz {
 		max_size 12MB
 	}
 
-	reverse_proxy 127.0.0.1:8080 {
-		# Asosiy domendagi bilan bir xil mantiq: mijoz IP'sini ustiga yozamiz,
-		# soxtalashtiriladigan sarlavhalarni olib tashlaymiz. Sababi
-		# quyidagi ishchibormi.uz blokidagi izohda batafsil.
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Real-IP {remote_host}
-		header_up -True-Client-IP
-		header_up -CF-Connecting-IP
-		header_up -X-Forwarded-Host
+	# Admin API bu domenda YO'Q. U faqat boshqaruv subdomenida javob beradi
+	# (yuqoridagi blok) — shuning uchun admin login endpointi oddiy
+	# foydalanuvchi biladigan manzillarda umuman ko'rinmaydi.
+	#
+	# Admin mobil ilovasi ham o'sha subdomenga ulanadi
+	# (ishchibormi_admin/lib/core/network/api_client.dart). Eski APK bu yerga
+	# uradi va 404 oladi — yangisini o'rnatish kerak.
+	@adminGone path /api/admin /api/admin/*
+	handle @adminGone {
+		respond "404 page not found" 404
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8080 {
+			# Asosiy domendagi bilan bir xil mantiq: mijoz IP'sini ustiga
+			# yozamiz, soxtalashtiriladigan sarlavhalarni olib tashlaymiz.
+			# Sababi quyidagi ishchibormi.uz blokidagi izohda batafsil.
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+			header_up -True-Client-IP
+			header_up -CF-Connecting-IP
+			header_up -X-Forwarded-Host
+		}
 	}
 
 	log {
@@ -158,6 +248,20 @@ ishchibormi.uz {
     }
   }
 ]` 200
+	}
+
+	# ── Admin paneli bu domenda YO'Q ──────────────────────────────────────
+	# U alohida, nomi oshkor qilinmagan subdomenga ko'chirildi (fayl boshidagi
+	# blok). Ikkalasi ham oddiy 404 qaytaradi: "bu yerda panel bor, lekin
+	# ruxsat yo'q" degan ishorani ham bermaymiz — aks holda manzilni
+	# qidirishga arziydi degan xabar bergan bo'lardik.
+	#
+	# Next.js middleware'ida ham xuddi shu qoida bor (apps/web/middleware.ts).
+	# Takror ataylab: bu fayl serverga QO'LDA ko'chiriladi va bir kun eskirib
+	# qolishi mumkin.
+	@adminGone path /admin /admin/* /api/admin /api/admin/*
+	handle @adminGone {
+		respond "404 page not found" 404
 	}
 
 	# Go API. Frontend Next.js bo'lgani uchun yo'llar bo'yicha ajratamiz:

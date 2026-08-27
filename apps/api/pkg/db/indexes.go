@@ -55,6 +55,15 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 
 		{"admins", mongo.IndexModel{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)}},
 
+		// Admin sessiyalari (refresh tokenlar, internal/admin/refresh.go).
+		// Qidiruv har doim xesh bo'yicha ketadi — ikkalasi ham indekslangan,
+		// chunki aylantirishdan keyingi imtiyoz oynasida eski xesh so'raladi.
+		{"admin_sessions", mongo.IndexModel{Keys: bson.D{{Key: "tokenHash", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"admin_sessions", mongo.IndexModel{Keys: bson.D{{Key: "prevTokenHash", Value: 1}}, Options: options.Index().SetSparse(true)}},
+		{"admin_sessions", mongo.IndexModel{Keys: bson.D{{Key: "adminId", Value: 1}}}},
+		// TTL: qat'iy muddati o'tgan sessiyalarni Mongo o'zi yig'ishtiradi.
+		{"admin_sessions", mongo.IndexModel{Keys: bson.D{{Key: "expiresAt", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}},
+
 		// OTP collection: TTL on expiresAt
 		{"otp_codes", mongo.IndexModel{Keys: bson.D{{Key: "expiresAt", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}},
 		{"otp_codes", mongo.IndexModel{Keys: bson.D{{Key: "tgToken", Value: 1}}}},

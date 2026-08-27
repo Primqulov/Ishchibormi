@@ -19,16 +19,29 @@ import (
 // bump does (see RequireActiveAdmin). Returning a fresh token keeps the caller's
 // own tab alive: without it, the request that enables 2FA would immediately
 // invalidate the session that made it, and the panel would appear to break.
-func (h *Handler) rotateSession(r *http.Request, id primitive.ObjectID, update bson.M) (string, error) {
+func (h *Handler) rotateSession(r *http.Request, id primitive.ObjectID, update bson.M) (*models.Admin, string, string, error) {
 	update["$inc"] = bson.M{"tokenVersion": 1}
 	var updated models.Admin
 	err := h.Admins.FindOneAndUpdate(r.Context(), bson.M{"_id": id}, update,
 		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&updated)
 	if err != nil {
-		return "", err
+		return nil, "", "", err
 	}
-	return httpx.IssueVersionedAdminToken(
+	// Saqlangan refresh sessiyalari eski tokenVersion ni olib yuradi, ya'ni
+	// bumpdan keyin ularning hammasi baribir rad etiladi. Shuning uchun ularni
+	// shu yerda o'chirib, chaqiruvchining o'ziga darhol yangisini ochamiz —
+	// aks holda 2FA ni yoqqan qurilma keyingi yangilashdayoq chiqib ketardi.
+	h.revokeSessions(r.Context(), id)
+	access, err := httpx.IssueVersionedAdminToken(
 		h.Cfg.JWTAccessSecret, updated.ID.Hex(), updated.Role, updated.TokenVersion, h.Cfg.JWTAdminTTL)
+	if err != nil {
+		return nil, "", "", err
+	}
+	refresh, err := h.startSession(r.Context(), &updated, httpx.ClientPlatform(r), httpx.ClientIP(r))
+	if err != nil {
+		return nil, "", "", err
+	}
+	return &updated, access, refresh, nil
 }
 
 // Setup2FA generates (but does not activate) a new TOTP secret and returns the
@@ -90,7 +103,7 @@ func (h *Handler) Enable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	// Burn the enrollment code and turn 2FA on in the same write that revokes
 	// sibling sessions.
-	tok, err := h.rotateSession(r, a.ID, bson.M{
+	updated, tok, refresh, err := h.rotateSession(r, a.ID, bson.M{
 		"$set": bson.M{"totpEnabled": true, "totpLastCounter": int64(counter)},
 	})
 	if err != nil {
@@ -98,7 +111,7 @@ func (h *Handler) Enable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "2fa_enable", a.ID.Hex(), "")
-	httpx.JSON(w, 200, map[string]any{"ok": true, "accessToken": tok})
+	h.respondSession(w, r, updated, tok, refresh)
 }
 
 // Disable2FA turns off 2FA for the current admin after verifying a live code.
@@ -123,7 +136,7 @@ func (h *Handler) Disable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	// Dropping the second factor weakens the account, so it revokes sibling
 	// sessions the same way enabling it does.
-	tok, err := h.rotateSession(r, a.ID, bson.M{
+	updated, tok, refresh, err := h.rotateSession(r, a.ID, bson.M{
 		"$set":   bson.M{"totpEnabled": false},
 		"$unset": bson.M{"totpSecret": "", "totpLastCounter": ""},
 	})
@@ -132,7 +145,7 @@ func (h *Handler) Disable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, "2fa_disable", a.ID.Hex(), "self")
-	httpx.JSON(w, 200, map[string]any{"ok": true, "accessToken": tok})
+	h.respondSession(w, r, updated, tok, refresh)
 }
 
 // ---- Admin (staff) management — superadmin only ----
