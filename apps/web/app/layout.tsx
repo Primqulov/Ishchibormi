@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import { Providers } from "@/components/Providers";
 import { OpenInApp } from "@/components/OpenInApp";
+import { RouteProgress } from "@/components/RouteProgress";
 import {
   SITE_URL,
   SITE_NAME,
@@ -139,6 +140,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         <Providers>
+          {/* Sahifadan sahifaga o'tishda tepadagi yuklanish chizig'i.
+              Ildiz layout'da: u navigatsiya paytida ham ekranda qolishi
+              kerak, ya'ni almashinadigan qism ichida bo'lishi mumkin emas. */}
+          <RouteProgress />
           {/* Android'da ilova o'rnatilgan bo'lsa foydalanuvchini ilovaga
               o'tkazadi. Ilova yo'q bo'lsa hech narsa qilmaydi. */}
           <OpenInApp />

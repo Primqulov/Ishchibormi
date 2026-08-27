@@ -87,6 +87,27 @@ html, body {
   100% { transform: translateX(320%); }
 }
 
+/* ── Marshrut yuklanish chizig'i ─────────────────────
+   components/RouteProgress.tsx bilan birga ishlaydi. Uzunlik JS'dan
+   (inline width) keladi, harakat esa shu yerdan — shunda `prefers-reduced-
+   motion` ni bitta joyda hurmat qilamiz. */
+.route-progress-bar {
+  /* Ikki xil davomiylik: uzunlik sekin o'sadi, so'nish tezroq. Bitta
+     qiymat qilinsa, chiziq yopilayotib ham sekin sudralib ketardi. */
+  transition: width 180ms ease-out, opacity 220ms ease-out;
+  /* O'ng chetidagi yorug'lik — chiziqqa harakat tuyg'usini beradi. */
+  box-shadow: 0 0 8px var(--brand), 0 0 4px var(--brand);
+}
+
+/* Harakatni kamaytirishni so'ragan foydalanuvchida chiziq sudralmaydi,
+   lekin YO'QOLMAYDI: u holat haqidagi ma'lumot, bezak emas. Faqat
+   siljish o'rniga darhol paydo bo'ladi. */
+@media (prefers-reduced-motion: reduce) {
+  .route-progress-bar {
+    transition: opacity 220ms ease-out;
+  }
+}
+
 * { border-color: var(--border); }
 :focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); border-radius: 0.625rem; }
 
