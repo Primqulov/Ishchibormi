@@ -16,7 +16,7 @@ import {
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { safeImageSrc } from "@/lib/url";
-import { fmtDate, fromNow } from "@/lib/format";
+import { fmtDateTime } from "@/lib/format";
 
 interface Report { id: string; reason: string; description?: string; status: string; createdAt: string; }
 
@@ -157,19 +157,19 @@ export default function AdminUserDetail() {
           <Stat label="Oxirgi platforma" value={platformLabel(u.lastPlatform)} />
         </div>
         {/* Hisob qachon yaratilgan — profildagi eng asosiy vaqt belgisi.
-            Sana + nisbiy vaqt birga: "qachon" va "qancha bo'ldi" ikki xil
-            savol va admin ikkalasini ham so'raydi. */}
+            ANIQ sana va soat, nisbiy vaqt ("3 oy oldin") emas: bu sahifaga
+            admin murojaatga javob berish yoki e'tirozni tekshirish uchun
+            kiradi, va u yerda "qachan aynan" degan savol muhim. */}
         <div className="grid gap-1 text-sm">
           {u.createdAt && (
             <div>
               <span className="text-[color:var(--text-muted)]">Ro&apos;yxatdan o&apos;tgan: </span>
-              <b>{fmtDate(u.createdAt)}</b>
-              <span className="text-[color:var(--text-muted)]"> · {fromNow(u.createdAt)}</span>
+              <b>{fmtDateTime(u.createdAt)}</b>
             </div>
           )}
           {u.lastSeenAt && (
             <div className="text-xs text-[color:var(--text-muted)]">
-              Oxirgi faollik: {new Date(u.lastSeenAt).toLocaleString("uz-UZ")}
+              Oxirgi faollik: {fmtDateTime(u.lastSeenAt)}
             </div>
           )}
         </div>

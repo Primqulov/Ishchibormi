@@ -75,6 +75,19 @@ export function fmtDate(iso?: string): string {
   return dayjs(iso).format("D MMMM YYYY");
 }
 
+/**
+ * Sana + soat: "27 avgust 2026, 14:05".
+ *
+ * [fromNow] dan farqi ataylab: nisbiy vaqt ("3 oy oldin") tezkor
+ * taassurot beradi, lekin aniq paytni AYTMAYDI — admin panelida esa
+ * ko'pincha aynan shu kerak bo'ladi (murojaatga javob berish, e'tirozni
+ * tekshirish, hisobotga yozish).
+ */
+export function fmtDateTime(iso?: string): string {
+  if (!iso) return "";
+  return dayjs(iso).format("D MMMM YYYY, HH:mm");
+}
+
 // Xarita pinlari uchun qisqa narx: 200000 -> "200k", 1500000 -> "1.5mln".
 export function fmtCompactSum(n: number): string {
   if (!n || n < 0) return "—";
