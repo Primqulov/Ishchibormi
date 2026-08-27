@@ -14,6 +14,7 @@ import {
   platformLabel,
   CLIENT_PLATFORMS,
 } from "@/lib/api";
+import { fmtDate, fromNow } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 
@@ -149,18 +150,19 @@ export default function AdminUsers() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm table-fixed">
+          <table className="w-full min-w-[1080px] text-sm table-fixed">
             <colgroup>
-              <col style={{ width: "20%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "11%" }} />
+              <col style={{ width: "18%" }} />
               <col style={{ width: "13%" }} />
-              <col style={{ width: "23%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "13%" }} />
+              <col style={{ width: "12%" }} />
               <col style={{ width: "19%" }} />
+              <col style={{ width: "15%" }} />
             </colgroup>
             <thead>
               <tr className="text-left text-[color:var(--text-muted)] border-b" style={{ borderColor: "var(--border)" }}>
-                <th className="py-3 px-4">Ism</th><th className="px-4">Telefon</th><th className="px-4">Viloyat</th><th className="px-4">Platforma</th><th className="px-4">Holat</th><th className="px-4 text-right">Amallar</th>
+                <th className="py-3 px-4">Ism</th><th className="px-4">Telefon</th><th className="px-4">Viloyat</th><th className="px-4">Ro&apos;yxatdan o&apos;tgan</th><th className="px-4">Platforma</th><th className="px-4">Holat</th><th className="px-4 text-right">Amallar</th>
               </tr>
             </thead>
             <tbody>
@@ -174,6 +176,24 @@ export default function AdminUsers() {
                     </td>
                     <td className="px-4 whitespace-nowrap">{u.phone}</td>
                     <td className="px-4 truncate">{u.region}</td>
+                    {/* Ro'yxatdan o'tgan sana. Aniq sana yuqorida, nisbiy
+                        vaqt ostida: admin ko'pincha "yaqindami?" degan
+                        savolga javob izlaydi, lekin "3 oy oldin" ni
+                        hisobotga yozib bo'lmaydi — ikkalasi ham kerak.
+                        Ro'yxat backendda shu maydon bo'yicha, yangisidan
+                        boshlab saralangan. */}
+                    <td className="px-4">
+                      {u.createdAt ? (
+                        <div className="flex flex-col gap-0.5 py-1">
+                          <span className="whitespace-nowrap">{fmtDate(u.createdAt)}</span>
+                          <span className="text-[11px] text-[color:var(--text-muted)] whitespace-nowrap">
+                            {fromNow(u.createdAt)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[color:var(--text-muted)]">—</span>
+                      )}
+                    </td>
                     {/* Platforma: yuqorida — hozir foydalanadigani, ostida —
                         qayerdan ro'yxatdan o'tgani. Ikkinchisi faqat FARQ
                         qilganda ko'rsatiladi: bir xil bo'lsa u qatorga hech
@@ -240,7 +260,7 @@ export default function AdminUsers() {
                   </tr>
                 );
               })}
-              {!users.length && <tr><td colSpan={6} className="py-8 text-center text-[color:var(--text-muted)]">Hech narsa topilmadi</td></tr>}
+              {!users.length && <tr><td colSpan={7} className="py-8 text-center text-[color:var(--text-muted)]">Hech narsa topilmadi</td></tr>}
             </tbody>
           </table>
         </div>

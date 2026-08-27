@@ -290,6 +290,15 @@ export interface User {
   lastPlatform?: ClientPlatform;
   /** `lastPlatform` qachon yozilgan (ISO). */
   lastSeenAt?: string;
+  /**
+   * Hisob qachon yaratilgan — foydalanuvchi BIRINCHI marta ro'yxatdan
+   * o'tgan payt (ISO). Backend uni `$setOnInsert` bilan yozadi, ya'ni
+   * keyingi loginlar uni o'zgartirmaydi.
+   *
+   * Ixtiyoriy deb belgilangan, chunki bu tur ommaviy profil javobida ham
+   * ishlatiladi — u yerda sana yuborilmaydi.
+   */
+  createdAt?: string;
   langPref?: "latin" | "cyrillic";
   themePref?: "light" | "dark";
   onboardingCompleted?: boolean;

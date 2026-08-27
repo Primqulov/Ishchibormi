@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { safeImageSrc } from "@/lib/url";
+import { fmtDate, fromNow } from "@/lib/format";
 
 interface Report { id: string; reason: string; description?: string; status: string; createdAt: string; }
 
@@ -148,15 +149,30 @@ export default function AdminUserDetail() {
           <Stat label="Holat" value={blockedNow ? "Bloklangan" : "Faol"} />
           {/* Ikkalasi ham ko'rsatiladi, teng bo'lganda ham: bu profil
               kartasi, ro'yxat emas — bu yerda savol "bu odam haqida nima
-              bilamiz", va bo'sh qolgan katak javobning o'zi. */}
-          <Stat label="Ro'yxatdan o'tgan" value={platformLabel(u.signupPlatform)} />
+              bilamiz", va bo'sh qolgan katak javobning o'zi.
+
+              Yorliq "Ro'yxat PLATFORMASI" — pastdagi "Ro'yxatdan o'tgan"
+              sana bilan chalkashmasligi uchun. */}
+          <Stat label="Ro'yxat platformasi" value={platformLabel(u.signupPlatform)} />
           <Stat label="Oxirgi platforma" value={platformLabel(u.lastPlatform)} />
         </div>
-        {u.lastSeenAt && (
-          <div className="text-xs text-[color:var(--text-muted)]">
-            Oxirgi faollik: {new Date(u.lastSeenAt).toLocaleString("uz-UZ")}
-          </div>
-        )}
+        {/* Hisob qachon yaratilgan — profildagi eng asosiy vaqt belgisi.
+            Sana + nisbiy vaqt birga: "qachon" va "qancha bo'ldi" ikki xil
+            savol va admin ikkalasini ham so'raydi. */}
+        <div className="grid gap-1 text-sm">
+          {u.createdAt && (
+            <div>
+              <span className="text-[color:var(--text-muted)]">Ro&apos;yxatdan o&apos;tgan: </span>
+              <b>{fmtDate(u.createdAt)}</b>
+              <span className="text-[color:var(--text-muted)]"> · {fromNow(u.createdAt)}</span>
+            </div>
+          )}
+          {u.lastSeenAt && (
+            <div className="text-xs text-[color:var(--text-muted)]">
+              Oxirgi faollik: {new Date(u.lastSeenAt).toLocaleString("uz-UZ")}
+            </div>
+          )}
+        </div>
         {u.bio && <div className="text-sm"><span className="text-[color:var(--text-muted)]">Bio: </span>{u.bio}</div>}
       </div>
 
