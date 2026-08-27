@@ -164,6 +164,15 @@ func main() {
 	// Profil rasmi yuklash paytida tekshiriladi.
 	uploadH.AttachModerator(modGuard)
 	adminH := admin.NewHandler(cfg, mdb, notif, s3svc)
+	// Buzilishlar do'koni admin paneliga ham kerak: blokni ochish uni telefon
+	// bo'yicha o'chiradi, "batafsil" ko'rinishi esa undan buzilishlar tarixini
+	// o'qiydi. Bog'lanmasa `h.Strikes` nil qoladi va blokni ochish jimgina
+	// 503 qaytaradi — aynan shu sabab moderatsiya bloki hech qachon
+	// ochilmasdi.
+	//
+	// Gemini kalitidan MUSTAQIL: kalit yo'q bo'lsa yangi blok qo'yilmaydi,
+	// lekin allaqachon qo'yilganlarini ochish kerak bo'lib qolaveradi.
+	adminH.Strikes = modStrikes
 	// Background scheduler: delivers due scheduled broadcasts (checks every
 	// minute). Stops when ctx is cancelled on shutdown.
 	go adminH.RunScheduler(ctx)
@@ -202,7 +211,10 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: cfg.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type"},
+		// X-Client-Platform — brauzer klienti o'zini tanitadi (httpx.
+		// ClientPlatformHeader). Standart bo'lmagan sarlavha, ya'ni ruxsat
+		// berilmasa brauzer preflight'da so'rovni butunlay to'xtatadi.
+		AllowedHeaders: []string{"Authorization", "Content-Type", httpx.ClientPlatformHeader},
 		MaxAge:         300,
 	}))
 

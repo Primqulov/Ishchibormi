@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, DashboardStats, AdminStats, DayPoint, NameCount } from "@/lib/api";
+import { api, DashboardStats, AdminStats, DayPoint, NameCount, platformLabel } from "@/lib/api";
 
 export default function AdminDashboard() {
   const [kpi, setKpi] = useState<DashboardStats | null>(null);
@@ -39,6 +39,24 @@ export default function AdminDashboard() {
         <Card label="Ochiq murojaat" value={kpi?.openFeedback} tone="danger" />
       </div>
 
+      {/* Platforma — foydalanuvchilar qaysi klientdan foydalanmoqda.
+          Alohida blok, KPI setiga qo'shib yuborilmagan: bu boshqa savol
+          va yonma-yon turgan to'rtta karta yig'indisi jami foydalanuvchiga
+          teng bo'lishi ko'rinib turishi kerak. */}
+      <div className="grid gap-2">
+        <div className="text-sm font-semibold heading">Foydalanuvchilar qaysi platformada</div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Card label="Veb" value={kpi?.webUsers} tone="brand" />
+          <Card label="Android" value={kpi?.androidUsers} tone="success" />
+          <Card label="iOS" value={kpi?.iosUsers} />
+          <Card label="Noma'lum" value={kpi?.unknownPlatformUsers} />
+        </div>
+        <p className="text-xs text-[color:var(--text-muted)]">
+          Oxirgi ishlatilgan klient bo'yicha. &quot;Noma&apos;lum&quot; — bu hisob
+          yuritilishidan oldin ro&apos;yxatdan o&apos;tganlar va ilovaning eski versiyalari.
+        </p>
+      </div>
+
       {/* Vaqt oralig'i */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-[color:var(--text-muted)]">O'sish davri:</span>
@@ -69,9 +87,23 @@ export default function AdminDashboard() {
         <Panel title="Viloyatlar bo'yicha foydalanuvchilar">
           <Bars rows={stats?.regions || []} />
         </Panel>
+        <Panel title="Qayerdan ro'yxatdan o'tishgan">
+          <Bars rows={platformRows(stats?.platforms?.signup)} />
+        </Panel>
+        <Panel title={`Faol foydalanuvchilar (oxirgi ${stats?.platforms?.activeWindowDays ?? 30} kun)`}>
+          <Bars rows={platformRows(stats?.platforms?.active)} />
+        </Panel>
       </div>
     </div>
   );
+}
+
+// platformRows backend qaytargan kodlarni ("web", "android", …) panelda
+// ko'rsatiladigan nomlarga aylantiradi. Tartib va nol qiymatli qatorlar
+// backenddan kelgan holicha qoladi — u har doim to'liq ro'yxat yuboradi,
+// shunda ustun nolga tushganda grafikdan yo'qolib qolmaydi.
+function platformRows(rows?: NameCount[]): NameCount[] {
+  return (rows || []).map((r) => ({ name: platformLabel(r.name), count: r.count }));
 }
 
 function Card({ label, value, tone }: { label: string; value?: number; tone?: "danger" | "success" | "brand" }) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/models"
+	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/upload"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -28,11 +29,34 @@ func usersFilter(q url.Values) bson.M {
 	if region := strings.TrimSpace(q.Get("region")); region != "" {
 		filter["region"] = region
 	}
+	// "Bloklangan" filtri IKKALA blokni ham qamraydi.
+	//
+	// Ilgari faqat `isBlocked` ga qarardi, ya'ni nomaqbul kontent uchun
+	// avtomatik bloklangan foydalanuvchilar "Faol" ro'yxatida chiqardi —
+	// admin uchun bu shunchaki noto'g'ri javob edi. Panelda blok bitta
+	// tushuncha, demak filtr ham bitta bo'lishi kerak.
+	activeBan := bson.M{"moderationBannedUntil": bson.M{"$gt": time.Now()}}
 	switch q.Get("blocked") {
 	case "1":
-		filter["isBlocked"] = true
+		filter["$and"] = append(andOf(filter), bson.M{"$or": bson.A{
+			bson.M{"isBlocked": true}, activeBan,
+		}})
 	case "0":
-		filter["isBlocked"] = bson.M{"$ne": true}
+		filter["$and"] = append(andOf(filter), bson.M{
+			"isBlocked": bson.M{"$ne": true},
+			"$nor":      bson.A{activeBan},
+		})
+	}
+	// Platforma filtri — oxirgi ishlatilgan klient bo'yicha.
+	//
+	// "unknown" ALOHIDA qiymat, "hech qanday filtr yo'q" emas: sarlavha
+	// yubormaydigan eski klientlarni ataylab ko'rib chiqish kerak bo'lishi
+	// mumkin (masalan, ilovaning eski versiyasi qancha qolganini bilish).
+	switch p := q.Get("platform"); p {
+	case httpx.PlatformWeb, httpx.PlatformAndroid, httpx.PlatformIOS:
+		filter["lastPlatform"] = p
+	case httpx.PlatformUnknown:
+		filter["lastPlatform"] = bson.M{"$in": bson.A{nil, ""}}
 	}
 	switch q.Get("verified") {
 	case "1":
@@ -41,6 +65,18 @@ func usersFilter(q url.Values) bson.M {
 		filter["isPhoneVerified"] = bson.M{"$ne": true}
 	}
 	return filter
+}
+
+// andOf — filtrdagi mavjud `$and` ro'yxati (yo'q bo'lsa bo'sh).
+//
+// Kerak, chunki qidiruv `$or` dan foydalanadi va blok filtri ham `$or`
+// qo'shadi: ikkalasini bitta hujjatga yozsak, biri ikkinchisini bosib
+// ketardi va qidiruv jimgina ishlamay qolardi.
+func andOf(filter bson.M) bson.A {
+	if existing, ok := filter["$and"].(bson.A); ok {
+		return existing
+	}
+	return bson.A{}
 }
 
 // ListUsers: paginated + searchable + filterable. Query params:
@@ -87,8 +123,22 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	elons := decodeElons(ctx, h.Elons, bson.M{"ownerId": id}, 100)
 	apps := decodeApps(ctx, h.Apps, bson.M{"workerId": id}, 100)
 	reports := decodeReports(ctx, h.Reports, bson.M{"targetType": "user", "targetId": id}, 100)
+	// Buzilishlar tarixi — blok sababining tafsiloti.
+	//
+	// `user.blockReason` bitta jumla ("3 marta urinildi"), bu esa aynan
+	// QAYSI urinishlar, qachon va nima ustida bo'lganini ko'rsatadi. Admin
+	// qaroriga e'tiroz kelganda ("men hech narsa qilmadim") yagona dalil shu.
+	// Yozuv TELEFON bo'yicha saqlanadi, ya'ni hisob o'chirilib qayta ochilgan
+	// bo'lsa ham tarix joyida qoladi.
+	var strikes any
+	if h.Strikes != nil {
+		if rec, err := h.Strikes.FindByUser(ctx, id); err == nil && rec != nil {
+			strikes = rec
+		}
+	}
 	httpx.JSON(w, 200, map[string]any{
 		"user": u, "elons": elons, "applications": apps, "reports": reports,
+		"moderationStrikes": strikes,
 	})
 }
 
@@ -136,7 +186,16 @@ func (h *Handler) NotifyUser(w http.ResponseWriter, r *http.Request) {
 
 type setBlockReq struct {
 	IsBlocked bool `json:"isBlocked"`
+	// Reason — bloklashda MAJBURIY. Nega: blokni ochgan yoki e'tirozni ko'rib
+	// chiqqan admin ko'pincha uni qo'ygan admin emas, va oradan oylar o'tgan
+	// bo'ladi. Sababsiz blok — hech kim javob bera olmaydigan qaror.
+	Reason string `json:"reason"`
 }
+
+// maxBlockReasonRunes — sabab uzunligi chegarasi. Erkin matn, lekin bu
+// izohlar maydoni emas: uzun matn admin ro'yxatida ham, mobil ilovada ham
+// o'qib bo'lmaydigan bo'lib qolardi.
+const maxBlockReasonRunes = 500
 
 func (h *Handler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
@@ -149,15 +208,98 @@ func (h *Handler) BlockUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	_, err = h.Users.UpdateOne(r.Context(), bson.M{"_id": id}, bson.M{"$set": bson.M{"isBlocked": req.IsBlocked}})
-	if err != nil {
+	ctx := r.Context()
+	var u models.User
+	if err := h.Users.FindOne(ctx, bson.M{"_id": id}).Decode(&u); err != nil {
+		httpx.Err(w, httpx.NewError(404, "not_found", "user not found"))
+		return
+	}
+	now := time.Now()
+
+	if req.IsBlocked {
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			httpx.Err(w, httpx.NewError(400, "reason_required",
+				"bloklash sababini yozing"))
+			return
+		}
+		if len([]rune(reason)) > maxBlockReasonRunes {
+			httpx.Err(w, httpx.NewError(400, "reason_too_long",
+				"sabab juda uzun"))
+			return
+		}
+		set := bson.M{
+			"isBlocked":   true,
+			"blockReason": reason,
+			"blockSource": moderation.BlockSourceAdmin,
+			"blockedAt":   now,
+			"blockedBy":   httpx.AdminID(r),
+			"updatedAt":   now,
+		}
+		if _, err := h.Users.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": set}); err != nil {
+			httpx.Err(w, err)
+			return
+		}
+		// Keep public listing queries join-free while applying moderation instantly.
+		_, _ = h.Elons.UpdateMany(ctx, bson.M{"ownerId": id},
+			bson.M{"$set": bson.M{"ownerBlocked": true, "updatedAt": now}})
+		h.audit(r, "user_block", id.Hex(), reason)
+		httpx.JSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+
+	// ── Blokni ochish ────────────────────────────────────────────────────
+	//
+	// Panelda blok BITTA tushuncha, shuning uchun "Blokdan chiqarish" ham
+	// bitta amal bo'lishi kerak: qo'lda qo'yilgani ham, avtomatik qo'yilgani
+	// ham shu yerda ochiladi. Ilgari ular ikki alohida tugma edi va admin
+	// birinchisini bosib, foydalanuvchi baribir kira olmaganini ko'rardi.
+	//
+	// Ruxsat qoidasi o'z kuchida: avtomatik blokni faqat superadmin ocha
+	// oladi (bu jazoni bekor qilish). Moderator uni ochmoqchi bo'lsa aniq
+	// javob oladi — jimgina yarim ish qilinmaydi.
+	moderationActive := u.ModerationBannedUntil != nil && u.ModerationBannedUntil.After(now)
+	if moderationActive {
+		if httpx.AdminRole(r) != "superadmin" {
+			httpx.Err(w, httpx.NewError(403, "moderation_ban_superadmin_only",
+				"avtomatik moderatsiya blokini faqat superadmin ocha oladi"))
+			return
+		}
+		if h.Strikes == nil {
+			httpx.Err(w, httpx.NewError(503, "moderation_disabled", "moderatsiya sozlanmagan"))
+			return
+		}
+		// Buzilishlar hisobini ham nolga tushiradi — aks holda keyingi bitta
+		// buzilish foydalanuvchini darhol qayta bloklardi.
+		if err := h.Strikes.LiftBanByUser(ctx, id); err != nil {
+			httpx.Err(w, err)
+			return
+		}
+	}
+	// `moderationBannedUntil` bu yerda ham tozalanadi — LiftBanByUser uni
+	// allaqachon o'chirgan bo'lsa ham.
+	//
+	// Nega takror: javobda "muvaffaqiyatli" deyilgani bilan foydalanuvchi
+	// hujjatida blok qolib ketishi mumkin bo'lgan har qanday yo'lni yopish
+	// uchun. Aynan shunday holat bo'lgan: admin "blokdan chiqarildi" degan
+	// xabarni ko'rar, foydalanuvchi esa baribir kira olmasdi.
+	if _, err := h.Users.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
+		"$set": bson.M{"isBlocked": false, "updatedAt": now},
+		"$unset": bson.M{
+			"moderationBannedUntil": "",
+			"blockReason":           "", "blockSource": "", "blockedAt": "", "blockedBy": "",
+		},
+	}); err != nil {
 		httpx.Err(w, err)
 		return
 	}
-	// Keep public listing queries join-free while applying moderation instantly.
-	_, _ = h.Elons.UpdateMany(r.Context(), bson.M{"ownerId": id},
-		bson.M{"$set": bson.M{"ownerBlocked": req.IsBlocked, "updatedAt": time.Now()}})
-	h.audit(r, "user_block", id.Hex(), "isBlocked=set")
+	_, _ = h.Elons.UpdateMany(ctx, bson.M{"ownerId": id},
+		bson.M{"$set": bson.M{"ownerBlocked": false, "updatedAt": now}})
+	detail := "unblock"
+	if moderationActive {
+		detail = "unblock (+moderatsiya bloki)"
+	}
+	h.audit(r, "user_unblock", id.Hex(), detail)
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }
 

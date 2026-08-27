@@ -40,14 +40,70 @@ type User struct {
 	// JSON'da ochiq (omitempty): admin paneli bloklangan foydalanuvchini
 	// va blok tugash sanasini ko'rsatishi kerak. Bloklanmaganlar uchun
 	// maydon umuman chiqmaydi.
-	ModerationBannedUntil *time.Time           `bson:"moderationBannedUntil,omitempty" json:"moderationBannedUntil,omitempty"`
-	IsDeleted             bool                 `bson:"isDeleted" json:"isDeleted"`
-	LangPref              string               `bson:"langPref" json:"langPref"`
-	ThemePref             string               `bson:"themePref" json:"themePref"`
-	BlockedUserIDs        []primitive.ObjectID `bson:"blockedUserIds,omitempty" json:"blockedUserIds"`
-	OnboardingCompleted   bool                 `bson:"onboardingCompleted" json:"onboardingCompleted"`
-	CreatedAt             time.Time            `bson:"createdAt" json:"createdAt"`
-	UpdatedAt             time.Time            `bson:"updatedAt" json:"updatedAt"`
+	ModerationBannedUntil *time.Time `bson:"moderationBannedUntil,omitempty" json:"moderationBannedUntil,omitempty"`
+
+	// ── Blok sababi ───────────────────────────────────────────────────────
+	//
+	// Admin paneli uchun: "ertaga bu foydalanuvchi nega bloklangan?" degan
+	// savolga javob. Ilgari javob yo'q edi — `isBlocked` faqat ha/yo'q
+	// bayrog'i, `moderationBannedUntil` esa faqat sana. Blokni kim, qachon
+	// va NEGA qo'ygani hech qayerda saqlanmasdi.
+	//
+	// Uchala maydon ham `isBlocked` yoki `moderationBannedUntil` bilan
+	// BIRGA yoziladi va blok ochilganda birga tozalanadi.
+	//
+	// Nega foydalanuvchining o'ziga oqib ketmaydi: bu maydonlar faqat
+	// bloklangan hujjatda to'ladi, bloklangan foydalanuvchi esa /me ni
+	// umuman chaqira olmaydi — auth.RequireActiveUser uni 403 bilan
+	// to'xtatadi.
+
+	// BlockReason — inson o'qiy oladigan sabab. Admin bloklaganda uning
+	// o'zi yozgan matn; avtomatik blokda tayyor jumla.
+	BlockReason string `bson:"blockReason,omitempty" json:"blockReason,omitempty"`
+	// BlockSource — blokni kim qo'ygan: "admin" yoki "moderation".
+	//
+	// Bitta bayroq o'rniga alohida maydon, chunki ikkalasining oqibati
+	// boshqacha: admin bloki qo'lda ochilguncha turadi, moderatsiya bloki
+	// esa muddati tugagach o'z-o'zidan kuchini yo'qotadi.
+	BlockSource string `bson:"blockSource,omitempty" json:"blockSource,omitempty"`
+	// BlockedAt — qachon bloklangan.
+	BlockedAt *time.Time `bson:"blockedAt,omitempty" json:"blockedAt,omitempty"`
+	// BlockedBy — bloklagan admin id'si (faqat qo'lda blokda).
+	BlockedBy string `bson:"blockedBy,omitempty" json:"blockedBy,omitempty"`
+
+	// ── Platforma (qaysi klientdan) ───────────────────────────────────────
+	//
+	// Ikkita alohida maydon, chunki ikkita boshqa savolga javob beradi:
+	// "qayerdan kelgan" (marketing/o'sish) va "hozir nimadan foydalanadi"
+	// (qaysi klientni rivojlantirish kerak). Bitta maydonda birlashtirsak,
+	// vebdan ro'yxatdan o'tib keyin ilovaga ko'chgan foydalanuvchi ikkala
+	// javobni ham buzardi.
+	//
+	// Qiymatlar — httpx.Platform* yopiq ro'yxati ("web"|"android"|"ios").
+	// Maydon BO'SH bo'lishi mumkin va bu normal: bu funksiya qo'shilishidan
+	// oldin ro'yxatdan o'tganlar va sarlavha yubormaydigan eski klientlar.
+	// omitempty ataylab — "noma'lum" ni bo'sh satr sifatida saqlaymiz, aks
+	// holda uni keyinchalik haqiqiy qiymatdan ajratib bo'lmasdi.
+
+	// SignupPlatform — ro'yxatdan o'tgan payt qaysi klient ishlatilgan.
+	// FAQAT hujjat yaratilganda yoziladi ($setOnInsert) va hech qachon
+	// o'zgarmaydi.
+	SignupPlatform string `bson:"signupPlatform,omitempty" json:"signupPlatform,omitempty"`
+	// LastPlatform — oxirgi so'rov qaysi klientdan kelgan.
+	LastPlatform string `bson:"lastPlatform,omitempty" json:"lastPlatform,omitempty"`
+	// LastSeenAt — LastPlatform qachon yozilgan. Ikki vazifasi bor: "faol
+	// foydalanuvchi" hisobini oxirgi 30 kun bo'yicha kesish, va yozuvni
+	// qayta-qayta yangilamaslik uchun eskirganini bilish
+	// (auth.RequireActiveUser dagi throttle).
+	LastSeenAt *time.Time `bson:"lastSeenAt,omitempty" json:"lastSeenAt,omitempty"`
+
+	IsDeleted           bool                 `bson:"isDeleted" json:"isDeleted"`
+	LangPref            string               `bson:"langPref" json:"langPref"`
+	ThemePref           string               `bson:"themePref" json:"themePref"`
+	BlockedUserIDs      []primitive.ObjectID `bson:"blockedUserIds,omitempty" json:"blockedUserIds"`
+	OnboardingCompleted bool                 `bson:"onboardingCompleted" json:"onboardingCompleted"`
+	CreatedAt           time.Time            `bson:"createdAt" json:"createdAt"`
+	UpdatedAt           time.Time            `bson:"updatedAt" json:"updatedAt"`
 
 	// Self-deletion releases the account's identity: phone and telegramId are
 	// unset (freeing the unique indexes so the number can register again as a

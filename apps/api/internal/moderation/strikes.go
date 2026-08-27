@@ -165,7 +165,7 @@ func (s *StrikeStore) record(ctx context.Context, phone string, userID primitive
 			return &rec, err
 		}
 		rec.BannedUntil = &until
-		s.applyBan(ctx, userID, until)
+		s.applyBan(ctx, userID, until, rec.Strikes)
 	}
 	return &rec, nil
 }
@@ -179,14 +179,81 @@ func (s *StrikeStore) record(ctx context.Context, phone string, userID primitive
 //
 // `ownerBlocked` esa e'lonlarni ommaviy feeddan darhol olib tashlaydi
 // (admin bloklashda ham xuddi shunday qilinadi).
-func (s *StrikeStore) applyBan(ctx context.Context, userID primitive.ObjectID, until time.Time) {
+func (s *StrikeStore) applyBan(ctx context.Context, userID primitive.ObjectID, until time.Time, strikes int) {
 	if userID.IsZero() {
 		return
 	}
+	now := time.Now()
+	// Sabab hujjatga yoziladi, faqat sana emas: admin panelida "bu odam nega
+	// bloklangan?" degan savolga ertaga ham javob bo'lishi kerak. Matn tayyor
+	// va bexatar — qaysi tasnif ishlagani bu yerga tushmaydi (u faqat
+	// `moderation_strikes.events[].detail` da, admin ko'rinishida).
 	_, _ = s.users.UpdateOne(ctx, bson.M{"_id": userID},
-		bson.M{"$set": bson.M{"moderationBannedUntil": until, "updatedAt": time.Now()}})
+		bson.M{"$set": bson.M{
+			"moderationBannedUntil": until,
+			"blockReason":           AutoBanReason(strikes),
+			"blockSource":           BlockSourceModeration,
+			"blockedAt":             now,
+			"updatedAt":             now,
+		}})
 	_, _ = s.elons.UpdateMany(ctx, bson.M{"ownerId": userID},
-		bson.M{"$set": bson.M{"ownerBlocked": true, "updatedAt": time.Now()}})
+		bson.M{"$set": bson.M{"ownerBlocked": true, "updatedAt": now}})
+}
+
+// Blok manbalari — models.User.BlockSource qiymatlari.
+const (
+	// BlockSourceModeration — nomaqbul kontent uchun tizim qo'ygan blok.
+	BlockSourceModeration = "moderation"
+	// BlockSourceAdmin — admin qo'lda qo'ygan blok.
+	BlockSourceAdmin = "admin"
+)
+
+// AutoBanReason — avtomatik blok sababi, admin panelida ko'rsatish uchun.
+//
+// Tayyor jumla, chunki avtomatik blokda "sababni kim yozadi" degan savol yo'q:
+// uni tizim qo'yadi va sabab har doim bir xil. Buzilishlar tafsiloti (qaysi
+// e'lon, qaysi tasnif, qachon) alohida — `moderation_strikes` yozuvidagi
+// hodisalar ro'yxatida.
+func AutoBanReason(strikes int) string {
+	if strikes <= 0 {
+		strikes = DefaultStrikeLimit
+	}
+	return fmt.Sprintf(
+		"Nomaqbul kontent joylashga %d marta urinildi (avtomatik moderatsiya).",
+		strikes)
+}
+
+// FindByUser — foydalanuvchining buzilishlar yozuvi (telefon bo'yicha).
+//
+// Admin panelining "batafsil" ko'rinishi uchun: blok sababi bitta jumla, lekin
+// admin qaysi buzilishlar qachon bo'lganini ham ko'rishi kerak — masalan
+// foydalanuvchi "men hech narsa qilmadim" desa.
+//
+// Yozuv topilmasa (yoki telefon yo'q bo'lsa) nil qaytaradi — bu xato emas:
+// hech qachon qoida buzmagan foydalanuvchida yozuv bo'lmaydi.
+func (s *StrikeStore) FindByUser(ctx context.Context, userID primitive.ObjectID) (*StrikeRecord, error) {
+	if s == nil {
+		return nil, nil
+	}
+	var u struct {
+		Phone string `bson:"phone"`
+	}
+	if err := s.users.FindOne(ctx, bson.M{"_id": userID},
+		options.FindOne().SetProjection(bson.M{"phone": 1})).Decode(&u); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(u.Phone) == "" {
+		return nil, nil
+	}
+	var rec StrikeRecord
+	err := s.col.FindOne(ctx, bson.M{"phone": u.Phone}).Decode(&rec)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rec, nil
 }
 
 // BanByPhone — shu raqam bloklanganmi. Login oqimi shundan foydalanadi:
@@ -251,8 +318,19 @@ func (s *StrikeStore) LiftBanByUser(ctx context.Context, userID primitive.Object
 			return err
 		}
 	}
+	// Sabab maydonlari blok bilan birga tozalanadi — lekin FAQAT moderatsiya
+	// bloki bo'lsa. Admin qo'lda ham bloklab qo'ygan bo'lsa, uning sababi
+	// o'z kuchida qolishi kerak: moderatsiya blokini ochish admin qarorini
+	// bekor qilmaydi.
+	unset := bson.M{"moderationBannedUntil": ""}
+	if !u.IsBlocked {
+		unset["blockReason"] = ""
+		unset["blockSource"] = ""
+		unset["blockedAt"] = ""
+		unset["blockedBy"] = ""
+	}
 	if _, err := s.users.UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
-		"$unset": bson.M{"moderationBannedUntil": ""},
+		"$unset": unset,
 		"$set":   bson.M{"updatedAt": time.Now()},
 	}); err != nil {
 		return err

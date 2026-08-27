@@ -58,7 +58,7 @@ func (h *Handler) ExportUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cur.Close(ctx)
 	cw := csvDownload(w, "users.csv")
-	_ = cw.Write([]string{"id", "ism", "familiya", "telefon", "viloyat", "tuman", "reyting", "sharhlar", "bajarilganIsh", "tasdiqlangan", "bloklangan", "yaratilgan"})
+	_ = cw.Write([]string{"id", "ism", "familiya", "telefon", "viloyat", "tuman", "reyting", "sharhlar", "bajarilganIsh", "tasdiqlangan", "bloklangan", "yaratilgan", "royxatPlatformasi", "oxirgiPlatforma", "oxirgiFaollik"})
 	for cur.Next(ctx) {
 		var u models.User
 		if cur.Decode(&u) != nil {
@@ -69,10 +69,23 @@ func (h *Handler) ExportUsers(w http.ResponseWriter, r *http.Request) {
 			strconv.FormatFloat(u.Rating, 'f', 1, 64), strconv.Itoa(u.ReviewsCount),
 			strconv.Itoa(u.CompletedJobsCount), strconv.FormatBool(u.IsPhoneVerified),
 			strconv.FormatBool(u.IsBlocked), u.CreatedAt.Format(time.RFC3339),
+			// Bo'sh emas, "unknown": eksportni jadval dasturida ochgan odam
+			// bo'sh katakni "ma'lumot yo'qolgan" deb o'qiydi.
+			httpx.PlatformOrUnknown(u.SignupPlatform),
+			httpx.PlatformOrUnknown(u.LastPlatform),
+			csvTime(u.LastSeenAt),
 		})
 	}
 	cw.Flush()
 	h.audit(r, "export_users", "", "")
+}
+
+// csvTime — ixtiyoriy vaqtni katakka aylantiradi; yo'q bo'lsa bo'sh katak.
+func csvTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 // ExportElons streams elons (same filters as ListElons) as CSV.

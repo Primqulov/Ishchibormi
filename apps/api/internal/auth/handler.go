@@ -136,7 +136,7 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 			moderation.BanMessage(until), map[string]any{"bannedUntil": until}))
 		return
 	}
-	user, err := h.upsertUser(ctx, phone, tgID)
+	user, err := h.upsertUser(ctx, phone, tgID, httpx.ClientPlatform(r))
 	if err != nil {
 		// A distinct code from account_disabled: the clients treat that one as
 		// "your session was revoked" and tear down local state, which is the
@@ -276,7 +276,13 @@ func (h *Handler) releaseDeletedIdentity(ctx context.Context, phone string, tgID
 	return cur.Err()
 }
 
-func (h *Handler) upsertUser(ctx context.Context, phone string, tgID int64) (*models.User, error) {
+// upsertUser telefon bo'yicha hisobni topadi yoki yaratadi.
+//
+// platform — so'rov qaysi klientdan kelgani (httpx.ClientPlatform). Bo'sh
+// bo'lishi mumkin: sarlavha yubormaydigan eski klient. Bo'sh qiymat hech
+// qachon YOZILMAYDI — aks holda mavjud yozuvni "noma'lum" bilan ustidan
+// bosib ketardi.
+func (h *Handler) upsertUser(ctx context.Context, phone string, tgID int64, platform string) (*models.User, error) {
 	now := time.Now()
 	if err := h.releaseDeletedIdentity(ctx, phone, tgID); err != nil {
 		return nil, err
@@ -305,6 +311,14 @@ func (h *Handler) upsertUser(ctx context.Context, phone string, tgID int64) (*mo
 			"isPhoneVerified": true,
 			"updatedAt":       now,
 		},
+	}
+	// Platforma. Login — signupPlatform ni yozish uchun YAGONA imkoniyat:
+	// hujjat aynan shu yerda tug'iladi, keyin uni to'ldirish "qayerdan
+	// ro'yxatdan o'tgan" degan savolga taxmin bilan javob berish bo'lardi.
+	if platform != "" {
+		update["$setOnInsert"].(bson.M)["signupPlatform"] = platform
+		update["$set"].(bson.M)["lastPlatform"] = platform
+		update["$set"].(bson.M)["lastSeenAt"] = now
 	}
 	opts := options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)
 	var u models.User
@@ -417,6 +431,9 @@ func RequireActiveUser(users *mongo.Collection) func(http.Handler) http.Handler 
 					map[string]any{"bannedUntil": *u.ModerationBannedUntil}))
 				return
 			}
+			// Hujjat allaqachon o'qilgan — oxirgi ishlatilgan platformani
+			// shu yerda yozib qo'yish qo'shimcha so'rov talab qilmaydi.
+			touchPlatform(r, users, &u)
 			// The user document is already loaded here, so tagging the request
 			// as review traffic is free. Downstream handlers use it to keep the
 			// review account's activity inside its sandbox.
@@ -426,6 +443,45 @@ func RequireActiveUser(users *mongo.Collection) func(http.Handler) http.Handler 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// platformSeenInterval — lastSeenAt qancha eskirganda qayta yoziladi.
+//
+// Har so'rovda yozish mumkin emas: feed'ni aylantirayotgan bitta
+// foydalanuvchi daqiqada o'nlab yozuv hosil qilardi va bu hech qanday yangi
+// ma'lumot bermasdi. 30 daqiqa "bugun faol edi" degan savolga javob berish
+// uchun yetarlicha aniq.
+const platformSeenInterval = 30 * time.Minute
+
+// touchPlatform foydalanuvchining oxirgi ishlatgan klientini yangilaydi.
+//
+// Yozuv UCHTA holatda bo'ladi va boshqa hech qachon:
+//   - klient o'zgargan (ilovadan vebga o'tgan) — bu darhol qiziq;
+//   - lastSeenAt yo'q (bu funksiyadan oldingi eski hisob);
+//   - lastSeenAt [platformSeenInterval] dan eski.
+//
+// Yozuv so'rov kontekstida, sinxron bajariladi. Bu javobni sezilarli
+// kechiktirmaydi, chunki u foydalanuvchi boshiga yarim soatda bir marta
+// sodir bo'ladi. Xato jimgina yutiladi: statistika yozuvi tufayli
+// foydalanuvchining haqiqiy so'rovi yiqilishi mumkin emas.
+func touchPlatform(r *http.Request, users *mongo.Collection, u *models.User) {
+	p := httpx.ClientPlatform(r)
+	if p == "" {
+		return // klient o'zini tanitmadi — mavjud yozuvga tegmaymiz
+	}
+	now := time.Now()
+	fresh := u.LastSeenAt != nil && now.Sub(*u.LastSeenAt) < platformSeenInterval
+	if p == u.LastPlatform && fresh {
+		return
+	}
+	set := bson.M{"lastPlatform": p, "lastSeenAt": now}
+	// Eski hisoblarda signupPlatform bo'sh. Uni SHU YERDA to'ldirmaymiz:
+	// hozir ishlatayotgan klient ro'yxatdan o'tgan klient degani emas, va
+	// taxmin qilingan qiymat hisobotda haqiqiydan farq qilmay qolardi.
+	if _, err := users.UpdateOne(r.Context(), bson.M{"_id": u.ID}, bson.M{"$set": set}); err != nil {
+		return
+	}
+	u.LastPlatform, u.LastSeenAt = p, &now
 }
 
 // DenyReviewAccount blocks routes the sandboxed Play review account has no

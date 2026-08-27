@@ -139,7 +139,14 @@ async function request<T>(
   path: string,
   opts: RequestInit & { auth?: "user" | "admin" | "none" } = {}
 ): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    // Foydalanuvchi qaysi klientdan foydalanayotganini backend shu
+    // sarlavhadan biladi (admin panelidagi platforma statistikasi).
+    // User-Agent yetarli emas: uni kengaytmalar o'zgartiradi va mobil
+    // ilovadagi WebView ham brauzer UA'sini yuboradi.
+    "X-Client-Platform": "web",
+  };
   const auth = opts.auth ?? "user";
   if (auth === "user") {
     const t = getAccess();
@@ -216,6 +223,30 @@ export const api = {
 // ----- domain types -----
 export type ID = string;
 
+/**
+ * Backend biladigan klientlar (Go: httpx.Platform*). Ro'yxat YOPIQ —
+ * backend klient yuborgan qiymatni shu to'plamga keltiradi.
+ */
+export type ClientPlatform = "web" | "android" | "ios" | "unknown";
+
+/** Panelda ko'rsatiladigan tartib — hisobotlarda ham shu ketma-ketlik. */
+export const CLIENT_PLATFORMS: ClientPlatform[] = ["web", "android", "ios", "unknown"];
+
+const PLATFORM_LABELS: Record<ClientPlatform, string> = {
+  web: "Veb",
+  android: "Android",
+  ios: "iOS",
+  // "Noma'lum" — bu funksiyadan oldin ro'yxatdan o'tganlar va sarlavha
+  // yubormaydigan eski ilova versiyalari. Ataylab ko'rsatiladi: yashirilsa
+  // ustunlar yig'indisi jami foydalanuvchiga teng kelmasdi.
+  unknown: "Noma'lum",
+};
+
+/** Platforma kodini panelda ko'rsatiladigan nomga aylantiradi. */
+export function platformLabel(p?: string | null): string {
+  return PLATFORM_LABELS[(p || "unknown") as ClientPlatform] ?? p ?? "Noma'lum";
+}
+
 export interface User {
   id: ID;
   telegramId?: number;
@@ -234,15 +265,66 @@ export interface User {
    * Avtomatik moderatsiya bloki tugash vaqti (ISO). Bloklanmagan
    * foydalanuvchida umuman kelmaydi.
    *
-   * `isBlocked` dan ATAYLAB alohida: u admin qo'lda qo'ygan bayroq, bu esa
-   * nomaqbul kontent uchun tizim qo'ygan MUDDATLI blok. Faqat superadmin
-   * uni muddatidan oldin ocha oladi.
+   * Saqlashda `isBlocked` dan alohida — oqibati boshqacha: qo'lda qo'yilgan
+   * blok ochilguncha turadi, bu esa muddati tugagach o'z-o'zidan kuchini
+   * yo'qotadi. LEKIN panelda ikkalasi BITTA holat sifatida ko'rsatiladi
+   * (`isUserBlocked`): admin uchun "bloklanganmi?" degan savolga ikkita
+   * javob bo'lishi mumkin emas.
    */
   moderationBannedUntil?: string;
+  /** Nega bloklangan — admin yozgan matn yoki avtomatik blok jumlasi. */
+  blockReason?: string;
+  /** Blokni kim qo'ygan. */
+  blockSource?: "admin" | "moderation";
+  /** Qachon bloklangan (ISO). */
+  blockedAt?: string;
+  /** Bloklagan admin id'si (faqat qo'lda blokda). */
+  blockedBy?: string;
+  /**
+   * Ro'yxatdan o'tgan payt ishlatilgan klient. Bu funksiya qo'shilishidan
+   * oldin ro'yxatdan o'tganlarda umuman kelmaydi — `platformLabel` uni
+   * "Noma'lum" deb ko'rsatadi.
+   */
+  signupPlatform?: ClientPlatform;
+  /** Oxirgi so'rov qaysi klientdan kelgan. */
+  lastPlatform?: ClientPlatform;
+  /** `lastPlatform` qachon yozilgan (ISO). */
+  lastSeenAt?: string;
   langPref?: "latin" | "cyrillic";
   themePref?: "light" | "dark";
   onboardingCompleted?: boolean;
 }
+/**
+ * Moderatsiya bloki HOZIR kuchdami.
+ *
+ * Muddati o'tgan blok blok emas: backend ham shu qoidaga amal qiladi
+ * (`RequireActiveUser` sanani solishtiradi), shuning uchun UI eskirgan
+ * blokni "bloklangan" deb ko'rsatmasligi kerak.
+ */
+export function moderationBanUntil(u: Pick<User, "moderationBannedUntil">): Date | null {
+  if (!u.moderationBannedUntil) return null;
+  const d = new Date(u.moderationBannedUntil);
+  return d.getTime() > Date.now() ? d : null;
+}
+
+/**
+ * Foydalanuvchi bloklanganmi — manbasidan qat'i nazar.
+ *
+ * Panelda blok bitta tushuncha. Ikkita alohida belgi (qo'lda / avtomatik)
+ * adminni chalg'itardi: "Faol" deb turgan foydalanuvchi aslida ilovaga kira
+ * olmasligi mumkin edi.
+ */
+export function isUserBlocked(u: Pick<User, "isBlocked" | "moderationBannedUntil">): boolean {
+  return !!u.isBlocked || !!moderationBanUntil(u);
+}
+
+/** Blok manbasi — inson o'qiy oladigan nom. */
+export function blockSourceLabel(u: Pick<User, "isBlocked" | "moderationBannedUntil" | "blockSource">): string {
+  if (moderationBanUntil(u)) return "Avtomatik (nomaqbul kontent)";
+  if (u.isBlocked) return u.blockSource === "moderation" ? "Moderatsiya" : "Admin qarori";
+  return "";
+}
+
 export interface Category {
   id: ID;
   name: string;
@@ -399,14 +481,37 @@ export interface DashboardStats {
   completed: number;
   openReports: number;
   openFeedback: number;
+  /**
+   * Platforma bo'yicha foydalanuvchilar — OXIRGI ISHLATILGAN klient
+   * bo'yicha ("hozir nimadan foydalanadi"). Ro'yxatdan o'tish taqsimoti
+   * `AdminStats.platforms.signup` da.
+   */
+  webUsers: number;
+  androidUsers: number;
+  iosUsers: number;
+  unknownPlatformUsers: number;
 }
 
 export interface DayPoint { date: string; count: number; }
 export interface NameCount { name: string; count: number; }
+/**
+ * Platforma taqsimoti ikki kesimda. Ikkalasi kerak, chunki boshqa savolga
+ * javob beradi: `signup` — o'sish qaysi kanaldan kelayotgani, `active` —
+ * qaysi klientni rivojlantirish kerakligi. Vebdan ro'yxatdan o'tib ilovaga
+ * ko'chgan oqim faqat shu ikkisi solishtirilganda ko'rinadi.
+ */
+export interface PlatformStats {
+  signup: NameCount[];
+  active: NameCount[];
+  /** `active` necha kunlik oyna bo'yicha hisoblangani. */
+  activeWindowDays: number;
+}
+
 export interface AdminStats {
   userGrowth: DayPoint[];
   elonGrowth: DayPoint[];
   funnel: Record<string, number>;
   topCategories: NameCount[];
   regions: NameCount[];
+  platforms: PlatformStats;
 }

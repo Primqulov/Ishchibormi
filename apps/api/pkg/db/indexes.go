@@ -22,6 +22,11 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		// accounts past their grace period every 6h. Without this it is a full
 		// collection scan over every user on the platform.
 		{"users", mongo.IndexModel{Keys: bson.D{{Key: "isDeleted", Value: 1}, {Key: "deletedAt", Value: 1}}}},
+		// Admin panelining platforma kesimi: ro'yxat filtri (lastPlatform) va
+		// "oxirgi 30 kunda faol" agregatsiyasi (lastSeenAt) — ikkalasi ham shu
+		// bitta indeksdan foydalanadi. Usiz har ochilishda butun users
+		// kolleksiyasi to'liq skanerlanardi.
+		{"users", mongo.IndexModel{Keys: bson.D{{Key: "lastPlatform", Value: 1}, {Key: "lastSeenAt", Value: -1}}}},
 
 		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "status", Value: 1}, {Key: "publishedAt", Value: -1}}}},
 		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "ownerId", Value: 1}, {Key: "status", Value: 1}}}},

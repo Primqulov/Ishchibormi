@@ -1,7 +1,19 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { api, User, Paged, downloadAdminCsv, getAdminRole } from "@/lib/api";
+import {
+  api,
+  User,
+  Paged,
+  downloadAdminCsv,
+  getAdminRole,
+  APIError,
+  isUserBlocked,
+  moderationBanUntil,
+  blockSourceLabel,
+  platformLabel,
+  CLIENT_PLATFORMS,
+} from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 
@@ -12,12 +24,20 @@ export default function AdminUsers() {
   const [region, setRegion] = useState("");
   const [blocked, setBlocked] = useState("");
   const [verified, setVerified] = useState("");
+  const [platform, setPlatform] = useState("");
   const [delId, setDelId] = useState("");
-  // Moderatsiya blokini faqat superadmin ocha oladi — backend ham shu
-  // qoidani qo'llaydi (superadmin route guruhi). Tugmani boshqa rolga
-  // ko'rsatsak, u bosib 403 olardi.
+  // Avtomatik blokni faqat superadmin ocha oladi — backend ham shu qoidani
+  // qo'llaydi (403 `moderation_ban_superadmin_only`). Rolni bilib turish
+  // tugmani oldindan o'chirib qo'yish uchun kerak: bosilib, keyin rad
+  // etiladigan amal taklif qilinmasin.
   const [isSuper, setIsSuper] = useState(false);
-  const [liftId, setLiftId] = useState("");
+  // Bloklash oynasi: sabab MAJBURIY, shuning uchun bu bir bosishli amal emas.
+  const [blockTarget, setBlockTarget] = useState<User | null>(null);
+  const [reason, setReason] = useState("");
+  // Blokni ochish oynasi.
+  const [unblockTarget, setUnblockTarget] = useState<User | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   const limit = 20;
 
   const load = useCallback(async () => {
@@ -26,32 +46,54 @@ export default function AdminUsers() {
     if (region.trim()) params.set("region", region.trim());
     if (blocked) params.set("blocked", blocked);
     if (verified) params.set("verified", verified);
+    if (platform) params.set("platform", platform);
     setData(await api.get<Paged<User>>(`/api/admin/users?${params}`, { auth: "admin" } as any));
-  }, [page, q, region, blocked, verified]);
+  }, [page, q, region, blocked, verified, platform]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setIsSuper(getAdminRole() === "superadmin"); }, []);
   // Filtr o'zgarsa 1-sahifaga qaytamiz.
-  useEffect(() => { setPage(1); }, [q, region, blocked, verified]);
+  useEffect(() => { setPage(1); }, [q, region, blocked, verified, platform]);
 
-  // moderationBanUntil — blok hozir kuchdami va qachongacha.
-  // Muddati o'tgan blok blok emas: backend ham shu qoidaga amal qiladi.
-  function bannedUntil(u: User): Date | null {
-    if (!u.moderationBannedUntil) return null;
-    const d = new Date(u.moderationBannedUntil);
-    return d.getTime() > Date.now() ? d : null;
+  /** Bu foydalanuvchini shu admin blokdan chiqara oladimi. */
+  function canUnblock(u: User): boolean {
+    return isSuper || !moderationBanUntil(u);
   }
 
-  async function liftBan(id: string) {
-    await api.delete(`/api/admin/users/${id}/moderation-ban`, { auth: "admin" } as any);
-    setLiftId("");
-    load();
+  async function submitBlock() {
+    if (!blockTarget || !reason.trim()) return;
+    setBusy(true); setErr("");
+    try {
+      await api.post(
+        `/api/admin/users/${blockTarget.id}/block`,
+        { isBlocked: true, reason: reason.trim() },
+        { auth: "admin" } as any,
+      );
+      setBlockTarget(null); setReason("");
+      load();
+    } catch (e) {
+      setErr((e as APIError)?.message || "Bloklab bo'lmadi");
+    } finally { setBusy(false); }
   }
 
-  async function block(id: string, isBlocked: boolean) {
-    await api.post(`/api/admin/users/${id}/block`, { isBlocked }, { auth: "admin" } as any);
-    load();
+  async function submitUnblock() {
+    if (!unblockTarget) return;
+    setBusy(true); setErr("");
+    try {
+      // Bitta chaqiruv ikkala blokni ham ochadi (qo'lda qo'yilgani va
+      // avtomatik) — panelda blok bitta tushuncha bo'lgani uchun.
+      await api.post(
+        `/api/admin/users/${unblockTarget.id}/block`,
+        { isBlocked: false },
+        { auth: "admin" } as any,
+      );
+      setUnblockTarget(null);
+      load();
+    } catch (e) {
+      setErr((e as APIError)?.message || "Blokni ochib bo'lmadi");
+    } finally { setBusy(false); }
   }
+
   async function del() {
     await api.delete(`/api/admin/users/${delId}`, { auth: "admin" } as any);
     setDelId("");
@@ -63,6 +105,7 @@ export default function AdminUsers() {
     if (region.trim()) params.set("region", region.trim());
     if (blocked) params.set("blocked", blocked);
     if (verified) params.set("verified", verified);
+    if (platform) params.set("platform", platform);
     downloadAdminCsv("/api/admin/export/users.csv", params);
   }
 
@@ -96,65 +139,107 @@ export default function AdminUsers() {
             <option value="1">Tasdiqlangan</option>
             <option value="0">Tasdiqlanmagan</option>
           </select>
+          <select className="input max-w-[170px]" value={platform} onChange={(e) => setPlatform(e.target.value)}>
+            <option value="">Platforma (barchasi)</option>
+            {CLIENT_PLATFORMS.map((p) => (
+              <option key={p} value={p}>{platformLabel(p)}</option>
+            ))}
+          </select>
           <div className="text-sm text-[color:var(--text-muted)] ml-auto">Jami: {total}</div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-sm table-fixed">
+          <table className="w-full min-w-[900px] text-sm table-fixed">
             <colgroup>
-              <col style={{ width: "24%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "15%" }} />
-              <col style={{ width: "15%" }} />
-              <col style={{ width: "28%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "13%" }} />
+              <col style={{ width: "23%" }} />
+              <col style={{ width: "19%" }} />
             </colgroup>
             <thead>
               <tr className="text-left text-[color:var(--text-muted)] border-b" style={{ borderColor: "var(--border)" }}>
-                <th className="py-3 px-4">Ism</th><th className="px-4">Telefon</th><th className="px-4">Viloyat</th><th className="px-4">Holat</th><th className="px-4 text-right">Amallar</th>
+                <th className="py-3 px-4">Ism</th><th className="px-4">Telefon</th><th className="px-4">Viloyat</th><th className="px-4">Platforma</th><th className="px-4">Holat</th><th className="px-4 text-right">Amallar</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-                  <td className="py-3 px-4 truncate">
-                    <Link href={`/admin/users/${u.id}`} className="hover:underline font-medium">{u.firstName} {u.lastName}</Link>
-                  </td>
-                  <td className="px-4 whitespace-nowrap">{u.phone}</td>
-                  <td className="px-4 truncate">{u.region}</td>
-                  <td className="px-4">
-                    <div className="flex flex-col gap-1 items-start">
-                      <span className="inline-flex justify-center w-[92px] text-xs font-medium px-2 py-0.5 rounded-full border"
-                        style={u.isBlocked
-                          ? { color: "var(--danger, #dc2626)", borderColor: "var(--danger, #dc2626)" }
-                          : { color: "var(--success, #16a34a)", borderColor: "var(--success, #16a34a)" }}>
-                        {u.isBlocked ? "Bloklangan" : "Faol"}
-                      </span>
-                      {/* Avtomatik moderatsiya bloki — muddati bilan, chunki u
-                          o'z-o'zidan tugaydi va superadmin qachon tugashini
-                          bilib turishi kerak. */}
-                      {bannedUntil(u) && (
-                        <span className="inline-flex text-[11px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
-                          style={{ color: "#d97706", borderColor: "#d97706" }}
-                          title="Nomaqbul kontent uchun avtomatik blok">
-                          Moderatsiya: {bannedUntil(u)!.toLocaleDateString("uz-UZ")} gacha
+              {users.map((u) => {
+                const blockedNow = isUserBlocked(u);
+                const until = moderationBanUntil(u);
+                return (
+                  <tr key={u.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                    <td className="py-3 px-4 truncate">
+                      <Link href={`/admin/users/${u.id}`} className="hover:underline font-medium">{u.firstName} {u.lastName}</Link>
+                    </td>
+                    <td className="px-4 whitespace-nowrap">{u.phone}</td>
+                    <td className="px-4 truncate">{u.region}</td>
+                    {/* Platforma: yuqorida — hozir foydalanadigani, ostida —
+                        qayerdan ro'yxatdan o'tgani. Ikkinchisi faqat FARQ
+                        qilganda ko'rsatiladi: bir xil bo'lsa u qatorga hech
+                        narsa qo'shmaydi, faqat ko'zni chalg'itardi. */}
+                    <td className="px-4">
+                      <div className="flex flex-col gap-0.5 items-start py-1">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full border" style={{ borderColor: "var(--border)" }}>
+                          {platformLabel(u.lastPlatform)}
                         </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4">
-                    <div className="flex gap-2 justify-end">
-                      <Link href={`/admin/users/${u.id}`} className="btn-secondary btn-sm">Batafsil</Link>
-                      <button onClick={() => block(u.id, !u.isBlocked)} className="btn-secondary btn-sm">{u.isBlocked ? "Ochish" : "Bloklash"}</button>
-                      {isSuper && bannedUntil(u) && (
-                        <button onClick={() => setLiftId(u.id)} className="btn-secondary btn-sm" style={{ color: "#d97706", borderColor: "#d97706" }}>
-                          Blokni ochish
-                        </button>
-                      )}
-                      <button onClick={() => setDelId(u.id)} className="btn-danger btn-sm">O'chirish</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {u.signupPlatform && u.signupPlatform !== u.lastPlatform && (
+                          <span className="text-[11px] text-[color:var(--text-muted)]">
+                            ro&apos;yxat: {platformLabel(u.signupPlatform)}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4">
+                      {/* BITTA holat belgisi. Ilgari qo'lda va avtomatik blok
+                          ikki alohida nishon edi — "Faol" deb turgan odam
+                          aslida ilovaga kira olmasligi mumkin edi. Manba va
+                          sabab endi belgi EMAS, uning izohi. */}
+                      <div className="flex flex-col gap-1 items-start py-1">
+                        <span className="inline-flex justify-center w-[92px] text-xs font-medium px-2 py-0.5 rounded-full border"
+                          style={blockedNow
+                            ? { color: "var(--danger, #dc2626)", borderColor: "var(--danger, #dc2626)" }
+                            : { color: "var(--success, #16a34a)", borderColor: "var(--success, #16a34a)" }}>
+                          {blockedNow ? "Bloklangan" : "Faol"}
+                        </span>
+                        {blockedNow && (
+                          <div className="text-[11px] leading-snug text-[color:var(--text-muted)]">
+                            <div>
+                              {blockSourceLabel(u)}
+                              {until && ` · ${until.toLocaleDateString("uz-UZ")} gacha`}
+                            </div>
+                            {u.blockReason && <div className="line-clamp-2" title={u.blockReason}>{u.blockReason}</div>}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4">
+                      <div className="flex gap-2 justify-end">
+                        <Link href={`/admin/users/${u.id}`} className="btn-secondary btn-sm">Batafsil</Link>
+                        {/* BITTA tugma: blok manbasi qanday bo'lishidan qat'i
+                            nazar. Avtomatik blokni moderator ocha olmaydi —
+                            tugma bosilib 403 olishdan ko'ra, o'chiq turgani
+                            va sababi aytilgani ma'qul. */}
+                        {blockedNow ? (
+                          <button
+                            onClick={() => { setErr(""); setUnblockTarget(u); }}
+                            disabled={!canUnblock(u)}
+                            title={canUnblock(u) ? "" : "Avtomatik moderatsiya blokini faqat superadmin ocha oladi"}
+                            className="btn-secondary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Blokdan chiqarish
+                          </button>
+                        ) : (
+                          <button onClick={() => { setErr(""); setReason(""); setBlockTarget(u); }} className="btn-secondary btn-sm">
+                            Bloklash
+                          </button>
+                        )}
+                        <button onClick={() => setDelId(u.id)} className="btn-danger btn-sm">O&apos;chirish</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {!users.length && <tr><td colSpan={6} className="py-8 text-center text-[color:var(--text-muted)]">Hech narsa topilmadi</td></tr>}
             </tbody>
           </table>
@@ -164,26 +249,71 @@ export default function AdminUsers() {
 
       <Modal open={!!delId} onClose={() => setDelId("")} title="Foydalanuvchini o'chirasizmi?" footer={
         <>
-          <button onClick={() => setDelId("")} className="btn-secondary">Yo'q</button>
-          <button onClick={del} className="btn-danger">Ha, o'chirish</button>
+          <button onClick={() => setDelId("")} className="btn-secondary">Yo&apos;q</button>
+          <button onClick={del} className="btn-danger">Ha, o&apos;chirish</button>
         </>
       }>
-        <p className="text-sm muted">Foydalanuvchi o'chiriladi. Davom etasizmi?</p>
+        <p className="text-sm muted">Foydalanuvchi o&apos;chiriladi. Davom etasizmi?</p>
       </Modal>
 
-      {/* Moderatsiya blokini ochish — faqat superadmin uchun ko'rinadi. */}
-      <Modal open={!!liftId} onClose={() => setLiftId("")} title="Moderatsiya blokini ochasizmi?" footer={
+      {/* Bloklash — sabab MAJBURIY.
+          Nega: blokni ochadigan yoki e'tirozni ko'radigan admin ko'pincha uni
+          qo'ygan admin emas, va oradan oylar o'tgan bo'ladi. Sababsiz blok —
+          hech kim javob bera olmaydigan qaror. */}
+      <Modal open={!!blockTarget} onClose={() => setBlockTarget(null)} title="Foydalanuvchini bloklash" footer={
         <>
-          <button onClick={() => setLiftId("")} className="btn-secondary">Yo'q</button>
-          <button onClick={() => liftBan(liftId)} className="btn-primary">Ha, ochish</button>
+          <button onClick={() => setBlockTarget(null)} className="btn-secondary">Bekor</button>
+          <button onClick={submitBlock} className="btn-danger" disabled={busy || !reason.trim()}>
+            {busy ? "Bloklanmoqda…" : "Bloklash"}
+          </button>
         </>
       }>
-        <p className="text-sm muted">
-          Foydalanuvchi nomaqbul kontent uchun avtomatik bloklangan.
-          Blok muddatidan oldin bekor qilinadi va buzilishlar hisobi nolga
-          tushadi — aks holda keyingi bitta buzilish uni darhol qayta
-          bloklardi.
-        </p>
+        <div className="grid gap-2">
+          <p className="text-sm muted">
+            <b>{blockTarget?.firstName} {blockTarget?.lastName}</b> ilovadan foydalana olmay qoladi
+            va uning e&apos;lonlari yashiriladi.
+          </p>
+          <label className="text-sm font-medium">Bloklash sababi</label>
+          <textarea
+            className="input min-h-[90px]"
+            placeholder="Masalan: takroriy spam e'lonlar, boshqa foydalanuvchilarga tahdid…"
+            value={reason}
+            maxLength={500}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <p className="text-xs text-[color:var(--text-muted)]">
+            Sabab foydalanuvchining batafsil sahifasida saqlanadi — ertaga nega bloklangani shu yerdan bilinadi.
+          </p>
+          {err && <p className="text-sm" style={{ color: "var(--danger, #dc2626)" }}>{err}</p>}
+        </div>
+      </Modal>
+
+      {/* Blokni ochish — bitta amal, manbasidan qat'i nazar. */}
+      <Modal open={!!unblockTarget} onClose={() => setUnblockTarget(null)} title="Blokdan chiqarasizmi?" footer={
+        <>
+          <button onClick={() => setUnblockTarget(null)} className="btn-secondary">Yo&apos;q</button>
+          <button onClick={submitUnblock} className="btn-primary" disabled={busy}>
+            {busy ? "Ochilmoqda…" : "Ha, ochish"}
+          </button>
+        </>
+      }>
+        <div className="grid gap-2 text-sm muted">
+          {unblockTarget?.blockReason && (
+            <p>
+              <span className="text-[color:var(--text-muted)]">Blok sababi: </span>
+              {unblockTarget.blockReason}
+            </p>
+          )}
+          <p>Foydalanuvchi ilovadan yana foydalana boshlaydi va e&apos;lonlari qaytadi.</p>
+          {unblockTarget && moderationBanUntil(unblockTarget) && (
+            <p>
+              Bu avtomatik blok ({moderationBanUntil(unblockTarget)!.toLocaleDateString("uz-UZ")} gacha edi).
+              Buzilishlar hisobi ham nolga tushadi — aks holda keyingi bitta buzilish uni darhol qayta
+              bloklardi.
+            </p>
+          )}
+          {err && <p style={{ color: "var(--danger, #dc2626)" }}>{err}</p>}
+        </div>
       </Modal>
     </div>
   );
