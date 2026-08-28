@@ -232,15 +232,28 @@ async function request<T>(
   // `TypeError: Failed to fetch` tashlaydi — bu Next.js dev'da "Unhandled
   // Runtime Error" overlay'i bo'lib chiqadi. navigator.onLine orqali haqiqiy
   // oflayn holatni online qurilmadagi backend nosozligidan ajratamiz.
+  // Manzil YO'L bo'yicha tanlanadi, `auth` rejimi bo'yicha EMAS.
+  //
+  // Sabab: /api/admin/login ataylab `auth: "none"` bilan chaqiriladi — hali
+  // token yo'q. Qaror rejimga bog'langanida aynan shu bitta so'rov ommaviy
+  // domenga ketardi, u yerda esa admin API 404. Bundan ham yomoni, u
+  // cross-origin bo'lgani uchun brauzer CORS tekshiruvidayoq to'sardi va
+  // fetch xato tashlardi — foydalanuvchi buni "Server vaqtincha
+  // ishlamayapti" degan xabar sifatida ko'rardi, ya'ni sabab butunlay
+  // yashirin qolardi.
+  //
+  // Yo'l bo'yicha tanlash o'z-o'zidan to'g'ri: /api/admin/* faqat boshqaruv
+  // subdomenida yashaydi, kim qanday chaqirishidan qat'i nazar.
+  const isAdminPath = path.startsWith("/api/admin");
   let res: Response;
   try {
-    res = await fetch(`${auth === "admin" ? adminBase() : API_BASE}${path}`, {
+    res = await fetch(`${isAdminPath ? adminBase() : API_BASE}${path}`, {
       ...opts,
       headers,
-      // Admin refresh cookie'si so'rov bilan birga ketsin. Foydalanuvchi
-      // oqimida cookie umuman yo'q (faqat Bearer token), shuning uchun u
-      // yerda o'zgarish sezilmaydi.
-      ...(auth === "admin" ? { credentials: "include" as RequestCredentials } : {}),
+      // Admin sessiyasining refresh cookie'si so'rov bilan birga ketsin —
+      // login javobi aynan shu cookie'ni o'rnatadi. Foydalanuvchi oqimida
+      // cookie umuman yo'q (faqat Bearer token), u yerda o'zgarish yo'q.
+      ...(isAdminPath ? { credentials: "include" as RequestCredentials } : {}),
     });
   } catch {
     throw connectionError();
