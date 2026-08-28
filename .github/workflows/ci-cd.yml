@@ -170,14 +170,9 @@ jobs:
             # hech qachon repoga yozilmaydi. Secret o'rnatilgan bo'lsa serverdagi
             # .env yangilanadi; bo'lmasa mavjud qiymat saqlanadi (deploy buzilmaydi).
             MONGO_URI_SECRET='${{ secrets.MONGO_URI }}'
-            if [ -n "$MONGO_URI_SECRET" ]; then
-              set_env MONGO_URI "$MONGO_URI_SECRET"
-              MONGO_DB_SECRET='${{ secrets.MONGO_DB }}'
-              set_env MONGO_DB "${MONGO_DB_SECRET:-ishchibormi}"
-              echo "MONGO_URI .env ga yozildi."
-            else
-              echo "OGOHLANTIRISH: MONGO_URI secret o'rnatilmagan -> serverdagi mavjud .env qiymati saqlanadi."
-            fi
+            MONGO_DB_SECRET='${{ secrets.MONGO_DB }}'
+            # Bitta qatorda — yuqoridagi set_env_if_set izohiga qarang.
+            if [ -n "$MONGO_URI_SECRET" ]; then set_env MONGO_URI "$MONGO_URI_SECRET"; set_env MONGO_DB "${MONGO_DB_SECRET:-ishchibormi}"; echo "MONGO_URI .env ga yozildi."; else echo "OGOHLANTIRISH: MONGO_URI secret o'rnatilmagan -> serverdagi mavjud .env qiymati saqlanadi."; fi
 
             # ── Qolgan ilova secretlarini .env ga yozish ──────────────────────
             # JWT/BOT_SHARED_SECRET/ADMIN_SEED_PASS/AWS kalitlari ilgari faqat
@@ -190,14 +185,19 @@ jobs:
             # yozib, kalitni yo'q qilib qo'ymaydi). Faqat kalit NOMINI chop etadi
             # — qiymatlar hech qachon log'ga chiqmaydi (ular GitHub tomonidan ham
             # avtomatik maskalanadi). Bu yordamchi mavjud set_env() ustiga quriladi.
+            #
+            # DIQQAT — `if` lar shu skriptda ATAYLAB BITTA QATORDA yozilgan.
+            # appleboy/ssh-action (script_stop) har bir qator orasiga o'zining
+            # exit-code tekshiruvini qo'shadi. Ko'p qatorli `else` da o'sha
+            # tekshiruv `else` dan KEYIN tushadi va $? sifatida yolg'on
+            # chiqqan shartdan qolgan 1 ni ko'radi -> deploy XATO XABARISIZ
+            # to'xtaydi. Aynan shu sabab birinchi bo'sh ixtiyoriy secret
+            # (ADMIN_PANEL_HOST) butun deploy'ni yiqitgan edi: na "yangilandi",
+            # na "bo'sh" chiqmay, "Process exited with status 1" bo'lgan.
+            # Bitta qatorda esa butun `if` bitta buyruq bo'lib, 0 qaytaradi.
             set_env_if_set() {
               key="$1"; value="$2"
-              if [ -n "$value" ]; then
-                set_env "$key" "$value"
-                echo "  $key: yangilandi"
-              else
-                echo "  $key: secret bo'sh -> serverdagi mavjud .env qiymati saqlandi"
-              fi
+              if [ -n "$value" ]; then set_env "$key" "$value"; echo "  $key: yangilandi"; else echo "  $key: secret bo'sh -> serverdagi mavjud .env qiymati saqlandi"; fi
             }
 
             echo "==> Ilova secretlarini .env ga yozish (bo'shlari o'tkazib yuboriladi)"
@@ -239,13 +239,7 @@ jobs:
             #
             # Kalit yo'q bo'lsa moderatsiya jimgina o'chiq qoladi — API
             # to'liq ishlayveradi (S3/FCM bilan bir xil naqsh).
-            if grep -qE '^GEMINI_API_KEY=.+' .env; then
-              set_env MODERATION_ENFORCE true
-              echo "  MODERATION_ENFORCE: true (GEMINI_API_KEY mavjud)"
-            else
-              set_env MODERATION_ENFORCE false
-              echo "  MODERATION_ENFORCE: false (GEMINI_API_KEY yo'q -> moderatsiya o'chiq)"
-            fi
+            if grep -qE '^GEMINI_API_KEY=.+' .env; then set_env MODERATION_ENFORCE true; echo "  MODERATION_ENFORCE: true (GEMINI_API_KEY mavjud)"; else set_env MODERATION_ENFORCE false; echo "  MODERATION_ENFORCE: false (GEMINI_API_KEY yo'q -> moderatsiya o'chiq)"; fi
 
             # ── Mobil push (FCM) ─────────────────────────────────────────────
             # Service-account fayli serverda ./secrets/ ostida turadi (secrets/
@@ -278,13 +272,7 @@ jobs:
               chmod 640 secrets/fcm-service-account.json
               echo "  service-account fayli secret'dan yozildi (gid 10001, 640)"
             fi
-            if [ -f secrets/fcm-service-account.json ]; then
-              set_env FCM_CREDENTIALS_FILE /app/secrets/fcm-service-account.json
-              echo "  secrets/fcm-service-account.json topildi -> push YOQILDI"
-            else
-              set_env FCM_CREDENTIALS_FILE ""
-              echo "  secrets/fcm-service-account.json yo'q -> push o'chiq"
-            fi
+            if [ -f secrets/fcm-service-account.json ]; then set_env FCM_CREDENTIALS_FILE /app/secrets/fcm-service-account.json; echo "  secrets/fcm-service-account.json topildi -> push YOQILDI"; else set_env FCM_CREDENTIALS_FILE ""; echo "  secrets/fcm-service-account.json yo'q -> push o'chiq"; fi
 
             echo "==> Server resurslari (debug: build yiqilsa sabab shu yerda ko'rinadi)"
             free -h || true

@@ -46,9 +46,16 @@ function notFound(): NextResponse {
 export function middleware(req: NextRequest) {
   const host = (req.headers.get("host") || "").split(":")[0].toLowerCase();
   const path = req.nextUrl.pathname;
-  const isAdminHost = ADMIN_HOST !== "" && host === ADMIN_HOST;
 
-  if (isAdminHost) {
+  // Xost berilmagan — hech narsaga tegmaymiz. Bu SHART: aks holda quyidagi
+  // "/admin bu yerda yo'q" qoidasi lokal ishlashda ham, panel hali yangi
+  // xostga ulanmagan paytda ham ishlab ketardi va panel HECH QAYERDA
+  // ochilmasdi. Aynan shu holat bir marta jonli serverda yuz berdi.
+  if (ADMIN_HOST === "") {
+    return NextResponse.next();
+  }
+
+  if (host === ADMIN_HOST) {
     // Boshqaruv subdomeni qidiruv tizimlari uchun butunlay yopiq. Ommaviy
     // domendagi robots.txt bu yerga taalluqli emas — u boshqa xost.
     if (path === "/robots.txt") {
@@ -73,6 +80,8 @@ export function middleware(req: NextRequest) {
   }
 
   // Ommaviy domen (ishchibormi.uz): admin paneli bu yerda YO'Q.
+  // Bu yerga faqat ADMIN_HOST sozlangan bo'lsa yetib kelinadi, ya'ni panel
+  // ochiladigan boshqa manzil aniq mavjud.
   if (path === "/admin" || path.startsWith("/admin/")) {
     return notFound();
   }
