@@ -388,6 +388,16 @@ export interface User {
   lastPlatform?: ClientPlatform;
   /** `lastPlatform` qachon yozilgan (ISO). */
   lastSeenAt?: string;
+  /** Hisob o'chirilganmi (foydalanuvchilardan olib tashlangan). */
+  isDeleted?: boolean;
+  /**
+   * O'chirilgan hisobning raqami. O'chirishda `phone` bo'shatiladi (shu
+   * raqam bilan qayta ro'yxatdan o'tish mumkin bo'lsin uchun) va qiymat
+   * shu yerga ko'chadi.
+   */
+  deletedPhone?: string;
+  /** Qachon o'chirilgani (ISO). */
+  deletedAt?: string;
   /**
    * Hisob qachon yaratilgan — foydalanuvchi BIRINCHI marta ro'yxatdan
    * o'tgan payt (ISO). Backend uni `$setOnInsert` bilan yozadi, ya'ni
@@ -483,6 +493,16 @@ export interface Elon {
   contactPhone?: string;
   gender?: Gender;
   status: "draft" | "recruiting" | "filled" | "in_progress" | "completed" | "cancelled" | "hidden";
+  /**
+   * Admin tomonidan foydalanuvchilardan olib tashlanganmi.
+   *
+   * `status: "hidden"` dan FARQLI: u qaytariladigan moderatsiya holati,
+   * bu esa qaytarib bo'lmaydigan o'chirish. Ikkalasi bir vaqtda ham
+   * bo'lishi mumkin.
+   */
+  isDeleted?: boolean;
+  /** Qachon olib tashlangani (ISO). */
+  deletedAt?: string;
   acceptedCount: number;
   publishedAt?: string;
   createdAt: string;

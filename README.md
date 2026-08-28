@@ -157,6 +157,14 @@ Bazaviy prefiks: `/api`. Autentifikatsiya: `Authorization: Bearer <accessToken>`
 
 ### 4.3 Admin (`/api/admin`, alohida admin JWT)
 
+> **O'chirishning ikki xili.** Admin panelidan o'chirish `?mode=` bilan
+> boshqariladi (`internal/admin/deletemode.go`):
+> `hidden` (standart) — ma'lumot foydalanuvchilardan butunlay ketadi, lekin
+> admin panelida ko'rinib turadi va bazada saqlanadi; `purge` — bazadan
+> butunlay o'chiriladi (faqat superadmin, `account.Purger` orqali).
+> Ikkalasi ham **qaytarilmaydi**: `isDeleted` ni bekor qiladigan yo'l
+> kodda umuman yo'q.
+
 > Bu yo'llar **faqat boshqaruv subdomenida** javob beradi. `ishchibormi.uz` va
 > `api.ishchibormi.uz` da ular 404 — panel va uning API'si oddiy foydalanuvchi
 > biladigan domenlarda umuman ko'rinmaydi (`deploy/Caddyfile`).
@@ -166,11 +174,11 @@ Bazaviy prefiks: `/api`. Autentifikatsiya: `Authorization: Bearer <accessToken>`
 | POST | `/api/admin/login` | `admin.Login` | Admin kirishi (rate-limit). |
 | POST | `/api/admin/refresh` | `admin.Refresh` | Sessiyani yangilash — access token + aylanuvchi refresh token. |
 | GET | `/api/admin/dashboard` | `admin.Dashboard` | Statistika. |
-| GET | `/api/admin/users` | `admin.ListUsers` | Foydalanuvchilar. |
+| GET | `/api/admin/users` | `admin.ListUsers` | Foydalanuvchilar (`?deleted=hide|only` — o'chirilganlar standart holatda ham ko'rinadi). |
 | POST | `/api/admin/users/{id}/block` | `admin.BlockUser` | Bloklash. |
-| DELETE | `/api/admin/users/{id}` | `admin.DeleteUser` | O'chirish. |
-| GET | `/api/admin/elons` | `admin.ListElons` | E'lonlar. |
-| DELETE | `/api/admin/elons/{id}` | `admin.DeleteElon` | O'chirish. |
+| DELETE | `/api/admin/users/{id}` | `admin.DeleteUser` | O'chirish — `?mode=hidden` (standart) yoki `?mode=purge` (faqat superadmin). |
+| GET | `/api/admin/elons` | `admin.ListElons` | E'lonlar (`?deleted=hide|only`). |
+| DELETE | `/api/admin/elons/{id}` | `admin.DeleteElon` | O'chirish — `?mode=hidden` (standart) yoki `?mode=purge` (faqat superadmin). |
 | GET | `/api/admin/categories` | `admin.ListCategories` | Turkumlar. |
 | PATCH | `/api/admin/categories/{id}/active` | `admin.SetCategoryActive` | Yoqish/o'chirish. |
 | GET | `/api/admin/reports` | `report.ListAdmin` | Shikoyatlar. |

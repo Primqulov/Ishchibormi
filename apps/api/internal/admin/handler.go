@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ishchibormi/backend/config"
+	"github.com/ishchibormi/backend/internal/account"
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/notification"
@@ -43,6 +44,16 @@ type Handler struct {
 
 	// Strikes — avtomatik moderatsiya bloklarini ochish uchun (superadmin).
 	Strikes *moderation.StrikeStore
+
+	// Purger — "bazadan butunlay o'chirish" rejimi shu orqali bajariladi
+	// (deletemode.go). Ataylab qayta ishlatiladi: retention oqimi bilan
+	// AYNAN bir xil kod, ya'ni "butunlay o'chirish" nima degani ikki joyda
+	// ikki xil bo'lib qolmaydi.
+	//
+	// Bog'lanmagan bo'lsa purge rejimi 503 qaytaradi va yashirish (hidden)
+	// odatdagidek ishlayveradi — sozlanmagan bog'lanish jimgina noto'g'ri
+	// ish qilmasligi kerak.
+	Purger *account.Purger
 
 	// loginGuard caps failed logins per admin username — see loginguard.go.
 	loginGuard *loginGuard

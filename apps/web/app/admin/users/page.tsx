@@ -15,6 +15,7 @@ import {
   CLIENT_PLATFORMS,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { DeleteModeModal, DeleteMode } from "@/components/admin/DeleteModeModal";
 import { Pagination } from "@/components/Pagination";
 
 export default function AdminUsers() {
@@ -38,6 +39,11 @@ export default function AdminUsers() {
   const [unblockTarget, setUnblockTarget] = useState<User | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState("");
+  // "O'chirilgan" filtri: bo'sh = hammasi (standart), chunki o'chirilgan
+  // hisob admin panelida ko'rinib turishi kerak.
+  const [deleted, setDeleted] = useState("");
   const limit = 20;
 
   const load = useCallback(async () => {
@@ -47,13 +53,14 @@ export default function AdminUsers() {
     if (blocked) params.set("blocked", blocked);
     if (verified) params.set("verified", verified);
     if (platform) params.set("platform", platform);
+    if (deleted) params.set("deleted", deleted);
     setData(await api.get<Paged<User>>(`/api/admin/users?${params}`, { auth: "admin" } as any));
-  }, [page, q, region, blocked, verified, platform]);
+  }, [page, q, region, blocked, verified, platform, deleted]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setIsSuper(getAdminRole() === "superadmin"); }, []);
   // Filtr o'zgarsa 1-sahifaga qaytamiz.
-  useEffect(() => { setPage(1); }, [q, region, blocked, verified, platform]);
+  useEffect(() => { setPage(1); }, [q, region, blocked, verified, platform, deleted]);
 
   /** Bu foydalanuvchini shu admin blokdan chiqara oladimi. */
   function canUnblock(u: User): boolean {
@@ -94,10 +101,15 @@ export default function AdminUsers() {
     } finally { setBusy(false); }
   }
 
-  async function del() {
-    await api.delete(`/api/admin/users/${delId}`, { auth: "admin" } as any);
-    setDelId("");
-    load();
+  async function del(mode: DeleteMode) {
+    setDelBusy(true); setDelErr("");
+    try {
+      await api.delete(`/api/admin/users/${delId}?mode=${mode}`, { auth: "admin" } as any);
+      setDelId("");
+      load();
+    } catch (e) {
+      setDelErr((e as APIError)?.message || "O'chirib bo'lmadi");
+    } finally { setDelBusy(false); }
   }
   function exportCsv() {
     const params = new URLSearchParams();
@@ -139,6 +151,11 @@ export default function AdminUsers() {
             <option value="1">Tasdiqlangan</option>
             <option value="0">Tasdiqlanmagan</option>
           </select>
+          <select className="input max-w-[190px]" value={deleted} onChange={(e) => setDeleted(e.target.value)}>
+            <option value="">O&apos;chirilganlar bilan</option>
+            <option value="hide">Faqat faollari</option>
+            <option value="only">Faqat o&apos;chirilganlari</option>
+          </select>
           <select className="input max-w-[170px]" value={platform} onChange={(e) => setPlatform(e.target.value)}>
             <option value="">Platforma (barchasi)</option>
             {CLIENT_PLATFORMS.map((p) => (
@@ -171,8 +188,16 @@ export default function AdminUsers() {
                   <tr key={u.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
                     <td className="py-3 px-4 truncate">
                       <Link href={`/admin/users/${u.id}`} className="hover:underline font-medium">{u.firstName} {u.lastName}</Link>
+                      {u.isDeleted && (
+                        <span className="ml-2 align-middle text-[11px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
+                          style={{ color: "var(--danger, #dc2626)", borderColor: "var(--danger, #dc2626)" }}>
+                          o&apos;chirilgan
+                        </span>
+                      )}
                     </td>
-                    <td className="px-4 whitespace-nowrap">{u.phone}</td>
+                    {/* O'chirilgan hisobda raqam `deletedPhone` ga ko'chadi —
+                        aks holda katak bo'sh ko'rinardi. */}
+                    <td className="px-4 whitespace-nowrap">{u.phone || u.deletedPhone || "—"}</td>
                     <td className="px-4 truncate">{u.region}</td>
                     {/* Platforma: yuqorida — hozir foydalanadigani, ostida —
                         qayerdan ro'yxatdan o'tgani. Ikkinchisi faqat FARQ
@@ -234,7 +259,14 @@ export default function AdminUsers() {
                             Bloklash
                           </button>
                         )}
-                        <button onClick={() => setDelId(u.id)} className="btn-danger btn-sm">O&apos;chirish</button>
+                        {/* O'chirilgan hisob uchun bloklash ma'nosini yo'qotadi:
+                            u allaqachon kira olmaydi va qaytarilmaydi. Faqat
+                            superadmin uni bazadan butunlay o'chira oladi. */}
+                        {(!u.isDeleted || isSuper) && (
+                          <button onClick={() => { setDelErr(""); setDelId(u.id); }} className="btn-danger btn-sm">
+                            {u.isDeleted ? "Bazadan o'chirish" : "O'chirish"}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -247,14 +279,16 @@ export default function AdminUsers() {
         <div className="px-4 py-3"><Pagination page={page} pages={pages} onPage={setPage} /></div>
       </div>
 
-      <Modal open={!!delId} onClose={() => setDelId("")} title="Foydalanuvchini o'chirasizmi?" footer={
-        <>
-          <button onClick={() => setDelId("")} className="btn-secondary">Yo&apos;q</button>
-          <button onClick={del} className="btn-danger">Ha, o&apos;chirish</button>
-        </>
-      }>
-        <p className="text-sm muted">Foydalanuvchi o&apos;chiriladi. Davom etasizmi?</p>
-      </Modal>
+      <DeleteModeModal
+        open={!!delId}
+        title="Foydalanuvchini o'chirish"
+        what="hisob"
+        canPurge={isSuper}
+        busy={delBusy}
+        error={delErr}
+        onCancel={() => setDelId("")}
+        onConfirm={del}
+      />
 
       {/* Bloklash — sabab MAJBURIY.
           Nega: blokni ochadigan yoki e'tirozni ko'radigan admin ko'pincha uni

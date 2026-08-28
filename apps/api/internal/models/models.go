@@ -205,6 +205,10 @@ type Elon struct {
 	AcceptedCount int    `bson:"acceptedCount" json:"acceptedCount"`
 	ViewsCount    int    `bson:"viewsCount" json:"viewsCount"`
 	IsDeleted     bool   `bson:"isDeleted" json:"isDeleted"`
+	// DeletedAt — qachon yashirilgani. Admin panelida ko'rsatiladi:
+	// yashirilgan e'lon ro'yxatda qolgani uchun "qachon?" degan savolga
+	// javob kerak bo'ladi. Yashirilmaganda umuman yozilmaydi.
+	DeletedAt *time.Time `bson:"deletedAt,omitempty" json:"deletedAt,omitempty"`
 	// ModerationPending — e'lon AI tekshiruvidan O'TMASDAN chop etilgan
 	// (kvota tugagan yoki xizmat uzilgan paytda). Keyinchalik qo'lda ko'rib
 	// chiqish uchun belgi.

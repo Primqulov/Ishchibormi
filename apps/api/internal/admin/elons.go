@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/models"
@@ -17,7 +18,9 @@ import (
 // elonsFilter is shared by ListElons and the elons CSV export.
 // Params: q (title), status, region, categoryId.
 func elonsFilter(q url.Values) bson.M {
-	filter := bson.M{"isDeleted": bson.M{"$ne": true}}
+	// O'chirilganlar ham ko'rinadi — `?deleted=` bilan ajratiladi.
+	filter := bson.M{}
+	applyDeletedFilter(filter, q.Get("deleted"))
 	if s := strings.TrimSpace(q.Get("q")); s != "" {
 		filter["title"] = bson.M{"$regex": escRe(s), "$options": "i"}
 	}
@@ -106,16 +109,50 @@ func (h *Handler) DeleteElon(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
 		return
 	}
-	var prev models.Elon
-	_ = h.Elons.FindOne(r.Context(), bson.M{"_id": id}).Decode(&prev)
-	_, err = h.Elons.UpdateOne(r.Context(), bson.M{"_id": id}, bson.M{"$set": bson.M{"isDeleted": true, "status": "cancelled"}})
+	mode, err := deleteMode(r)
 	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
+	if mode == deleteModePurge {
+		if h.Purger == nil {
+			httpx.Err(w, httpx.NewError(503, "purge_unavailable",
+				"permanent deletion is not configured on this server"))
+			return
+		}
+		// Audit AVVAL: o'chirilgandan keyin e'lon haqida hech narsa qolmaydi.
+		h.audit(r, "elon_delete", id.Hex(), "purge — bazadan butunlay o'chirildi (qaytarib bo'lmaydi)")
+		if err := h.Purger.PurgeElonNow(r.Context(), id); err != nil {
+			httpx.Err(w, err)
+			return
+		}
+		httpx.JSON(w, 200, map[string]any{"ok": true, "mode": deleteModePurge})
+		return
+	}
+
+	var prev models.Elon
+	_ = h.Elons.FindOne(r.Context(), bson.M{"_id": id}).Decode(&prev)
+	_, err = h.Elons.UpdateOne(r.Context(), bson.M{"_id": id}, bson.M{"$set": bson.M{
+		"isDeleted": true, "status": "cancelled", "deletedAt": time.Now(),
+	}})
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	// Rasmlar yashirishda ham O'CHIRILADI, yozuvning o'zi qolsa ham.
+	//
+	// Sabab: rasm fayli ommaviy manzilda yotadi (/uploads/...). Uni qoldirish
+	// "foydalanuvchilarga umuman ko'rinmasin" degan talabni buzardi — havolani
+	// bir marta ko'rgan odam uni keyin ham ocha olaverardi. Ya'ni yozuv
+	// yashirilgan bo'lsa-yu rasmi ochiq qolsa, yashirish yarim bo'lardi.
+	//
+	// Narxi bor: admin panelida yozuv rasmsiz ko'rinadi. Rasmni ham saqlab
+	// qolish uchun uni ommaviy papkadan chiqarib, admin tokeni bilan
+	// beriladigan alohida yo'l kerak bo'lardi — hozircha maxfiylik ustun
+	// qo'yildi.
 	for _, u := range prev.Images {
 		go upload.DeleteByURL(h.Storage, u)
 	}
-	h.audit(r, "elon_delete", id.Hex(), "force")
-	httpx.JSON(w, 200, map[string]bool{"ok": true})
+	h.audit(r, "elon_delete", id.Hex(), "hidden — foydalanuvchilardan yashirildi, bazada qoldi")
+	httpx.JSON(w, 200, map[string]any{"ok": true, "mode": deleteModeHidden})
 }

@@ -19,11 +19,19 @@ import (
 // usersFilter builds the Mongo query shared by ListUsers and the users CSV
 // export. Params: q (name/phone), region, blocked=1|0, verified=1|0.
 func usersFilter(q url.Values) bson.M {
-	filter := bson.M{"isDeleted": bson.M{"$ne": true}}
+	// O'chirilganlar ham ko'rinadi — `?deleted=` bilan ajratiladi.
+	// Nega standart shunday: deletemode.go izohiga qarang.
+	filter := bson.M{}
+	applyDeletedFilter(filter, q.Get("deleted"))
 	if s := strings.TrimSpace(q.Get("q")); s != "" {
 		rx := bson.M{"$regex": escRe(s), "$options": "i"}
 		filter["$or"] = bson.A{
 			bson.M{"firstName": rx}, bson.M{"lastName": rx}, bson.M{"phone": rx},
+			// O'chirilgan hisobda raqam `phone` dan `deletedPhone` ga ko'chadi
+			// (identifikatorni bo'shatish uchun). Uni qidiruvga qo'shmasak,
+			// admin "bu raqam nima bo'ldi?" degan savolga javob topa olmasdi —
+			// hisob ro'yxatda turadi-yu, raqami bo'yicha topilmaydi.
+			bson.M{"deletedPhone": rx},
 		}
 	}
 	if region := strings.TrimSpace(q.Get("region")); region != "" {
@@ -309,6 +317,16 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
 		return
 	}
+	mode, err := deleteMode(r)
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	if mode == deleteModePurge {
+		h.purgeUserAndRespond(w, r, id)
+		return
+	}
+
 	// Best-effort: remove the user's avatar from S3, plus images of all their elons.
 	var u models.User
 	if err := h.Users.FindOne(r.Context(), bson.M{"_id": id}).Decode(&u); err == nil {
@@ -360,8 +378,31 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}})
 	// O'chirilgan hisobning qurilmalariga push (masalan broadcast) ketmasin.
 	_, _ = h.Users.Database().Collection("device_tokens").DeleteMany(r.Context(), bson.M{"userId": id})
-	h.audit(r, "user_delete", id.Hex(), "soft-delete")
-	httpx.JSON(w, 200, map[string]bool{"ok": true})
+	h.audit(r, "user_delete", id.Hex(), "hidden — foydalanuvchilardan yashirildi, bazada qoldi")
+	httpx.JSON(w, 200, map[string]any{"ok": true, "mode": deleteModeHidden})
+}
+
+// purgeUserAndRespond — "bazadan ham o'chirish" rejimi.
+//
+// Butun ishni account.Purger bajaradi: hisob, e'lonlari, arizalari,
+// bildirishnomalari, shikoyatlari, bir martalik kodlari va yuklangan
+// fayllari. Bu yerda qayta yozilmaydi — retention oqimi bilan bir xil kod
+// bo'lishi shart, aks holda "butunlay o'chirish" ikki xil ma'no kasb etardi.
+func (h *Handler) purgeUserAndRespond(w http.ResponseWriter, r *http.Request, id primitive.ObjectID) {
+	if h.Purger == nil {
+		httpx.Err(w, httpx.NewError(503, "purge_unavailable",
+			"permanent deletion is not configured on this server"))
+		return
+	}
+	// Audit yozuvi AVVAL yoziladi. Sabab: o'chirish tugagach bu hisob haqida
+	// hech narsa qolmaydi, xato yuz bersa esa nima qilinmoqchi bo'lgani
+	// jurnalda turishi kerak.
+	h.audit(r, "user_delete", id.Hex(), "purge — bazadan butunlay o'chirildi (qaytarib bo'lmaydi)")
+	if err := h.Purger.PurgeUserNow(r.Context(), id); err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string]any{"ok": true, "mode": deleteModePurge})
 }
 
 // LiftModerationBan — avtomatik moderatsiya blokini bekor qiladi.

@@ -159,6 +159,100 @@ func (p *Purger) PurgeDue(ctx context.Context) int {
 // operation safely retryable — if the process dies halfway, the account is
 // still flagged expired and the next sweep finishes the job. Doing it the other
 // way round would orphan the remaining records with no way to find them again.
+// ---------------------------------------------------------------------------
+// Admin panelidan darhol o'chirish
+// ---------------------------------------------------------------------------
+//
+// Yuqoridagi ikki bosqichli oqim FOYDALANUVCHI o'zi hisobini o'chirganda
+// ishlaydi: avval yashiriladi, RetentionDays o'tgach butunlay o'chadi.
+//
+// Admin panelida esa superadmin ikkinchi bosqichni darhol bajarishi mumkin.
+// Sabab amaliy: spam, firibgarlik yoki noqonuniy kontentni 90 kun saqlab
+// turishning ma'nosi yo'q — u ma'lumot bazada turgani sayin javobgarlik ham
+// turaveradi.
+//
+// AYNAN o'sha kod qayta ishlatiladi (purgeUser). Buni admin paketida qaytadan
+// yozish "butunlay o'chirish" nima degani degan savolga ikki joyda ikki xil
+// javob berish bo'lardi — va ular vaqt o'tib bir-biridan uzoqlashardi.
+
+// PurgeUserNow — hisobni va unga bog'liq hamma narsani DARHOL o'chiradi.
+// Hisob avval yashirilgan bo'lishi shart emas.
+func (p *Purger) PurgeUserNow(ctx context.Context, uid primitive.ObjectID) error {
+	var u models.User
+	if err := p.users.FindOne(ctx, bson.M{"_id": uid}).Decode(&u); err != nil {
+		return err
+	}
+	// Hisob hali yashirilmagan bo'lsa, raqam va Telegram id hamon "tirik"
+	// maydonlarda turadi. purgeUser esa login OTP larini arxiv maydonlari
+	// bo'yicha tozalaydi — ularni shu yerda to'ldirmasak, o'sha kodlar
+	// qolib ketardi. Faqat xotiradagi nusxaga yoziladi.
+	if u.DeletedPhone == "" {
+		u.DeletedPhone = u.Phone
+	}
+	if u.DeletedTelegramID == 0 {
+		u.DeletedTelegramID = u.TelegramID
+	}
+	return p.purgeUser(ctx, u)
+}
+
+// PurgeElonNow — bitta e'lonni va unga ishora qiladigan hamma narsani
+// butunlay o'chiradi.
+//
+// Arizalar ham o'chadi. Ular boshqa odamlarga tegishli, lekin e'lon yo'q
+// bo'lgach ular hech qayerga olib bormaydi: ilovada "bu ish" tugmasi bo'sh
+// ekranga olib chiqardi. Shu sababli ularga ishora qiladigan bildirishnomalar
+// ham yig'ishtiriladi.
+func (p *Purger) PurgeElonNow(ctx context.Context, elonID primitive.ObjectID) error {
+	var e models.Elon
+	if err := p.elons.FindOne(ctx, bson.M{"_id": elonID}).Decode(&e); err != nil {
+		return err
+	}
+	for _, img := range e.Images {
+		upload.DeleteByURL(p.storage, img)
+	}
+
+	// Ariza id lari OLDIN yig'iladi: o'chirilgandan keyin ularga ishora
+	// qiladigan bildirishnomalarni topib bo'lmaydi.
+	appIDs := make([]primitive.ObjectID, 0, 8)
+	if cur, err := p.apps.Find(ctx, bson.M{"elonId": elonID},
+		options.Find().SetProjection(bson.M{"_id": 1})); err == nil {
+		for cur.Next(ctx) {
+			var a struct {
+				ID primitive.ObjectID `bson:"_id"`
+			}
+			if cur.Decode(&a) == nil {
+				appIDs = append(appIDs, a.ID)
+			}
+		}
+		_ = cur.Close(ctx)
+	}
+	if _, err := p.apps.DeleteMany(ctx, bson.M{"elonId": elonID}); err != nil {
+		return err
+	}
+	if len(appIDs) > 0 {
+		if _, err := p.notifs.DeleteMany(ctx, bson.M{
+			"relatedEntity.type": "application",
+			"relatedEntity.id":   bson.M{"$in": appIDs},
+		}); err != nil {
+			return err
+		}
+	}
+	if _, err := p.notifs.DeleteMany(ctx, bson.M{
+		"relatedEntity.type": "elon", "relatedEntity.id": elonID,
+	}); err != nil {
+		return err
+	}
+	if _, err := p.reports.DeleteMany(ctx, bson.M{
+		"targetType": "elon", "targetId": elonID,
+	}); err != nil {
+		return err
+	}
+	if _, err := p.elons.DeleteOne(ctx, bson.M{"_id": elonID}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (p *Purger) purgeUser(ctx context.Context, u models.User) error {
 	uid := u.ID
 

@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { Download, Search } from "lucide-react";
-import { api, Elon, Category, Paged, downloadAdminCsv } from "@/lib/api";
-import { Modal } from "@/components/Modal";
+import { api, Elon, Category, Paged, downloadAdminCsv, getAdminRole, APIError } from "@/lib/api";
+import { DeleteModeModal, DeleteMode } from "@/components/admin/DeleteModeModal";
 import { Pagination } from "@/components/Pagination";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -24,6 +24,15 @@ export default function AdminElons() {
   const [categoryId, setCategoryId] = useState("");
   const [region, setRegion] = useState("");
   const [delId, setDelId] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState("");
+  // "O'chirilgan" filtri: bo'sh = hammasi (standart), chunki olib tashlangan
+  // e'lon admin panelida ko'rinib turishi kerak.
+  const [deleted, setDeleted] = useState("");
+  // Bazadan butunlay o'chirish faqat superadminga ko'rsatiladi. Server
+  // tomonida ham alohida tekshiriladi — bu faqat interfeys.
+  const [isSuper, setIsSuper] = useState(false);
+  useEffect(() => { setIsSuper(getAdminRole() === "superadmin"); }, []);
   const limit = 20;
 
   const load = useCallback(async () => {
@@ -32,21 +41,27 @@ export default function AdminElons() {
     if (status) params.set("status", status);
     if (categoryId) params.set("categoryId", categoryId);
     if (region.trim()) params.set("region", region.trim());
+    if (deleted) params.set("deleted", deleted);
     setData(await api.get<Paged<Elon>>(`/api/admin/elons?${params}`, { auth: "admin" } as any));
-  }, [page, q, status, categoryId, region]);
+  }, [page, q, status, categoryId, region, deleted]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [q, status, categoryId, region]);
+  useEffect(() => { setPage(1); }, [q, status, categoryId, region, deleted]);
   useEffect(() => { api.get<Category[]>("/api/admin/categories", { auth: "admin" } as any).then(setCats).catch(() => {}); }, []);
 
   async function setStatusOf(id: string, s: string) {
     await api.patch(`/api/admin/elons/${id}/status`, { status: s }, { auth: "admin" } as any);
     load();
   }
-  async function del() {
-    await api.delete(`/api/admin/elons/${delId}`, { auth: "admin" } as any);
-    setDelId("");
-    load();
+  async function del(mode: DeleteMode) {
+    setDelBusy(true); setDelErr("");
+    try {
+      await api.delete(`/api/admin/elons/${delId}?mode=${mode}`, { auth: "admin" } as any);
+      setDelId("");
+      load();
+    } catch (e) {
+      setDelErr((e as APIError)?.message || "O'chirib bo'lmadi");
+    } finally { setDelBusy(false); }
   }
   function exportCsv() {
     const params = new URLSearchParams();
@@ -99,6 +114,11 @@ export default function AdminElons() {
             {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <input className="input max-w-[150px]" placeholder="Viloyat" value={region} onChange={(e) => setRegion(e.target.value)} />
+          <select className="input max-w-[190px]" value={deleted} onChange={(e) => setDeleted(e.target.value)}>
+            <option value="">O'chirilganlar bilan</option>
+            <option value="hide">Faqat faollari</option>
+            <option value="only">Faqat o'chirilganlari</option>
+          </select>
         </div>
 
         {/* Jadval */}
@@ -120,17 +140,33 @@ export default function AdminElons() {
             <tbody>
               {elons.map((e) => (
                 <tr key={e.id} className="border-b last:border-0" style={{ borderColor: "var(--border)" }}>
-                  <td className="py-3 px-4 font-medium truncate">{e.title}</td>
+                  <td className="py-3 px-4 font-medium truncate">
+                    {e.title}
+                    {e.isDeleted && (
+                      <span className="ml-2 align-middle text-[11px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
+                        style={{ color: "var(--danger, #dc2626)", borderColor: "var(--danger, #dc2626)" }}>
+                        o&apos;chirilgan
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 truncate">{e.categoryName}</td>
                   <td className="px-4">{statusBadge(e.status)}</td>
                   <td className="px-4">{e.workersNeeded}</td>
                   <td className="px-4 whitespace-nowrap">{e.priceAmount.toLocaleString("uz-UZ")} so'm</td>
                   <td className="px-4">
                     <div className="flex gap-2 justify-end">
-                      {e.status === "hidden"
+                      {/* O'chirilgan e'lon uchun "Yashirish/Tiklash" ma'nosini
+                          yo'qotadi — u allaqachon foydalanuvchilarga
+                          ko'rinmaydi va qaytarilmaydi. Faqat superadmin uni
+                          bazadan butunlay o'chira oladi. */}
+                      {!e.isDeleted && (e.status === "hidden"
                         ? <button onClick={() => setStatusOf(e.id, "recruiting")} className="btn-secondary btn-sm">Tiklash</button>
-                        : <button onClick={() => setStatusOf(e.id, "hidden")} className="btn-secondary btn-sm">Yashirish</button>}
-                      <button onClick={() => setDelId(e.id)} className="btn-danger btn-sm">O'chirish</button>
+                        : <button onClick={() => setStatusOf(e.id, "hidden")} className="btn-secondary btn-sm">Yashirish</button>)}
+                      {(!e.isDeleted || isSuper) && (
+                        <button onClick={() => { setDelErr(""); setDelId(e.id); }} className="btn-danger btn-sm">
+                          {e.isDeleted ? "Bazadan o'chirish" : "O'chirish"}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -142,14 +178,16 @@ export default function AdminElons() {
         <div className="px-4 py-3"><Pagination page={page} pages={pages} onPage={setPage} /></div>
       </div>
 
-      <Modal open={!!delId} onClose={() => setDelId("")} title="E'lonni o'chirasizmi?" footer={
-        <>
-          <button onClick={() => setDelId("")} className="btn-secondary">Yo'q</button>
-          <button onClick={del} className="btn-danger">Ha, o'chirish</button>
-        </>
-      }>
-        <p className="text-sm muted">E'lon o'chiriladi. Davom etasizmi?</p>
-      </Modal>
+      <DeleteModeModal
+        open={!!delId}
+        title="E'lonni o'chirish"
+        what="e'lon"
+        canPurge={isSuper}
+        busy={delBusy}
+        error={delErr}
+        onCancel={() => setDelId("")}
+        onConfirm={del}
+      />
     </div>
   );
 }

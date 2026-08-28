@@ -186,6 +186,10 @@ func main() {
 	// admin deletions; see internal/account/retention.go. Stops on ctx cancel.
 	purger := account.NewPurger(mdb, s3svc, cfg.AccountRetentionDays, log)
 	go purger.Run(ctx)
+	// Admin panelidagi "bazadan ham o'chirish" rejimi AYNAN shu purger'ni
+	// chaqiradi (internal/admin/deletemode.go). Bog'lanmasa o'sha rejim 503
+	// qaytaradi va yashirish odatdagidek ishlayveradi.
+	adminH.Purger = purger
 	log.Info("account retention active", "days", purger.RetentionDays())
 
 	// Rate limiting keys off the real client IP. Only trust forwarding headers
