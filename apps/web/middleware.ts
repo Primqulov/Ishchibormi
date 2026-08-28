@@ -36,11 +36,27 @@ const HAS_EXTENSION = /\.[a-z0-9]+$/i;
 
 function notFound(): NextResponse {
   // Ataylab oddiy 404: "bu yerda admin panel bor, lekin ruxsat yo'q" degan
-  // ishorani ham bermaymiz.
+  // ishorani ham bermaymiz. Faqat boshqaruv xostida ishlatiladi — u yerda
+  // ommaviy saytning dizayni o'rinsiz bo'lardi.
   return new NextResponse("404 — sahifa topilmadi", {
     status: 404,
     headers: { "content-type": "text/plain; charset=utf-8" },
   });
+}
+
+/**
+ * Ommaviy domendagi 404 — saytning O'Z dizayni bilan.
+ *
+ * Quruq matnli javob bu yo'lni qolganlaridan ajratib ko'rsatardi: butun
+ * saytda chiroyli "sahifa topilmadi" chiqadi-yu, faqat shu manzilda qora
+ * matn. Bu o'zi ishora edi — demak bu yerda alohida muomala qilinadigan
+ * nimadir bor.
+ *
+ * `/_not-found` — Next.js ning o'z ichki marshruti; unga rewrite qilinganda
+ * app/not-found.tsx 404 statusi bilan ko'rsatiladi. Manzil satri o'zgarmaydi.
+ */
+function siteNotFound(req: NextRequest): NextResponse {
+  return NextResponse.rewrite(new URL("/_not-found", req.url));
 }
 
 export function middleware(req: NextRequest) {
@@ -82,8 +98,12 @@ export function middleware(req: NextRequest) {
   // Ommaviy domen (ishchibormi.uz): admin paneli bu yerda YO'Q.
   // Bu yerga faqat ADMIN_HOST sozlangan bo'lsa yetib kelinadi, ya'ni panel
   // ochiladigan boshqa manzil aniq mavjud.
+  //
+  // Amalda bu shox productionda ishlamaydi — Caddy `/admin` ni bu yergacha
+  // qo'ymaydi (deploy/Caddyfile). U zaxira: Caddy sozlamasi qo'lda
+  // ko'chiriladi va bir kun eskirib qolishi mumkin.
   if (path === "/admin" || path.startsWith("/admin/")) {
-    return notFound();
+    return siteNotFound(req);
   }
   return NextResponse.next();
 }

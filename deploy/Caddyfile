@@ -259,9 +259,33 @@ ishchibormi.uz {
 	# Next.js middleware'ida ham xuddi shu qoida bor (apps/web/middleware.ts).
 	# Takror ataylab: bu fayl serverga QO'LDA ko'chiriladi va bir kun eskirib
 	# qolishi mumkin.
-	@adminGone path /admin /admin/* /api/admin /api/admin/*
-	handle @adminGone {
+	# Admin API — quruq 404. Bu mashina o'qiydigan yo'l, dizayn kerak emas;
+	# so'rov backendga umuman yetib bormaydi.
+	@adminApiGone path /api/admin /api/admin/*
+	handle @adminApiGone {
 		respond "404 page not found" 404
+	}
+
+	# Panel sahifalari — saytning O'Z 404 dizayni ko'rsatiladi.
+	#
+	# Ilgari bu yerda ham quruq matn qaytardi va u yolg'iz o'zi ajralib
+	# turardi: saytning boshqa mavjud bo'lmagan sahifalari chiroyli 404
+	# beradi-yu, /admin esa qora matn. Bu ikki narsani oshkor qilardi —
+	# bu yo'l alohida muomala ko'rayotganini, ya'ni u yerda nimadir borligini.
+	#
+	# Yechim: yo'lni Next.js ning o'z `/_not-found` marshrutiga almashtirib
+	# frontendga uzatamiz. Foydalanuvchi odatdagi 404 sahifasini ko'radi,
+	# lekin `/admin` Next.js ga umuman yetib bormaydi — to'siq shu yerda
+	# qolaveradi.
+	@adminGone path /admin /admin/*
+	handle @adminGone {
+		rewrite * /_not-found
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Real-IP {remote_host}
+			header_up -True-Client-IP
+			header_up -CF-Connecting-IP
+		}
 	}
 
 	# Go API. Frontend Next.js bo'lgani uchun yo'llar bo'yicha ajratamiz:
