@@ -12,8 +12,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// TestEnsureDefaults tizim turkumlarini upsert qiladi, lekin admin yaratgan
-// turkumlarning faollik holatiga tegmasligini tekshiradi.
+// TestEnsureDefaults tizim turkumlari BORLIGINI kafolatlashini, lekin
+// mavjud yozuvlarning nomi va holatini bosib ketmasligini tekshiradi:
+// superadmin panelda (Figma 3.7) tizim turkumini tahrirlashi va nofaol
+// qilishi mumkin, deploy esa uning qarorini bekor qilmasligi kerak.
 // Mongo kerak (default: localhost:27017). Ulanib bo'lmasa test o'tkazib yuboriladi.
 func TestEnsureDefaults(t *testing.T) {
 	uri := os.Getenv("MONGO_TEST_URI")
@@ -38,7 +40,8 @@ func TestEnsureDefaults(t *testing.T) {
 	col := db.Collection("categories")
 
 	// Eski holatni simulyatsiya qilamiz: ortiqcha faol turkumlar + kanonik
-	// slug'ga to'g'ri keladigan, lekin nofaol va eski nomli yozuv.
+	// slug'ga to'g'ri keladigan, lekin superadmin tomonidan nofaol qilingan
+	// va qayta nomlangan yozuv.
 	stale := []any{
 		bson.M{"name": "Old Tozalash", "slug": "tozalash", "icon": "x", "isActive": false, "usageCount": 5},
 		bson.M{"name": "Ustachilik", "slug": "ustachilik", "icon": "🛠️", "isActive": true, "usageCount": 9},
@@ -56,40 +59,82 @@ func TestEnsureDefaults(t *testing.T) {
 		}
 	}
 
-	// Faol turkumlar: uchta tizim turkumi va avvaldan faol bo'lgan admin
-	// turkumlari birga qolishi kerak.
-	activeSlugs := map[string]bson.M{}
-	cur, err := col.Find(ctx, bson.M{"isActive": true})
+	// Barcha turkumlar slug bo'yicha.
+	bySlug := map[string]bson.M{}
+	cur, err := col.Find(ctx, bson.M{})
 	if err != nil {
-		t.Fatalf("find active: %v", err)
+		t.Fatalf("find: %v", err)
 	}
 	for cur.Next(ctx) {
 		var d bson.M
 		if err := cur.Decode(&d); err == nil {
-			activeSlugs[fmt.Sprint(d["slug"])] = d
+			bySlug[fmt.Sprint(d["slug"])] = d
 		}
 	}
 	cur.Close(ctx)
 
+	// Uchta rasmiy turkum bazada bo'lishi va himoyalangan (o'chirib
+	// bo'lmaydigan) deb belgilanishi shart.
 	for _, want := range []string{"tozalash", "yuk-tashish", "maxsus"} {
-		d, ok := activeSlugs[want]
+		d, ok := bySlug[want]
 		if !ok {
-			t.Errorf("faol turkumda %q yo'q", want)
+			t.Errorf("tizim turkumi %q bazada yo'q", want)
 			continue
 		}
 		if d["isSystemDefault"] != true {
-			t.Errorf("%q: isSystemDefault=false, true bo'lishi kerak", want)
-		}
-	}
-	for _, want := range []string{"ustachilik", "bogdorchilik", "qurilish"} {
-		if _, ok := activeSlugs[want]; !ok {
-			t.Errorf("admin turkumi %q restartdan keyin nofaol bo'lib qoldi", want)
+			t.Errorf("%q: isSystemDefault=%v, true bo'lishi kerak", want, d["isSystemDefault"])
 		}
 	}
 
-	// Kanonik slug qayta faollashtirilib, nomi yangilanganini tekshiramiz.
-	if d, ok := activeSlugs["tozalash"]; ok && fmt.Sprint(d["name"]) != "Tozalash" {
-		t.Errorf("tozalash nomi = %q, kutilgan \"Tozalash\"", d["name"])
+	// Yo'qdan yaratilganlari — faol, kanonik nom va ikonka bilan.
+	for slug, wantName := range map[string]string{"yuk-tashish": "Yuk tashish", "maxsus": "Maxsus"} {
+		d, ok := bySlug[slug]
+		if !ok {
+			continue
+		}
+		if d["isActive"] != true {
+			t.Errorf("%q yangi yaratildi, lekin isActive=%v", slug, d["isActive"])
+		}
+		if got := fmt.Sprint(d["name"]); got != wantName {
+			t.Errorf("%q nomi = %q, kutilgan %q", slug, got, wantName)
+		}
+		if fmt.Sprint(d["icon"]) == "" || d["icon"] == nil {
+			t.Errorf("%q ikonkasiz yaratildi", slug)
+		}
+	}
+
+	// ENG MUHIMI: superadmin nofaol qilib, qayta nomlagan tizim turkumi
+	// restartdan keyin ham SHUNDAY qolishi kerak. Aks holda 3.7a dagi
+	// «nishonni bosib nofaol qilish» amali keyingi deployda jimgina bekor
+	// bo'lardi.
+	if d, ok := bySlug["tozalash"]; ok {
+		if d["isActive"] != false {
+			t.Errorf("tozalash isActive=%v — deploy superadminning qarorini bekor qildi", d["isActive"])
+		}
+		if got := fmt.Sprint(d["name"]); got != "Old Tozalash" {
+			t.Errorf("tozalash nomi = %q — deploy paneldagi tahrirni bosib ketdi", got)
+		}
+		if got := fmt.Sprint(d["icon"]); got != "x" {
+			t.Errorf("tozalash ikonkasi = %q — deploy paneldagi tahrirni bosib ketdi", got)
+		}
+		if fmt.Sprint(d["usageCount"]) != "5" {
+			t.Errorf("tozalash usageCount = %v, 5 bo'lib qolishi kerak", d["usageCount"])
+		}
+	}
+
+	// Admin turkumlari umuman tegilmaydi.
+	for _, want := range []string{"ustachilik", "bogdorchilik", "qurilish"} {
+		d, ok := bySlug[want]
+		if !ok {
+			t.Errorf("admin turkumi %q yo'qoldi", want)
+			continue
+		}
+		if d["isActive"] != true {
+			t.Errorf("admin turkumi %q restartdan keyin nofaol bo'lib qoldi", want)
+		}
+		if d["isSystemDefault"] == true {
+			t.Errorf("admin turkumi %q tizim turkumiga aylanib qoldi", want)
+		}
 	}
 
 	// Eski/admin turkumlar o'chirilmasligi va holati saqlanishi kerak.
@@ -103,12 +148,4 @@ func TestEnsureDefaults(t *testing.T) {
 	} else if ust["isActive"] != true {
 		t.Errorf("ustachilik isActive=%v, faol (true) bo'lib qolishi kerak", ust["isActive"])
 	}
-}
-
-func keys(m map[string]bson.M) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

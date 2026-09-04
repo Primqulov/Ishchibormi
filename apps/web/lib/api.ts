@@ -340,9 +340,54 @@ const PLATFORM_LABELS: Record<ClientPlatform, string> = {
   unknown: "Noma'lum",
 };
 
-/** Platforma kodini panelda ko'rsatiladigan nomga aylantiradi. */
-export function platformLabel(p?: string | null): string {
-  return PLATFORM_LABELS[(p || "unknown") as ClientPlatform] ?? p ?? "Noma'lum";
+/**
+ * Veb klient qaysi qurilma OS'ida ochilgani (Go: httpx.Device*). Ro'yxat
+ * YOPIQ — qiymatni backend User-Agent'dan aniqlab, shu to'plamga keltiradi.
+ */
+export type ClientDevice =
+  | "android"
+  | "ios"
+  | "windows"
+  | "macos"
+  | "linux"
+  | "chromeos"
+  /**
+   * ESKI qiymat: aniq OS yozila boshlangunga qadar har qanday stol
+   * kompyuteri shunday saqlangan. Yangi yozuvlarda chiqmaydi, lekin
+   * bazadagi eskilarini o'qish uchun turda qoladi.
+   */
+  | "desktop";
+
+/**
+ * Qurilmaning platforma yorlig'iga qo'shiladigan qismi.
+ *
+ * `desktop` ATAYLAB yo'q: u aniq OS emas, shunchaki "mobil emas" degani,
+ * ya'ni "Veb Desktop" qatorga hech qanday ma'lumot qo'shmasdi. Bunday eski
+ * yozuvlar qo'shimchasiz "Veb" bo'lib ko'rinadi.
+ */
+const DEVICE_SUFFIXES: Partial<Record<ClientDevice, string>> = {
+  android: "Android",
+  ios: "iOS",
+  windows: "Windows",
+  macos: "macOS",
+  linux: "Linux",
+  chromeos: "ChromeOS",
+};
+
+/**
+ * Platforma kodini panelda ko'rsatiladigan nomga aylantiradi.
+ *
+ * Ikkinchi argument berilsa, VEB uchun qurilma ham qo'shiladi:
+ * "Veb Android", "Veb iOS". Boshqa platformalarda qurilma ATAYLAB
+ * e'tiborsiz qoldiriladi — mobil ilovada platformaning o'zi qurilma OS'i,
+ * ya'ni "Android Android" bo'lib chiqardi. Bazadagi eskirgan `lastDevice`
+ * (foydalanuvchi vebdan ilovaga o'tgan holat) ham shu tufayli zararsiz.
+ */
+export function platformLabel(p?: string | null, device?: string | null): string {
+  const nomi = PLATFORM_LABELS[(p || "unknown") as ClientPlatform] ?? p ?? "Noma'lum";
+  if (p !== "web") return nomi;
+  const qoshimcha = DEVICE_SUFFIXES[(device || "") as ClientDevice];
+  return qoshimcha ? `${nomi} ${qoshimcha}` : nomi;
 }
 
 export interface User {
@@ -386,6 +431,15 @@ export interface User {
   signupPlatform?: ClientPlatform;
   /** Oxirgi so'rov qaysi klientdan kelgan. */
   lastPlatform?: ClientPlatform;
+  /**
+   * Ro'yxatdan o'tgan paytdagi qurilma OS'i. FAQAT veb orqali kelganlarda
+   * bo'ladi — mobil ilovada platformaning o'zi qurilma OS'i. Eski
+   * hisoblarda umuman kelmaydi va bu normal: `platformLabel` unda
+   * qo'shimchasiz "Veb" ko'rsatadi.
+   */
+  signupDevice?: ClientDevice;
+  /** Oxirgi so'rov paytidagi qurilma OS'i. */
+  lastDevice?: ClientDevice;
   /** `lastPlatform` qachon yozilgan (ISO). */
   lastSeenAt?: string;
   /** Hisob o'chirilganmi (foydalanuvchilardan olib tashlangan). */
@@ -572,8 +626,356 @@ export interface AdminAudit {
   adminName?: string;
   action: string;
   target?: string;
+  /**
+   * Nishonning o'qiladigan nomi — SERVER hal qiladi (admin → `@login`,
+   * turkum → nomi). Bo'sh bo'lsa nishon id bo'lib qoladi va audit sahifasi
+   * uni `…a1b2c3` ko'rinishida qisqartiradi.
+   */
+  targetName?: string;
   detail?: string;
   createdAt: string;
+}
+
+/* ── Xatoliklar jurnali (Figma 3.12) ──────────────────────────────────
+   Serverning yagona manbasi: `internal/errlog/catalog.go`. Qiymatlar shu
+   yerda TAKRORLANADI (TypeScript backend turlarini ko'rmaydi), lekin
+   ro'yxatlar YOPIQ: noma'lum daraja yoki modul kelsa, sahifa uni xom
+   kod ko'rinishida ko'rsatadi — yashirmaydi. */
+
+export type XatoDaraja = "critical" | "high" | "medium" | "low";
+
+/**
+ * Xatolik guruhining hayot sikli (Figma 3.12.3 · J), oltita holat.
+ *
+ * `regressed` — TIZIM belgisi: "Bartaraf etildi" deb yopilgan guruh qayta
+ * takrorlanganda recorder qo'yadi (`internal/errlog/recorder.go`) va
+ * darajani bir pog'ona ko'taradi. Uni panel qo'lda QO'YOLMAYDI —
+ * `XatoQolHolat` ro'yxatida u yo'q va server ham 400 qaytaradi.
+ */
+export type XatoHolat =
+  | "new"
+  | "watching"
+  | "fixing"
+  | "resolved"
+  | "regressed"
+  | "ignored";
+
+/** Admin O'ZI qo'ya oladigan holatlar (`errlog.ManualStatuses` bilan bir xil). */
+export type XatoQolHolat = Exclude<XatoHolat, "regressed">;
+
+export type XatoModul =
+  | "backend"
+  | "db"
+  | "external"
+  | "jobs"
+  | "admin_app"
+  | "client_app"
+  | "security";
+
+/**
+ * Bitta xatolik GURUHI — bir xil `fingerprint` bo'yicha yig'ilgan hodisalar.
+ *
+ * Jurnalda foydalanuvchi ID'si, so'rov satri va telefon raqami YO'Q: server
+ * ularni yozishdan oldin niqoblaydi (`internal/errlog/scrub.go`).
+ * `usersCount` — noyob hash'lar soni, ya'ni "qancha odamga tegdi" degan
+ * javob; "kim" degan javob saqlanmaydi.
+ */
+export interface AdminErrorGroup {
+  id: ID;
+  fingerprint: string;
+  /** Panelda ko'rinadigan qisqa yorliq: `ERR-2F91C4`. */
+  ref: string;
+  code: string;
+  module: XatoModul;
+  severity: XatoDaraja;
+  /** Qaysi muhitda yuz bergani: "Backend", "Admin ilova", "OTP bot", … */
+  runtime: string;
+  title: string;
+  where?: string;
+  message?: string;
+  path?: string;
+  /**
+   * Oxirgi ma'lum qurilma va ilova versiyasi — ro'yxatdagi ikkita ustun
+   * (Figma 3.12.3 · N). Mijoz `X-Client-Device` yubormasa bo'sh keladi va
+   * panel "aniqlanmagan" ko'rsatadi.
+   */
+  lastDevice?: string;
+  lastAppVersion?: string;
+  count: number;
+  usersCount: number;
+  status: XatoHolat;
+  note?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+
+  /* ── Hayot sikli (Figma 3.12.3 · J) ──────────────────────────────── */
+  /** Katalogdagi ASL daraja — regressiya `severity`ni ko'targan bo'lsa. */
+  baseSeverity?: XatoDaraja;
+  /** Mas'ul adminning ko'rinadigan yorlig'i: "Aziz Karimov · superadmin". */
+  assignee?: string;
+  startedAt?: string;
+  plannedVersion?: string;
+  fixNote?: string;
+  fixedVersion?: string;
+  closedVersion?: string;
+  reopenedAt?: string;
+  /** "E'tiborsiz qoldirish" uchun MAJBURIY sabab (faqat superadmin yozadi). */
+  ignoreReason?: string;
+  activity?: XatoAmal[];
+  /** Admin oxirgi marta qo'lda Telegram'ga yuborgan payt (60 s sovish oynasi). */
+  tgSentAt?: string;
+  /** Oxirgi AI tahlili — `POST /api/admin/errors/{id}/ai` saqlab qo'yadi. */
+  ai?: XatoAI;
+}
+
+/**
+ * AI ildiz-sabab xulosasi (Figma 3.12.1 · "Sababini aniqla").
+ *
+ * Matn SERVERDA yig'iladi (eksport bilan bir xil niqoblangan kontekst) va
+ * Gemini'ga yuboriladi; natija guruhga yoziladi. Ya'ni bu yerdagi maydonlar
+ * MODEL yozgan matn — ular fakt emas, taxmin. Panel shuning uchun `ishonch`
+ * darajasini va model nomini har doim yonida ko'rsatadi.
+ */
+export interface XatoAI {
+  /** Bir qatorli tashxis. */
+  sarlavha: string;
+  /** Ildiz sabab, 2–4 gap. */
+  sabab: string;
+  /** Eng aniq `fayl:qator` yoki komponent nomi; topilmasa "aniqlanmagan". */
+  qayerda?: string;
+  tuzatish?: string[];
+  tekshirish?: string[];
+  /** "past" | "o'rta" | "yuqori" — panel shu bo'yicha rang tanlaydi. */
+  ishonch?: string;
+  model?: string;
+  /** Sarflangan token (hisobot uchun). */
+  tokens?: number;
+  include?: XatoKontekstKalit[];
+  /**
+   * Tahlil paytidagi hodisalar soni. `group.count` undan katta bo'lsa,
+   * xulosa ESKIRGAN: xatolik o'zgargan sharoitda takrorlangan bo'lishi
+   * mumkin va panel buni ochiq aytadi.
+   */
+  countAt?: number;
+  at: string;
+  by?: string;
+}
+
+/** "Amallar tarixi va izohlar" tasmasidagi bitta yozuv (oxirgi 50 ta). */
+export interface XatoAmal {
+  kind: "status" | "note" | "assign" | "telegram" | "regressed" | "export" | "ai";
+  text: string;
+  /** Bo'sh bo'lsa — amalni TIZIM bajargan (regressiya, avtoogohlantirish). */
+  actor?: string;
+  at: string;
+}
+
+/**
+ * Hodisa yuz bergan qurilma (Figma 3.12.3 · H).
+ *
+ * Manba — `X-Client-Device` sarlavhasi yoki veb uchun `User-Agent`. HAR BIR
+ * maydon bo'sh bo'lishi mumkin: mobil ilova hozircha bu sarlavhani
+ * yubormaydi, shuning uchun panel bo'sh maydonni "aniqlanmagan" deb
+ * ko'rsatadi — bo'sh katak qoldirmaydi.
+ */
+export interface XatoQurilma {
+  platform?: string;
+  brand?: string;
+  model?: string;
+  modelCode?: string;
+  os?: string;
+  osVersion?: string;
+  apiLevel?: string;
+  appVersion?: string;
+  build?: string;
+  flutter?: string;
+  dart?: string;
+  screen?: string;
+  ram?: string;
+  storage?: string;
+  locale?: string;
+  network?: string;
+  battery?: string;
+  emulator?: string;
+  orientation?: string;
+  browser?: string;
+  engine?: string;
+}
+
+/** Xatolikdan OLDINGI qadam (breadcrumb, Figma 3.12.3 · I). */
+export interface XatoQadam {
+  at: string;
+  kind: "nav" | "screen" | "action" | "request" | "response" | "crash";
+  text: string;
+}
+
+/** Grafikning bitta soatlik ustuni. */
+export interface XatoUstun {
+  at: string;
+  n: number;
+}
+
+/** Ta'sir taqsimotining bitta ulushi (Figma 3.12.3 · K). */
+export interface XatoUlush {
+  key: string;
+  n: number;
+  pct: number;
+  /**
+   * Ro'yxatga sig'magan mayda qiymatlarning QOLDIQ qatori — backend uni
+   * o'zi qo'shadi ("Boshqa").
+   *
+   * NEGA alohida bayroq, `key` ni solishtirish emas: qoldiq qatori bitta
+   * qiymat EMAS, bir necha qiymatning yig'indisi, ya'ni uni versiya yoki
+   * brend qatori kabi o'qib bo'lmaydi. Yorliq matni esa o'zgaruvchan
+   * (tarjima, qayta nomlash) — matn bo'yicha tekshiruv o'sha kuni
+   * JIMGINA buzilib, qoldiq oddiy qiymat bo'lib ko'rina boshlardi.
+   */
+  other?: boolean;
+}
+
+export interface XatoTasir {
+  brand: XatoUlush[];
+  os: XatoUlush[];
+  app: XatoUlush[];
+}
+
+/**
+ * "So'nggi hodisalar" jadvalining bitta qatori.
+ *
+ * `user` — ism yoki `#A1B2C3` ko'rinishidagi hash yorlig'i. Telefon bu
+ * yerda YO'Q: u faqat "Ta'sirlangan foydalanuvchilar" kartasida, u ham
+ * niqoblangan holda.
+ */
+export interface XatoHodisa {
+  at: string;
+  user?: string;
+  platform?: string;
+  app?: string;
+  network?: string;
+  /** HTTP javob kodi satr sifatida ("500") yoki bo'sh. */
+  status?: string;
+  durationMs?: number;
+  requestId?: string;
+}
+
+/** Eng boy namuna — stack trace, qurilma, so'rov va qadamlar shu yerdan. */
+export interface XatoNamuna {
+  at: string;
+  device: XatoQurilma;
+  deviceLabel?: string;
+  message?: string;
+  stack?: string[];
+  steps?: XatoQadam[];
+  method?: string;
+  path?: string;
+  status?: number;
+  durationMs?: number;
+  requestId?: string;
+  /** Kim duch keldi (namunadagi id o'qish paytida nomga aylantiriladi). */
+  actor?: string;
+  actorRole?: string;
+}
+
+/**
+ * "Ta'sirlangan foydalanuvchilar" qatori. `sub` — admin uchun rol, oddiy
+ * foydalanuvchi uchun NIQOBLANGAN telefon ("+998 90 ••• •• 42").
+ * Niqobni ochish imkoniyati panelda YO'Q — bunday endpoint yozilmagan.
+ */
+export interface XatoFoydalanuvchi {
+  id?: ID;
+  label: string;
+  sub?: string;
+  count: number;
+  admin?: boolean;
+}
+
+/** `GET /api/admin/errors/{id}` — batafsil ekranning butun ma'lumoti. */
+export interface AdminErrorDetail {
+  group: AdminErrorGroup;
+  /** Serverning o'z muhiti: `appEnv` va build SHA (`version`). */
+  env: Record<string, string>;
+  hourly: XatoUstun[];
+  peak: XatoUstun;
+  recent: XatoHodisa[];
+  sample?: XatoNamuna;
+  impact: XatoTasir;
+  users: XatoFoydalanuvchi[];
+  /** Guruhda hozir nechta to'liq namuna saqlanib turibdi (≤ 20). */
+  samplesTotal: number;
+  /**
+   * `group.startedAt` dan KEYIN kelgan hodisalar soni (Figma 3.12.3 · J —
+   * "Boshlanganidan beri 11 ta yangi hodisa").
+   *
+   * `group.count` o'rniga alohida son kerak: umumiy sanoq tuzatish
+   * boshlangunga qadar to'plangan hodisalarni ham o'z ichiga oladi va
+   * "ish qanday ketyapti" degan savolga javob bermaydi. `startedAt`
+   * bo'lmasa maydon umuman kelmaydi.
+   */
+  sinceStarted?: number;
+}
+
+/** AI konteksti nimalardan yig'ilishi (Figma 3.12.3 · L · "Nimalar qo'shilsin"). */
+export type XatoKontekstKalit =
+  | "stack"
+  | "device"
+  | "request"
+  | "steps"
+  | "code"
+  | "serverlog"
+  | "similar";
+
+/**
+ * `GET /api/admin/errors/{id}/context` javobi.
+ *
+ * Matn SERVERDA yig'iladi va niqoblanadi. `masked` har doim `true`:
+ * niqoblashni o'chiradigan parametr API'da UMUMAN YO'Q, shuning uchun
+ * panelda ham o'chirib bo'lmaydigan tugma sifatida ko'rsatiladi.
+ */
+export interface XatoKontekst {
+  format: "md" | "json" | "txt";
+  text: string;
+  chars: number;
+  /** Taxminiy token soni (belgi / 4) — AI oynasiga sig'ishini baholash uchun. */
+  tokens: number;
+  masked: true;
+  include: XatoKontekstKalit[];
+  /** So'ralgan, lekin hozir MAVJUD BO'LMAGAN bo'laklar (server log, o'xshashlar). */
+  unavailable: XatoKontekstKalit[];
+  filename: string;
+}
+
+/** `GET /api/admin/errors/assignees` — mas'ul tanlash uchun tor ro'yxat. */
+export interface XatoMasul {
+  id: ID;
+  label: string;
+  role: AdminRole;
+}
+
+/**
+ * `GET /api/admin/errors` javobi.
+ *
+ * `events` — FILTRGA MOS guruhlardagi hodisalar yig'indisi ("24 guruh ·
+ * 1 284 hodisa"). `total` guruhlarni sanaydi, `events` — takrorlanishlarni;
+ * ikkisi boshqa savolga javob beradi, shuning uchun ikkisi ham kerak.
+ */
+export interface PagedErrors extends Paged<AdminErrorGroup> {
+  events: number;
+}
+
+/**
+ * Beshta ko'rsatkich — JORIY FILTRDAN MUSTAQIL: ular butun tizimning
+ * holati, tanlangan kesim emas (shu sababli alohida endpoint).
+ */
+export interface AdminErrorStats {
+  open: number;
+  critical: number;
+  events24h: number;
+  users24h: number;
+  resolved7d: number;
+  /** Server javob bergan payt (unix soniya) — "yangilandi" yozuvi uchun. */
+  generatedAt: number;
 }
 
 export interface Broadcast {
@@ -588,12 +990,67 @@ export interface Broadcast {
   createdAt: string;
 }
 
+/**
+ * Tarqatma segmenti — bazada haqiqatan uchraydigan bitta viloyat qiymati
+ * va u topadigan qabul qiluvchilar soni (Figma 3.8b).
+ *
+ * Ro'yxat KODDA saqlanmaydi: `users.region` — tekshirilmaydigan erkin
+ * matn, shuning uchun faqat server bazada nima borligini biladi.
+ */
+export interface BroadcastRegion {
+  region: string;
+  count: number;
+}
+
+export interface BroadcastRegions {
+  items: BroadcastRegion[];
+  /** «Barcha viloyatlar» segmentidagi odamlar soni. */
+  total: number;
+  /** Sonlar qaysi filtr bilan hisoblangani (formadagi katakcha). */
+  activeOnly: boolean;
+}
+
 // Paged is the shape every admin list endpoint returns.
 export interface Paged<T> {
   items: T[];
   page: number;
   limit: number;
   total: number;
+}
+
+/**
+ * Admin arizalar jadvalining bitta qatori (Figma 3.6).
+ *
+ * `Application` dan ATAYLAB alohida tur: backend bu ro'yxatda faqat
+ * jadvalda chizilgan maydonlarni qaytaradi (`appRowProjection`).
+ * `Application` ni ishlatsak, TypeScript `employerId`, `workerId`,
+ * `cancelReason` bor deb o'ylardi — kodda ular `undefined` bo'lib
+ * chiqardi va bu xato faqat ish vaqtida bilinardi.
+ */
+export interface ApplicationRow {
+  id: ID;
+  elonId: ID;
+  elonTitle: string;
+  categoryName: string;
+  workerName: string;
+  workerPhone: string;
+  amount: number;
+  isNegotiable: boolean;
+  status: string;
+  appliedAt: string;
+}
+
+/**
+ * `GET /api/admin/applications` javobi.
+ *
+ * `counts` — beshta voronka kartasi uchun holat bo'yicha sanoq, `overall`
+ * — sarlavhadagi «Jami N ta ariza». Ikkalasi ham JORIY FILTRGA BOG'LIQ
+ * EMAS: kartalar bir vaqtda ham taqsimotni ko'rsatadi, ham filtr tugmasi
+ * bo'lib turadi (Figma 3.6a · 2-panel).
+ */
+export interface PagedApplications extends Paged<ApplicationRow> {
+  counts: Record<string, number>;
+  overall: number;
 }
 
 export interface DashboardStats {

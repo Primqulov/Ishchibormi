@@ -91,6 +91,34 @@ type User struct {
 	SignupPlatform string `bson:"signupPlatform,omitempty" json:"signupPlatform,omitempty"`
 	// LastPlatform — oxirgi so'rov qaysi klientdan kelgan.
 	LastPlatform string `bson:"lastPlatform,omitempty" json:"lastPlatform,omitempty"`
+
+	// ── Qurilma (veb klient qaysi OS'da ochilgan) ─────────────────────────
+	//
+	// Platformadan ALOHIDA o'lchov: "web" bizga brauzer ekanini aytadi,
+	// qaysi qurilmada ochilganini — aytmaydi. Panelda ikkalasi qo'shilib
+	// "Veb Android", "Veb iOS", "Veb Windows", "Veb Linux" bo'lib ko'rinadi.
+	//
+	// Qiymatlar — httpx.Device* yopiq ro'yxati ("android" | "ios" |
+	// "windows" | "macos" | "linux" | "chromeos", hamda eski yozuvlardagi
+	// "desktop"). FAQAT platforma "web" bo'lganda yoziladi: mobil ilovada
+	// platformaning o'zi allaqachon qurilma OS'i, takrorlash chalkashtirardi.
+	//
+	// Bo'sh bo'lishi normal va ko'p uchraydi: bu maydondan oldin ro'yxatdan
+	// o'tganlar, mobil ilova hisoblari, va UA'si brauzernikiga o'xshamagan
+	// so'rovlar.
+	//
+	// XAVFSIZLIK: qiymat User-Agent'dan olinadi, ya'ni klient uni
+	// o'zgartira oladi. Shuning uchun u FAQAT ko'rsatish va statistika
+	// uchun — hech qanday ruxsat yoki cheklov tekshiruviga kirmaydi. Xom UA
+	// satri saqlanmaydi (barmoq izi darajasidagi ma'lumot), faqat yuqoridagi
+	// yopiq ro'yxatdan bitta qiymat.
+
+	// SignupDevice — ro'yxatdan o'tgan paytdagi qurilma. $setOnInsert,
+	// hech qachon o'zgarmaydi (SignupPlatform bilan bir xil qoida).
+	SignupDevice string `bson:"signupDevice,omitempty" json:"signupDevice,omitempty"`
+	// LastDevice — oxirgi so'rov paytidagi qurilma.
+	LastDevice string `bson:"lastDevice,omitempty" json:"lastDevice,omitempty"`
+
 	// LastSeenAt — LastPlatform qachon yozilgan. Ikki vazifasi bor: "faol
 	// foydalanuvchi" hisobini oxirgi 30 kun bo'yicha kesish, va yozuvni
 	// qayta-qayta yangilamaslik uchun eskirganini bilish
@@ -201,10 +229,22 @@ type Elon struct {
 	// Ishga kimlar kerak: male (erkaklar) | female (ayollar) | mixed (aralash).
 	// Bo'sh/eski e'lonlar "aralash" deb hisoblanadi (feed filtriga qarang).
 	Gender        string `bson:"gender,omitempty" json:"gender"`
-	Status        string `bson:"status" json:"status"` // draft|recruiting|filled|in_progress|completed|cancelled
+	Status        string `bson:"status" json:"status"` // draft|recruiting|filled|in_progress|completed|cancelled|hidden
 	AcceptedCount int    `bson:"acceptedCount" json:"acceptedCount"`
 	ViewsCount    int    `bson:"viewsCount" json:"viewsCount"`
-	IsDeleted     bool   `bson:"isDeleted" json:"isDeleted"`
+	// HiddenFromStatus — admin e'lonni yashirishdan OLDIN qaysi holatda
+	// bo'lgani. Faqat `status == "hidden"` paytda yoziladi.
+	//
+	// Yashirish `status` ni "hidden" bilan almashtiradi, ya'ni oldingi holat
+	// yo'qoladi. Busiz «Tiklash» faqat "recruiting" ga qaytara olardi va bu
+	// ma'lumotni buzardi: allaqachon boshlanib ketgan (in_progress) yoki
+	// yakunlangan ish qaytadan ommaviy feedga chiqib, yangi ariza qabul
+	// qila boshlardi.
+	//
+	// json:"-" — bu ichki moderatsiya tafsiloti; na foydalanuvchiga, na
+	// panelga uzatilmaydi (panelda tugma shunchaki «Tiklash» deb turadi).
+	HiddenFromStatus string `bson:"hiddenFromStatus,omitempty" json:"-"`
+	IsDeleted        bool   `bson:"isDeleted" json:"isDeleted"`
 	// DeletedAt — qachon yashirilgani. Admin panelida ko'rsatiladi:
 	// yashirilgan e'lon ro'yxatda qolgani uchun "qachon?" degan savolga
 	// javob kerak bo'ladi. Yashirilmaganda umuman yozilmaydi.
@@ -300,6 +340,24 @@ type Notification struct {
 	RelatedEntity *RelatedEntity     `bson:"relatedEntity,omitempty" json:"relatedEntity,omitempty"`
 	IsRead        bool               `bson:"isRead" json:"isRead"`
 	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
+
+	// SentByAdminID — bu xabarni AYNAN SHU foydalanuvchiga qo'lda yuborgan
+	// admin (internal/admin.NotifyUser).
+	//
+	// NEGA KERAK: qo'lda yuborilgan xabar ham, hammaga ketgan broadcast ham
+	// bir xil `type: "system"` bilan saqlanadi va boshqa hech qanday farqi
+	// yo'q edi. Admin panelida "shu foydalanuvchiga nima yozganman?" degan
+	// savolga javob berish uchun ikkalasini ajratish shart — aks holda
+	// ro'yxatga hamma olgan e'lonlar ham tushib, javob noto'g'ri bo'lardi.
+	//
+	// Broadcast'da ATAYLAB to'ldirilmaydi: shu maydonning yo'qligi
+	// "bu shaxsiy xabar emas" degani.
+	//
+	// omitempty — eski yozuvlarda maydon umuman bo'lmaydi. Ular
+	// ro'yxatga tushmaydi va bu to'g'ri: ular haqiqatan qaysi yo'l bilan
+	// yuborilgani endi bilib bo'lmaydi, taxmin qilib ko'rsatgandan ko'ra
+	// ko'rsatmagan ma'qul.
+	SentByAdminID primitive.ObjectID `bson:"sentByAdminId,omitempty" json:"sentByAdminId,omitempty"`
 }
 type RelatedEntity struct {
 	Type string             `bson:"type" json:"type"`
@@ -435,6 +493,255 @@ type AdminAudit struct {
 	Target    string             `bson:"target,omitempty" json:"target"`
 	Detail    string             `bson:"detail,omitempty" json:"detail"`
 	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
+}
+
+// ErrorGroup — bir xil DASTUR xatoligining yig'ma yozuvi ("3.12 · Xatoliklar"
+// sahifasidagi bitta qator). Guruhlash kaliti — Fingerprint: kod + qayerda
+// (fayl/funksiya) + normallashtirilgan yo'l. Bir xil nosozlik minglab marta
+// takrorlansa ham bitta hujjat bo'lib qoladi, faqat Count/UsersCount o'sadi.
+//
+// Hech qanday erkin matn xom holda kirmaydi: Title katalogdan (errlog),
+// Message va Where esa errlog.Text() dan o'tadi.
+type ErrorGroup struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Fingerprint string             `bson:"fingerprint" json:"fingerprint"`
+	// Ref — panelda ko'rinadigan qisqa yorliq: ERR-2F91C4.
+	Ref      string `bson:"ref" json:"ref"`
+	Code     string `bson:"code" json:"code"`
+	Module   string `bson:"module" json:"module"`     // backend|db|external|jobs|admin_app|client_app|security
+	Severity string `bson:"severity" json:"severity"` // critical|high|medium|low
+	// SevRank — Severity ning raqamli tartibi. Mongo satrni alifbo bo'yicha
+	// saralaydi ("critical < high < low < medium"), shuning uchun saralash
+	// uchun alohida maydon kerak.
+	SevRank int    `bson:"sevRank" json:"-"`
+	Runtime string `bson:"runtime" json:"runtime"` // Backend | Admin ilova | OTP bot | …
+	Title   string `bson:"title" json:"title"`
+	Where   string `bson:"where,omitempty" json:"where,omitempty"`
+	Message string `bson:"message,omitempty" json:"message,omitempty"`
+	Path    string `bson:"path,omitempty" json:"path,omitempty"`
+	// LastDevice / LastAppVersion — oxirgi namunadagi qurilma yorlig'i
+	// ("Xiaomi Redmi Note 12 · Android 14") va ilova versiyasi. Ro'yxatdagi
+	// "Qurilma" va "Ilova versiyasi" ustunlari uchun (Figma 3.12.3 · N).
+	//
+	// Guruhda ATAYLAB nusxa qilib saqlanadi: ro'yxat bir sahifada 9 qator
+	// chizadi, har biri uchun namunalar kolleksiyasiga borish 9 qo'shimcha
+	// so'rov bo'lardi. Qiymat "oxirgi ma'lum" degan ma'noda — taqsimot
+	// emas; taqsimot batafsil ekranda, hodisalar bo'yicha hisoblanadi.
+	LastDevice     string `bson:"lastDevice,omitempty" json:"lastDevice,omitempty"`
+	LastAppVersion string `bson:"lastAppVersion,omitempty" json:"lastAppVersion,omitempty"`
+	Count          int64  `bson:"count" json:"count"`
+	// UsersCount — ta'sirlangan noyob foydalanuvchilar soni. Foydalanuvchi
+	// ID'lari SAQLANMAYDI: faqat sanoq va oxirgi 64 tasining hash'i (Users)
+	// yuriladi, ya'ni "kim" emas, "qancha" javobi qoladi.
+	UsersCount  int64      `bson:"usersCount" json:"usersCount"`
+	UserHashes  []string   `bson:"userHashes,omitempty" json:"-"`
+	Status      string     `bson:"status" json:"status"` // new|watching|fixing|resolved|regressed|ignored
+	Note        string     `bson:"note,omitempty" json:"note,omitempty"`
+	FirstSeenAt time.Time  `bson:"firstSeenAt" json:"firstSeenAt"`
+	LastSeenAt  time.Time  `bson:"lastSeenAt" json:"lastSeenAt"`
+	ResolvedAt  *time.Time `bson:"resolvedAt,omitempty" json:"resolvedAt,omitempty"`
+	ResolvedBy  string     `bson:"resolvedBy,omitempty" json:"resolvedBy,omitempty"`
+
+	// ── Hayot sikli (Figma 3.12.3 · J) ──────────────────────────────────
+	//
+	// BaseSeverity — KATALOGDAGI asl daraja. Regressiya darajani bir
+	// pog'ona ko'taradi (errlog.BumpSeverity); asl qiymat saqlanmasa, har
+	// takrorlanishda daraja yana ko'tarilib, oxiri hamma narsa "Kritik"
+	// bo'lib qolardi.
+	BaseSeverity string `bson:"baseSeverity,omitempty" json:"baseSeverity,omitempty"`
+	// AssigneeID/Assignee — mas'ul admin. Yorliq ("@login") ham saqlanadi:
+	// admin o'chirilsa ham tarix o'qiladigan bo'lib qoladi.
+	AssigneeID primitive.ObjectID `bson:"assigneeId,omitempty" json:"-"`
+	Assignee   string             `bson:"assignee,omitempty" json:"assignee,omitempty"`
+	// StartedAt/PlannedVersion/FixNote — "Bartaraf etilmoqda" paneli.
+	StartedAt      *time.Time `bson:"startedAt,omitempty" json:"startedAt,omitempty"`
+	PlannedVersion string     `bson:"plannedVersion,omitempty" json:"plannedVersion,omitempty"`
+	FixNote        string     `bson:"fixNote,omitempty" json:"fixNote,omitempty"`
+	// FixedVersion — tuzatish chiqarilgan versiya ("1.4.3 (121)").
+	FixedVersion string `bson:"fixedVersion,omitempty" json:"fixedVersion,omitempty"`
+	// ClosedVersion — guruh YOPILGAN paytdagi versiya. Regressiyada u
+	// joyida qoladi: "1.4.3 da yopilgan edi, keyin qaytdi".
+	ClosedVersion string     `bson:"closedVersion,omitempty" json:"closedVersion,omitempty"`
+	ReopenedAt    *time.Time `bson:"reopenedAt,omitempty" json:"reopenedAt,omitempty"`
+	// IgnoreReason — "E'tiborsiz qoldirish" uchun MAJBURIY sabab
+	// (Figma 3.12.3 · J). Nosozlikni ko'rinmas qiladigan yagona tugma
+	// izohsiz bosilmasligi kerak.
+	IgnoreReason string `bson:"ignoreReason,omitempty" json:"ignoreReason,omitempty"`
+	// Activity — "Amallar tarixi va izohlar" tasmasi (oxirgi 50 ta,
+	// $slice bilan cheklangan). Audit jurnalining o'rnini bosmaydi: bu —
+	// guruh yonidagi qisqa tasma, audit esa o'zgarmas manba.
+	Activity []ErrorActivity `bson:"activity,omitempty" json:"activity,omitempty"`
+
+	// AlertedAt — oxirgi Telegram ogohlantirishi. Bitta xatolik sikli
+	// tunda yuzta xabar yubormasligi uchun (recorder.go dagi throttle).
+	AlertedAt *time.Time `bson:"alertedAt,omitempty" json:"-"`
+	// AlertedCount — ogohlantirish yuborilgan paytdagi Count. "Yuqori"
+	// darajali xatolik har 10 hodisada bir marta eslatiladi.
+	AlertedCount int64 `bson:"alertedCount,omitempty" json:"-"`
+	// TgSentAt — admin QO'LDA yuborgan oxirgi Telegram xabari. Avtomatik
+	// ogohlantirishdan alohida hisoblanadi, o'z sovish oynasi bilan.
+	TgSentAt *time.Time `bson:"tgSentAt,omitempty" json:"tgSentAt,omitempty"`
+
+	// AI — oxirgi AI tahlili (internal/admin/errai.go). Guruh ichida
+	// saqlanadi, chunki u guruhga tegishli va guruh bilan birga
+	// o'chadi; alohida kolleksiya bo'lsa batafsil ekran yana bitta
+	// so'rov qilardi. Tarixi yuritilmaydi — oxirgisi qoladi, avvalgilari
+	// esa `activity` tasmasida qator bo'lib turadi.
+	AI *ErrorAI `bson:"ai,omitempty" json:"ai,omitempty"`
+}
+
+// ErrorAI — Gemini qaytargan ildiz-sabab xulosasi (Figma 3.12.1 · AI
+// tahlili; kontekst manbai 3.12.3 · L).
+//
+// # Nega natija saqlanadi
+//
+// Chaqiruv pullik va sekin (~4 s). Bir xil guruhni har ochganda qayta
+// so'rash kvotani yeydi va har safar boshqacha matn berardi — ya'ni
+// adminlar bir-birining ko'rgan xulosasini ko'rmasdi. Saqlangan natija
+// esa jamoaviy: kim so'ragani (`by`) va qachon (`at`) ko'rinib turadi.
+//
+// # Nega "eskirgan" belgisi bor
+//
+// CountAt — tahlil paytidagi hodisalar soni. Keyin xatolik yana ming
+// marta takrorlansa, xulosa hamon eski hisobotga tayangan bo'ladi;
+// panel shuni ochiq aytadi va qayta so'rashni taklif qiladi.
+type ErrorAI struct {
+	Sarlavha   string    `bson:"sarlavha" json:"sarlavha"`
+	Sabab      string    `bson:"sabab" json:"sabab"`
+	Qayerda    string    `bson:"qayerda,omitempty" json:"qayerda,omitempty"`
+	Tuzatish   []string  `bson:"tuzatish,omitempty" json:"tuzatish,omitempty"`
+	Tekshirish []string  `bson:"tekshirish,omitempty" json:"tekshirish,omitempty"`
+	Ishonch    string    `bson:"ishonch,omitempty" json:"ishonch,omitempty"` // past|o'rta|yuqori
+	Model      string    `bson:"model,omitempty" json:"model,omitempty"`
+	Tokens     int       `bson:"tokens,omitempty" json:"tokens,omitempty"`
+	Include    []string  `bson:"include,omitempty" json:"include,omitempty"`
+	CountAt    int64     `bson:"countAt,omitempty" json:"countAt,omitempty"`
+	At         time.Time `bson:"at" json:"at"`
+	By         string    `bson:"by,omitempty" json:"by,omitempty"`
+}
+
+// ErrorActivity — guruh tasmasidagi bitta yozuv (holat, izoh, Telegram).
+type ErrorActivity struct {
+	Kind  string    `bson:"kind" json:"kind"` // status|note|assign|telegram|regressed|export|ai
+	Text  string    `bson:"text" json:"text"`
+	Actor string    `bson:"actor,omitempty" json:"actor,omitempty"` // bo'sh => tizim
+	At    time.Time `bson:"at" json:"at"`
+}
+
+// ErrorDevice — hodisa yuz bergan qurilma (Figma 3.12.3 · H).
+//
+// Manba: `X-Client-Device` sarlavhasi (mobil ilova uni device_info_plus /
+// package_info_plus orqali to'ldiradi) yoki veb uchun `User-Agent` va
+// `Sec-CH-UA-*`. Sarlavha TASHQARIDAN keladi — internal/errlog/device.go
+// uni kalitlar ro'yxati, belgilar to'plami va uzunlik bo'yicha qat'iy
+// tozalaydi. Bo'sh maydon panelda "aniqlanmagan" bo'lib chiqadi.
+type ErrorDevice struct {
+	Platform    string `bson:"platform,omitempty" json:"platform,omitempty"` // android|ios|web
+	Brand       string `bson:"brand,omitempty" json:"brand,omitempty"`
+	Model       string `bson:"model,omitempty" json:"model,omitempty"`
+	ModelCode   string `bson:"modelCode,omitempty" json:"modelCode,omitempty"`
+	OS          string `bson:"os,omitempty" json:"os,omitempty"`
+	OSVersion   string `bson:"osVersion,omitempty" json:"osVersion,omitempty"`
+	APILevel    string `bson:"apiLevel,omitempty" json:"apiLevel,omitempty"`
+	AppVersion  string `bson:"appVersion,omitempty" json:"appVersion,omitempty"`
+	Build       string `bson:"build,omitempty" json:"build,omitempty"`
+	Flutter     string `bson:"flutter,omitempty" json:"flutter,omitempty"`
+	Dart        string `bson:"dart,omitempty" json:"dart,omitempty"`
+	Screen      string `bson:"screen,omitempty" json:"screen,omitempty"`
+	RAM         string `bson:"ram,omitempty" json:"ram,omitempty"`
+	Storage     string `bson:"storage,omitempty" json:"storage,omitempty"`
+	Locale      string `bson:"locale,omitempty" json:"locale,omitempty"`
+	Network     string `bson:"network,omitempty" json:"network,omitempty"`
+	Battery     string `bson:"battery,omitempty" json:"battery,omitempty"`
+	Emulator    string `bson:"emulator,omitempty" json:"emulator,omitempty"`
+	Orientation string `bson:"orientation,omitempty" json:"orientation,omitempty"`
+	Browser     string `bson:"browser,omitempty" json:"browser,omitempty"`
+	Engine      string `bson:"engine,omitempty" json:"engine,omitempty"`
+}
+
+// ErrorStep — xatolikdan OLDINGI qadam (breadcrumb, Figma 3.12.3 · I).
+//
+// Mijoz ularni halqali buferda (oxirgi 20 ta) yuritadi va FAQAT xatolik
+// bilan birga yuboradi. Matn errlog.Text() dan o'tadi: token, telefon va
+// IP shu yerda ham niqoblanadi.
+type ErrorStep struct {
+	At   time.Time `bson:"at" json:"at"`
+	Kind string    `bson:"kind" json:"kind"` // nav|screen|action|request|response|crash
+	Text string    `bson:"text" json:"text"`
+}
+
+// ErrorEvent — bitta hodisa. Guruh 180 kun yashaydi, hodisa esa 30 kun
+// (TTL indeks, pkg/db/indexes.go) — grafik va "24 soatdagi hodisalar"
+// hisoblagichi uchun shuncha yetarli.
+type ErrorEvent struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Fingerprint string             `bson:"fingerprint" json:"fingerprint"`
+	Code        string             `bson:"code" json:"code"`
+	Severity    string             `bson:"severity" json:"severity"`
+	Module      string             `bson:"module" json:"module"`
+	Where       string             `bson:"where,omitempty" json:"where,omitempty"`
+	Message     string             `bson:"message,omitempty" json:"message,omitempty"`
+	Method      string             `bson:"method,omitempty" json:"method,omitempty"`
+	Path        string             `bson:"path,omitempty" json:"path,omitempty"`
+	Status      int                `bson:"status,omitempty" json:"status,omitempty"`
+	// N — bu hujjat nechta takrorlanishni ifodalaydi. Recorder hodisalarni
+	// bir necha soniyalik oynada yig'ib, oynaga bitta hujjat yozadi: shu
+	// tariqa xatolik sikli (sekundiga minglab) bazani ko'chki bilan
+	// to'ldirmaydi, lekin "24 soatdagi hodisalar" sanog'i aniq qoladi
+	// ($sum: "$n").
+	N int `bson:"n" json:"n"`
+	// UserHash — foydalanuvchining ID'sidan olingan qaytarib bo'lmaydigan
+	// hash. Xom ID emas: jurnal "kim nima qildi" tarixiga aylanmasligi kerak.
+	UserHash   string `bson:"userHash,omitempty" json:"-"`
+	Platform   string `bson:"platform,omitempty" json:"platform,omitempty"`
+	AppVersion string `bson:"appVersion,omitempty" json:"appVersion,omitempty"`
+	// Brand/OS — "Ta'sir taqsimoti" uchun (Figma 3.12.3 · K). Ular AYNAN
+	// shu yerda turadi, namunada emas: namunalar guruhda 20 tadan oshmaydi,
+	// ya'ni ular bo'yicha hisoblangan foiz butun hodisalar oqimini emas,
+	// oxirgi yigirmatasini ko'rsatardi.
+	Brand string    `bson:"brand,omitempty" json:"brand,omitempty"`
+	OS    string    `bson:"os,omitempty" json:"os,omitempty"`
+	At    time.Time `bson:"at" json:"at"`
+}
+
+// ErrorSample — bitta hodisaning TO'LIQ nusxasi (Figma 3.12.1 · "So'nggi
+// hodisalar", 3.12.3 · H va I).
+//
+// # NEGA ALOHIDA KOLLEKSIYA
+//
+// `error_events` — sanoq uchun: u ko'p, kichik va faqat grafikni chizadi.
+// Namuna esa og'ir (stek, qadamlar, qurilma) va har guruh uchun ATIGI bir
+// nechtasi saqlanadi (errlog.maxSamples). Ikkalasini birlashtirsak, yo
+// grafik og'irlashardi, yo batafsil ko'rinish bo'shab qolardi.
+//
+// # SHAXSIY MA'LUMOT
+//
+// Guruh va hodisa darajasida foydalanuvchi faqat qaytarib bo'lmaydigan
+// hash bo'lib turadi. Namunada esa `userId` — ObjectID — saqlanadi, chunki
+// "kim duch keldi" paneli usiz umuman ishlamaydi. Muvozanat quyidagicha:
+// har guruhda ≤ maxSamples ta namuna, 30 kunlik TTL, moderator+ RBAC,
+// ism va telefon SAQLANMAYDI (o'qish paytida `users` dan olinadi) va
+// telefon javobda HAR DOIM niqoblangan holda ketadi.
+type ErrorSample struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Fingerprint string             `bson:"fingerprint" json:"-"`
+	Code        string             `bson:"code" json:"code"`
+	At          time.Time          `bson:"at" json:"at"`
+
+	Method     string `bson:"method,omitempty" json:"method,omitempty"`
+	Path       string `bson:"path,omitempty" json:"path,omitempty"`
+	Status     int    `bson:"status,omitempty" json:"status,omitempty"`
+	DurationMs int    `bson:"durationMs,omitempty" json:"durationMs,omitempty"`
+	RequestID  string `bson:"requestId,omitempty" json:"requestId,omitempty"`
+
+	UserID   primitive.ObjectID `bson:"userId,omitempty" json:"-"`
+	AdminID  primitive.ObjectID `bson:"adminId,omitempty" json:"-"`
+	UserHash string             `bson:"userHash,omitempty" json:"-"`
+
+	Device  ErrorDevice `bson:"device,omitempty" json:"device"`
+	Message string      `bson:"message,omitempty" json:"message,omitempty"`
+	Stack   []string    `bson:"stack,omitempty" json:"stack,omitempty"`
+	Steps   []ErrorStep `bson:"steps,omitempty" json:"steps,omitempty"`
 }
 
 // OTPCode

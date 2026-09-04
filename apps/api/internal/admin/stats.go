@@ -3,10 +3,13 @@ package admin
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // notDeletedNotReview is the base filter for every admin metric: live records
@@ -36,10 +39,50 @@ func mergeFilter(a, b bson.M) bson.M {
 	return m
 }
 
+// dashboardAuditWindow — bitta admin uchun "dashboard_viewed" yozuvlari
+// orasidagi eng kichik oraliq.
+//
+// Dashboard o'zini bir necha sababdan qayta so'raydi: pastga tortib
+// yangilash, aloqa tiklanishi, ekranga qaytish. Har so'rovga yozuv qo'ysak,
+// jurnal shu bitta amaldan iborat bo'lib qolardi va haqiqiy signal — kim
+// qachon panelga kirgani — ko'milib ketardi. Soatiga bitta yozuv "bu admin
+// bugun panelni ochganmi" degan savolga javob berish uchun yetarli.
+const dashboardAuditWindow = time.Hour
+
+// auditDashboardView har oynada bir marta "dashboard_viewed" yozadi.
+//
+// XAVFSIZLIK: yozuvni SERVER yozadi, klient emas. Klient yuboradigan audit
+// yozuvini soxtalashtirish mumkin — jurnalning butun qiymati esa aynan
+// soxtalashtirib bo'lmasligida.
+//
+// Xatolar jimgina yutiladi: audit yozilmagani uchun admin panelining bosh
+// sahifasi ochilmay qolishi mumkin emas.
+func (h *Handler) auditDashboardView(r *http.Request) {
+	aid, err := primitive.ObjectIDFromHex(httpx.AdminID(r))
+	if err != nil {
+		return
+	}
+	ctx := r.Context()
+	// {adminId, createdAt} indeksi bor (pkg/db/indexes.go) — bu so'rov
+	// bitta adminning oxirgi bir soatlik yozuvlarigina ko'rib chiqadi.
+	n, err := h.AuditCol.CountDocuments(ctx, bson.M{
+		"adminId":   aid,
+		"action":    "dashboard_viewed",
+		"createdAt": bson.M{"$gte": time.Now().Add(-dashboardAuditWindow)},
+	}, options.Count().SetLimit(1))
+	if err != nil || n > 0 {
+		return
+	}
+	// Izohda platforma: "kim" ustunidan tashqari "qayerdan" ham kerak —
+	// mobil paneldan kirish veb paneldan kirishdan boshqa iz qoldiradi.
+	h.auditRaw(ctx, aid, "dashboard_viewed", "", httpx.PlatformOrUnknown(httpx.ClientPlatform(r)))
+}
+
 // Dashboard returns the KPI cards for the overview screen. Each metric is a
 // cheap CountDocuments; heavier time-series live under Stats.
 func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	h.auditDashboardView(r)
 	notDeleted := notDeletedNotReview()
 	today := bson.M{"createdAt": bson.M{"$gte": startOfToday()}}
 
@@ -84,6 +127,15 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 type nameCount struct {
 	Name  string `json:"name" bson:"_id"`
 	Count int    `json:"count" bson:"count"`
+	// ID — manba yozuvining id'si; hozircha faqat turkumlar to'ldiradi.
+	//
+	// Panel qatori shu id bilan e'lonlar ro'yxatini `?categoryId=` qilib
+	// ochadi. Nom bo'yicha filtrlash yaramaydi: turkum nomi o'zgarishi
+	// mumkin va e'lonlar ro'yxati faqat id bo'yicha filtrlaydi.
+	//
+	// `bson:"-"` — agregatsiya natijasi bu maydonni to'ldirmaydi, uni
+	// chaqiruvchi qo'lda qo'yadi (viloyat/platforma qatorlarida id yo'q).
+	ID string `json:"id,omitempty" bson:"-"`
 }
 
 type dayPoint struct {
@@ -209,19 +261,39 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Top categories by number of (non-deleted) elons.
+	//
+	// Guruhlash `categoryId` bo'yicha, nom bo'yicha emas: id barqaror, nom
+	// esa tahrirlanishi mumkin — nomi o'zgargan turkum ikkita qatorga
+	// bo'linib ketardi. Nom ko'rsatish uchun `$first` bilan olinadi.
 	topCats := []nameCount{}
 	if cur, err := h.Elons.Aggregate(ctx, mongo.Pipeline{
 		{{Key: "$match", Value: notDeletedNotReview()}},
-		{{Key: "$group", Value: bson.M{"_id": "$categoryName", "count": bson.M{"$sum": 1}}}},
+		{{Key: "$group", Value: bson.M{
+			"_id":   "$categoryId",
+			"name":  bson.M{"$first": "$categoryName"},
+			"count": bson.M{"$sum": 1},
+		}}},
 		{{Key: "$sort", Value: bson.M{"count": -1}}},
 		{{Key: "$limit", Value: 5}},
 	}); err == nil {
 		defer cur.Close(ctx)
 		for cur.Next(ctx) {
-			var row nameCount
-			if cur.Decode(&row) == nil {
-				topCats = append(topCats, row)
+			var row struct {
+				ID    primitive.ObjectID `bson:"_id"`
+				Name  string             `bson:"name"`
+				Count int                `bson:"count"`
 			}
+			if cur.Decode(&row) != nil {
+				continue
+			}
+			// categoryId yo'q eski yozuvda id bo'sh qoladi. Klient bunday
+			// qatorni bosiladigan qilmaydi — filtrsiz ro'yxatga olib
+			// borish "shu turkumni ko'rsataman" degan va'dani buzardi.
+			id := ""
+			if !row.ID.IsZero() {
+				id = row.ID.Hex()
+			}
+			topCats = append(topCats, nameCount{Name: row.Name, Count: row.Count, ID: id})
 		}
 	}
 

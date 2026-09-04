@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +86,7 @@ func UserAuth(secret string) func(http.Handler) http.Handler {
 				return
 			}
 			ctx := context.WithValue(r.Context(), CtxUserID, c.UserID)
+			setActor(ctx, c.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -117,6 +119,7 @@ func OptionalUserAuth(secret, reviewUserID string) func(http.Handler) http.Handl
 				return
 			}
 			ctx := context.WithValue(r.Context(), CtxUserID, c.UserID)
+			setActor(ctx, c.UserID)
 			if reviewUserID != "" && c.UserID == reviewUserID {
 				ctx = context.WithValue(ctx, CtxReviewActor, true)
 			}
@@ -146,9 +149,60 @@ func AdminAuth(secret string) func(http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), CtxAdminID, c.AdminID)
 			ctx = context.WithValue(ctx, CtxAdminRole, c.Role)
 			ctx = context.WithValue(ctx, CtxAdminVer, *c.TokenVersion)
+			setActor(ctx, c.AdminID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// ── So'rov egasini TASHQI middleware'ga yetkazish ────────────────────────
+//
+// Muammo: kontekst faqat PASTGA oqadi. Autentifikatsiya middleware'i
+// `r.WithContext(...)` bilan YANGI so'rov yasab, uni ichkariga uzatadi —
+// undan tashqarida turgan middleware (xatolik jurnali, panic ilgagi) esa
+// eski so'rovni ushlab qoladi va u yerda hech qachon foydalanuvchi id'si
+// bo'lmaydi.
+//
+// Yechim: tashqi middleware kontekstga o'zgaruvchan QUTI qo'yadi, ichkaridagi
+// auth esa unga id yozadi. Shu tariqa "Ta'sirlangan foydalanuvchi"
+// ko'rsatkichi ishlaydi, auth middleware'lari esa xatolik jurnali haqida
+// hech narsa bilmaydi.
+//
+// Quti faqat ID saqlaydi va u hech qayerga XOM holda yozilmaydi:
+// internal/errlog uni tuzlangan hash'ga aylantiradi.
+type actorBox struct {
+	mu sync.Mutex
+	id string
+}
+
+const ctxActor ctxKey = "actorBox"
+
+// ActorSink so'rovga bo'sh quti biriktiradi. Zanjirda auth'dan TASHQARIDA,
+// Recover'dan ham oldin turishi kerak: panic ilgagi ham, xatolik jurnali
+// ham aynan shu qutini o'qiydi.
+func ActorSink(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxActor, &actorBox{})))
+	})
+}
+
+func setActor(ctx context.Context, id string) {
+	if b, ok := ctx.Value(ctxActor).(*actorBox); ok && id != "" {
+		b.mu.Lock()
+		b.id = id
+		b.mu.Unlock()
+	}
+}
+
+// Actor — so'rov egasi (foydalanuvchi yoki admin id'si), quti o'rnatilgan
+// bo'lsa. Aks holda bo'sh satr.
+func Actor(r *http.Request) string {
+	if b, ok := r.Context().Value(ctxActor).(*actorBox); ok {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.id
+	}
+	return ""
 }
 
 // tokenFromReq reads the Bearer token from the Authorization header only.
@@ -233,10 +287,29 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 	}
 }
 
+// PanicHook, agar o'rnatilgan bo'lsa, Recover ushlagan har bir panic uchun
+// chaqiriladi (main.go uni internal/errlog ga ulaydi).
+//
+// # NEGA ILGAK, TO'G'RIDAN-TO'G'RI CHAQIRUV EMAS
+//
+// httpx — quyi qatlam: uni internal/errlog import qiladi, teskarisi emas.
+// Ilgak shu yo'nalishni saqlaydi va middleware tartibini o'zgartirmaydi:
+// Recover javobni qaytarish mas'uliyatini o'zida ushlab qoladi, xatolikni
+// yozish esa ixtiyoriy qo'shimcha bo'lib qoladi. Ilgak nil bo'lsa yoki
+// o'zi panic qilsa ham, mijoz baribir 500 oladi.
+var PanicHook func(r *http.Request, rec any, stack []byte)
+
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				if h := PanicHook; h != nil {
+					// Ilgakdagi nosozlik javobni to'sib qo'ymasin.
+					func() {
+						defer func() { _ = recover() }()
+						h(r, rec, debug.Stack())
+					}()
+				}
 				JSON(w, http.StatusInternalServerError, errBody{Error: APIError{Code: "panic", Message: "internal server error"}})
 			}
 		}()

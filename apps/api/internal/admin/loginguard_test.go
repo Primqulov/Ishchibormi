@@ -68,6 +68,49 @@ func TestLoginGuardClearOnSuccess(t *testing.T) {
 	}
 }
 
+// The 2FA budget is its own pool. A stolen access token grinding /2fa/disable
+// must not be able to spend the login budget (which would lock the real admin
+// out of the panel), and a throttled login must not stop the same admin from
+// turning 2FA back on.
+func TestTOTPGuardIsSeparateAndTighter(t *testing.T) {
+	login := newLoginGuard()
+	twofa := newTOTPGuard()
+	now := time.Now()
+
+	if twofaMaxFailures >= adminMaxLoginFailures {
+		t.Fatalf("2FA budget (%d) is meant to be tighter than login (%d)",
+			twofaMaxFailures, adminMaxLoginFailures)
+	}
+
+	for i := 0; i < twofaMaxFailures; i++ {
+		if twofa.exhausted("admin-id", now) {
+			t.Fatalf("2FA budget reported exhausted after %d failures, expected %d",
+				i, twofaMaxFailures)
+		}
+		twofa.recordFailure("admin-id", now)
+	}
+	if !twofa.exhausted("admin-id", now) {
+		t.Error("2FA budget must be exhausted once its ceiling is reached")
+	}
+	if login.exhausted("admin-id", now) {
+		t.Error("burning the 2FA budget must not touch the login budget")
+	}
+}
+
+func TestTOTPGuardWindowExpires(t *testing.T) {
+	g := newTOTPGuard()
+	now := time.Now()
+	for i := 0; i < twofaMaxFailures; i++ {
+		g.recordFailure("admin-id", now)
+	}
+	if !g.exhausted("admin-id", now) {
+		t.Fatal("should be throttled inside the window")
+	}
+	if g.exhausted("admin-id", now.Add(twofaWindow+time.Second)) {
+		t.Error("budget must reset once the window has passed")
+	}
+}
+
 // Expired buckets are pruned, so a stream of invented usernames cannot grow the
 // map without bound.
 func TestLoginGuardPrunesExpiredBuckets(t *testing.T) {

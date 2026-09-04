@@ -43,6 +43,19 @@ const (
 	// are refused outright.
 	adminMaxLoginFailures = 10
 	adminLoginWindow      = 15 * time.Minute
+
+	// Turning the second factor on or off is guarded by the same mechanism on
+	// its own budget, keyed by admin id (see twofa.go).
+	//
+	// Tighter than login on purpose. Login is typed from memory; a 2FA code is
+	// being read off a screen one metre away, so five misses inside a quarter
+	// of an hour is already far past honest mistyping. And the attacker this
+	// budget is aimed at is not outside the door — they are holding a stolen
+	// access token and grinding /2fa/disable to strip the factor that would
+	// have stopped them. Ungoverned, that is a million guesses an hour against
+	// a six-digit code.
+	twofaMaxFailures = 5
+	twofaWindow      = 15 * time.Minute
 )
 
 type loginFailures struct {
@@ -50,34 +63,49 @@ type loginFailures struct {
 	windowEnds time.Time
 }
 
-// loginGuard tracks failed admin logins per username. The zero value is not
-// usable — build it with newLoginGuard.
+// loginGuard tracks failed attempts per key — the username for logins, the
+// admin id for second-factor changes. The zero value is not usable; build it
+// with newLoginGuard or newTOTPGuard.
 type loginGuard struct {
 	mu       sync.Mutex
+	max      int
+	window   time.Duration
 	failures map[string]*loginFailures
 }
 
 func newLoginGuard() *loginGuard {
-	return &loginGuard{failures: map[string]*loginFailures{}}
+	return newGuard(adminMaxLoginFailures, adminLoginWindow)
 }
 
-// exhausted reports whether this username has burnt its budget for the current
+// newTOTPGuard budgets failed 2FA enable/disable verifications, keyed by admin
+// id. Separate from the login budget on purpose: a mistyped enrolment code must
+// not eat into the attempts that stand between an attacker and a password, and
+// a throttled login must not also block the admin from turning 2FA back on.
+func newTOTPGuard() *loginGuard {
+	return newGuard(twofaMaxFailures, twofaWindow)
+}
+
+func newGuard(max int, window time.Duration) *loginGuard {
+	return &loginGuard{max: max, window: window, failures: map[string]*loginFailures{}}
+}
+
+// exhausted reports whether this key has burnt its budget for the current
 // window. Callers must consult it BEFORE touching the database, so a throttled
 // account costs an attacker a bcrypt comparison of nothing at all.
-func (g *loginGuard) exhausted(username string, now time.Time) bool {
+func (g *loginGuard) exhausted(key string, now time.Time) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	f := g.failures[username]
+	f := g.failures[key]
 	if f == nil || now.After(f.windowEnds) {
 		return false
 	}
-	return f.count >= adminMaxLoginFailures
+	return f.count >= g.max
 }
 
-// recordFailure charges one wrong attempt against a username. It is called for
+// recordFailure charges one wrong attempt against a key. It is called for
 // unknown usernames too: skipping them would turn the guard itself into an
 // account-existence oracle (throttled == real, never throttled == not real).
-func (g *loginGuard) recordFailure(username string, now time.Time) {
+func (g *loginGuard) recordFailure(key string, now time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -89,9 +117,9 @@ func (g *loginGuard) recordFailure(username string, now time.Time) {
 		}
 	}
 
-	f := g.failures[username]
+	f := g.failures[key]
 	if f == nil || now.After(f.windowEnds) {
-		g.failures[username] = &loginFailures{count: 1, windowEnds: now.Add(adminLoginWindow)}
+		g.failures[key] = &loginFailures{count: 1, windowEnds: now.Add(g.window)}
 		return
 	}
 	f.count++
@@ -100,8 +128,8 @@ func (g *loginGuard) recordFailure(username string, now time.Time) {
 // clear drops the budget after a fully successful login (password AND, when
 // enabled, second factor). A legitimate admin who mistyped a few times is not
 // left carrying those failures into their next session.
-func (g *loginGuard) clear(username string) {
+func (g *loginGuard) clear(key string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.failures, username)
+	delete(g.failures, key)
 }

@@ -58,7 +58,7 @@ func (h *Handler) ExportUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cur.Close(ctx)
 	cw := csvDownload(w, "users.csv")
-	_ = cw.Write([]string{"id", "ism", "familiya", "telefon", "viloyat", "tuman", "reyting", "sharhlar", "bajarilganIsh", "tasdiqlangan", "bloklangan", "yaratilgan", "royxatPlatformasi", "oxirgiPlatforma", "oxirgiFaollik"})
+	_ = cw.Write([]string{"id", "ism", "familiya", "telefon", "viloyat", "tuman", "reyting", "sharhlar", "bajarilganIsh", "tasdiqlangan", "bloklangan", "yaratilgan", "royxatPlatformasi", "royxatQurilmasi", "oxirgiPlatforma", "oxirgiQurilma", "oxirgiFaollik"})
 	for cur.Next(ctx) {
 		var u models.User
 		if cur.Decode(&u) != nil {
@@ -72,7 +72,17 @@ func (h *Handler) ExportUsers(w http.ResponseWriter, r *http.Request) {
 			// Bo'sh emas, "unknown": eksportni jadval dasturida ochgan odam
 			// bo'sh katakni "ma'lumot yo'qolgan" deb o'qiydi.
 			httpx.PlatformOrUnknown(u.SignupPlatform),
+			// Qurilma — ALOHIDA ustun, platformaga qo'shib yozilmaydi:
+			// "web android" bitta katakda bo'lsa, jadval dasturida platforma
+			// bo'yicha guruhlab bo'lmasdi.
+			//
+			// Bu yerda bo'sh katak to'g'ri va "unknown" ga aylantirilmaydi:
+			// mobil ilova hisoblarida qurilma ustuni ATAYLAB bo'sh (u yerda
+			// platformaning o'zi qurilma OS'i), ya'ni bo'shlik "ma'lumot
+			// yo'qolgan" emas, "bu ustun bu qatorga tegishli emas" degani.
+			u.SignupDevice,
 			httpx.PlatformOrUnknown(u.LastPlatform),
+			u.LastDevice,
 			csvTime(u.LastSeenAt),
 		})
 	}
@@ -106,7 +116,11 @@ func (h *Handler) ExportElons(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		_ = cw.Write([]string{
-			e.ID.Hex(), csvCell(e.Title), csvCell(e.CategoryName), e.Status, csvCell(e.Region),
+			// `csvCell` holat ustuniga ham qo'llanadi: hozir holat mashina
+			// tomonidan qo'yiladi, lekin faylning o'z qoidasi "har bir matn
+			// katak zararsizlantirilgan" — bitta istisno keyinchalik
+			// e'tibordan chetda qolib ketardi.
+			e.ID.Hex(), csvCell(e.Title), csvCell(e.CategoryName), csvCell(e.Status), csvCell(e.Region),
 			strconv.Itoa(e.WorkersNeeded), strconv.FormatInt(e.PriceAmount, 10),
 			csvCell(e.OwnerName), strconv.Itoa(e.ViewsCount), e.CreatedAt.Format(time.RFC3339),
 		})
@@ -116,28 +130,52 @@ func (h *Handler) ExportElons(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExportApplications streams applications (same filters as ListApplications) as CSV.
+//
+// Ustunlar Figma 3.6a · «CSV yuklab olish» jadvalidan olingan:
+// id · elon · turkum · ishchi · telefon · summa · kelishuv · holat · yuborilgan.
+// Filtr ekrandagi bilan BIR XIL (`appsFilter`) — "yuklab olish joriy
+// filtrga bo'ysunadi" qoidasi shundan kelib chiqadi.
+//
+// Proyeksiya ro'yxat so'rovi bilan bir xil (`appRowProjection`): faylga
+// faqat shu to'qqiz ustun kerak, qolgan maydonlar bazadan ham so'ralmaydi.
 func (h *Handler) ExportApplications(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	cur, err := h.Apps.Find(ctx, appsFilter(r.URL.Query()),
-		options.Find().SetSort(bson.D{{Key: "appliedAt", Value: -1}}).SetLimit(exportMax))
+		options.Find().
+			SetProjection(appRowProjection).
+			SetSort(bson.D{{Key: "appliedAt", Value: -1}}).
+			SetLimit(exportMax))
 	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
 	defer cur.Close(ctx)
 	cw := csvDownload(w, "applications.csv")
-	_ = cw.Write([]string{"id", "elon", "ishchi", "telefon", "summa", "kelishuv", "holat", "yuborilgan"})
+	_ = cw.Write([]string{"id", "elon", "turkum", "ishchi", "telefon", "summa", "kelishuv", "holat", "yuborilgan"})
+	qator := 0
 	for cur.Next(ctx) {
-		var a models.Application
+		var a adminApplicationRow
 		if cur.Decode(&a) != nil {
 			continue
 		}
+		// Kelishiladigan arizada summa BO'SH qoladi (Figma 3.6a: "Raqam
+		// yoki bo'sh"). Ilgari "0" yozilardi — jadval dasturida u "bepul
+		// ish" bo'lib o'qilardi va yig'indini ham buzardi.
+		summa := ""
+		if !a.IsNegotiable {
+			summa = strconv.FormatInt(a.Amount, 10)
+		}
 		_ = cw.Write([]string{
-			a.ID.Hex(), csvCell(a.ElonTitle), csvCell(a.WorkerName), csvCell(a.WorkerPhone),
-			strconv.FormatInt(a.Amount, 10), strconv.FormatBool(a.IsNegotiable),
-			a.Status, a.AppliedAt.Format(time.RFC3339),
+			a.ID.Hex(), csvCell(a.ElonTitle), csvCell(a.CategoryName),
+			csvCell(a.WorkerName), csvCell(a.WorkerPhone),
+			summa, strconv.FormatBool(a.IsNegotiable),
+			csvCell(appStatusText(a.Status)), a.AppliedAt.Format(time.RFC3339),
 		})
+		qator++
 	}
 	cw.Flush()
-	h.audit(r, "export_applications", "", "")
+	// Auditda ENDI ko'lam ham bor: qanday filtr bilan va necha qator
+	// chiqib ketgani. Ilgari bo'sh satrlar yozilardi — "eksport bo'ldi"
+	// degan yozuvdan "nima chiqib ketdi" degan savolga javob topilmasdi.
+	h.audit(r, "export_applications", appsScope(r.URL.Query()), strconv.Itoa(qator)+" qator")
 }

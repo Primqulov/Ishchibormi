@@ -12,6 +12,7 @@ import (
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/pkg/db"
 	"github.com/ishchibormi/backend/pkg/envfile"
+	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -46,6 +47,45 @@ var regions = []struct {
 	{"Namangan", "Pop", 40.8730, 71.1090}, {"Namangan", "Chust", 41.0000, 71.2360},
 	{"Andijon", "Asaka", 40.6420, 72.2370}, {"Qashqadaryo", "Qarshi", 38.8610, 65.7890},
 	{"Surxondaryo", "Termiz", 37.2240, 67.2780},
+}
+
+// platformSeeds — admin panelidagi "Platforma" ustunining HAMMA holati.
+//
+// Nega ro'yxat qo'lda yozilgan, tasodifiy emas: maqsad — dizaynni lokalda
+// ko'rish. Tasodifiy tanlansa, ba'zi holatlar (masalan "Veb ChromeOS")
+// umuman chiqmay qolishi mumkin edi va aynan o'sha ustun kengligini
+// tekshirib bo'lmasdi.
+//
+// Qurilma FAQAT "web" da to'ldiriladi — ilovada platformaning o'zi qurilma
+// OS'i (httpx.ClientDevice ga qarang). Bo'sh platforma — "Noma'lum": bu
+// funksiyadan oldin ro'yxatdan o'tganlar.
+var platformSeeds = []struct {
+	Platform, Device string
+}{
+	{httpx.PlatformAndroid, ""},               // Android
+	{httpx.PlatformWeb, httpx.DeviceAndroid},  // Veb Android
+	{httpx.PlatformIOS, ""},                   // iOS
+	{httpx.PlatformWeb, httpx.DeviceWindows},  // Veb Windows
+	{httpx.PlatformWeb, httpx.DeviceIOS},      // Veb iOS
+	{httpx.PlatformWeb, httpx.DeviceMacOS},    // Veb macOS
+	{"", ""},                                  // Noma'lum
+	{httpx.PlatformWeb, httpx.DeviceLinux},    // Veb Linux
+	{httpx.PlatformWeb, httpx.DeviceChromeOS}, // Veb ChromeOS
+	{httpx.PlatformWeb, ""},                   // Veb — brauzer, lekin OS tanilmagan
+}
+
+// platformaTanla — i-hisob uchun ro'yxat va oxirgi platforma/qurilma.
+//
+// Har 5-hisobda ro'yxat platformasi ataylab boshqacha: "ilovada ro'yxatdan
+// o'tib, keyin brauzerga o'tgan" — bu real va batafsil sahifadagi ikkita
+// alohida maydonni ("Ro'yxat platformasi" va "Oxirgi platforma") tekshirish
+// uchun kerak. Bir xil bo'lsa, ular farq qilishini ko'rib bo'lmasdi.
+func platformaTanla(i int) (signupP, signupD, lastP, lastD string) {
+	p := platformSeeds[i%len(platformSeeds)]
+	if i%5 == 0 {
+		return httpx.PlatformAndroid, "", p.Platform, p.Device
+	}
+	return p.Platform, p.Device, p.Platform, p.Device
 }
 
 type catSeed struct {

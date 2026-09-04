@@ -84,3 +84,86 @@ func PlatformOrUnknown(p string) string {
 	}
 	return p
 }
+
+// Veb klient QAYSI QURILMADA ochilgani. Platformadan alohida o'lchov:
+// "web" bizga brauzer ekanini aytadi, lekin telefonmi yoki kompyutermi —
+// aytmaydi. Admin panelida "Veb Android" / "Veb iOS" shu yerdan chiqadi.
+//
+// Ro'yxat yopiq, [Platform*] kabi va xuddi shu sabab bilan: qiymat bazaga
+// yoziladi va guruhlanadi.
+const (
+	DeviceAndroid  = "android"
+	DeviceIOS      = "ios"
+	DeviceWindows  = "windows"
+	DeviceMacOS    = "macos"
+	DeviceLinux    = "linux"
+	DeviceChromeOS = "chromeos"
+	// DeviceDesktop — ESKI qiymat: bir vaqtlar har qanday stol kompyuteri
+	// shu nom bilan yozilgan, endi esa aniq OS yoziladi. YANGI yozuvlarda
+	// chiqmaydi, faqat bazadagi eskilarini o'qish uchun qoladi. Ko'rsatishda
+	// qo'shimcha so'z bermaydi — "Veb Desktop" emas, shunchaki "Veb".
+	DeviceDesktop = "desktop"
+)
+
+// ClientDevice — VEB so'rov qaysi qurilma OS'idan kelgani: "android" |
+// "ios" | "windows" | "macos" | "linux" | "chromeos", aniqlab bo'lmasa
+// BO'SH satr.
+//
+// # NEGA YANGI SARLAVHA EMAS, User-Agent
+//
+// [ClientPlatform] ataylab sarlavhaga tayanadi: u yerda savol "qaysi
+// KLIENT" edi va Flutter'ning Dio'si UA'da Android'ni iOS'dan ajratmaydi.
+// Bu yerda savol boshqa — "qaysi BRAUZER OS'i" — va unga UA aynan
+// mo'ljallangan javob beradi: har bir brauzer OS tokenini o'zi qo'yadi.
+//
+// Xavfsizlik nuqtai nazaridan bu ONG tanlov: yangi sarlavha kiritsak,
+// klient boshqaradigan yana bitta kirish maydoni paydo bo'lardi, UA esa
+// allaqachon har so'rovda keladi — hujum yuzasi kengaymaydi. Ikkalasi ham
+// klient tomonidan o'zgartirilishi mumkin, shuning uchun qiymat FAQAT
+// ko'rsatish va statistika uchun: hech qayerda ruxsat tekshiruviga
+// kirmaydi.
+//
+// Xom UA satri SAQLANMAYDI — u barmoq izi darajasidagi ma'lumot. Bazaga
+// faqat yuqoridagi yopiq ro'yxatdan bitta qiymat tushadi, ya'ni bu maydon
+// orqali ixtiyoriy matn (CSV formulasi, HTML) o'tkazib bo'lmaydi.
+//
+// Ma'lum cheklov: iPadOS 13+ Safari o'zini "Macintosh" deb tanitadi, ya'ni
+// bunday iPad "macos" bo'lib qoladi. UA bilan buni tuzatib bo'lmaydi va
+// noto'g'ri "ios" deb belgilashdan ko'ra kam aniq javob ma'qul.
+func ClientDevice(r *http.Request) string {
+	// Faqat veb uchun ma'noga ega: mobil ilovada platformaning o'zi
+	// allaqachon qurilma OS'i ("android"/"ios"), takrorlash chalkashtirardi.
+	if ClientPlatform(r) != PlatformWeb {
+		return ""
+	}
+	ua := r.UserAgent()
+	// TARTIB MUHIM — tokenlar bir-birini o'z ichiga oladi:
+	//   Android UA'sida "Linux" ham bor  → Android oldinroq;
+	//   ChromeOS UA'sida "X11" bor       → CrOS Linux'dan oldinroq.
+	// Tartibni o'zgartirsangiz, quyidagi holatlar jimgina noto'g'ri
+	// guruhga tushadi.
+	switch {
+	case strings.Contains(ua, "Android"):
+		return DeviceAndroid
+	// iOS'dagi HAR QANDAY brauzer (Safari, CriOS, FxiOS) shu tokenlardan
+	// birini yuboradi — hammasi WebKit ustida ishlaydi.
+	case strings.Contains(ua, "iPhone"), strings.Contains(ua, "iPad"), strings.Contains(ua, "iPod"):
+		return DeviceIOS
+	case strings.Contains(ua, "CrOS"):
+		return DeviceChromeOS
+	// "Windows NT" — stol versiyasi, "Windows Phone" — o'lgan platforma;
+	// ikkalasi ham bitta guruhga tushaveradi.
+	case strings.Contains(ua, "Windows"):
+		return DeviceWindows
+	case strings.Contains(ua, "Macintosh"), strings.Contains(ua, "Mac OS X"):
+		return DeviceMacOS
+	case strings.Contains(ua, "Linux"), strings.Contains(ua, "X11"):
+		return DeviceLinux
+	default:
+		// Brauzer, lekin OS'ini tanimadik (kam uchraydigan tizim yoki UA
+		// kengaytma bilan o'zgartirilgan), yoki umuman brauzer emas
+		// (skript, bot). Taxmin qilmaymiz — bo'sh qiymat saqlanmaydi va
+		// panelda shunchaki "Veb" ko'rinadi.
+		return ""
+	}
+}

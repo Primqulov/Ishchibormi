@@ -79,27 +79,87 @@ func Validate(secret, input string) bool {
 // one position (possible only with a repeating code) burns the earliest one,
 // never sliding the high-water mark further than necessary.
 func ValidateCounter(secret, input string, lastUsed uint64) (uint64, bool) {
+	c, res := check(secret, input, lastUsed, false)
+	return c, res == Valid
+}
+
+// Result says WHY a submission was refused. Only [Valid] grants anything; the
+// other two exist so a screen can tell "you mistyped" from "that code has
+// aged out", which are different problems with different fixes.
+type Result int
+
+const (
+	// Invalid — the code does not belong to this secret at any nearby time.
+	Invalid Result = iota
+	// Expired — genuinely this secret's code, but its 30-second window has
+	// passed, or it was already spent and cannot be reused.
+	Expired
+	// Valid — accepted. The returned counter must be persisted.
+	Valid
+)
+
+// staleWindows is how far either side of now [Check] looks when it is only
+// LABELLING an already-refused code.
+//
+// It does NOT widen acceptance: the accept loop is still ±1 window and runs
+// first, so nothing found out here is ever let through. The only thing the
+// wider sweep can reveal is "that string was one of this secret's codes a few
+// minutes ago" — to a caller who is already authenticated as the owner of the
+// secret, and who cannot derive the secret from a code either way.
+const staleWindows = 10 // ±5 minutes
+
+// Check is [ValidateCounter] with the refusal reason attached.
+//
+// Reserved for callers acting on their OWN second factor while already
+// authenticated (the admin panel's 2FA screen). Login deliberately keeps using
+// [ValidateCounter]: on an unauthenticated endpoint, "wrong" and "expired" must
+// look identical to the caller, and the response must not depend on any extra
+// work the server did.
+func Check(secret, input string, lastUsed uint64) (uint64, Result) {
+	return check(secret, input, lastUsed, true)
+}
+
+func check(secret, input string, lastUsed uint64, labelStale bool) (uint64, Result) {
 	input = strings.TrimSpace(input)
 	if len(input) != digits {
-		return 0, false
+		return 0, Invalid
 	}
 	now := uint64(time.Now().Unix() / period)
 	for _, d := range []int64{-1, 0, 1} {
 		c := uint64(int64(now) + d)
 		want, err := codeAt(secret, c)
 		if err != nil {
-			return 0, false
+			return 0, Invalid
 		}
 		if subtle.ConstantTimeCompare([]byte(want), []byte(input)) != 1 {
 			continue
 		}
 		// Correct code, but already spent (or older than one we have spent).
+		// Re-entering the code you just logged in with is the single most
+		// common way to land here, and "wrong code" would send the admin
+		// hunting for a typo that is not there.
 		if c <= lastUsed {
-			return 0, false
+			return 0, Expired
 		}
-		return c, true
+		return c, Valid
 	}
-	return 0, false
+	if !labelStale {
+		return 0, Invalid
+	}
+	for d := int64(-staleWindows); d <= staleWindows; d++ {
+		if d >= -1 && d <= 1 {
+			continue // already walked by the accept loop above
+		}
+		c := uint64(int64(now) + d)
+		want, err := codeAt(secret, c)
+		if err != nil {
+			return 0, Invalid
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(input)) == 1 {
+			return 0, Expired
+		}
+	}
+	return 0, Invalid
 }
 
 // URI builds the otpauth:// provisioning URI an authenticator app imports (as a

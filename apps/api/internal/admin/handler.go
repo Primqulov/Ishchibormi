@@ -13,8 +13,10 @@ import (
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/notification"
+	"github.com/ishchibormi/backend/pkg/gemini"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/storage"
+	"github.com/ishchibormi/backend/pkg/tgsend"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -38,9 +40,23 @@ type Handler struct {
 	Feedback   *mongo.Collection
 	AuditCol   *mongo.Collection
 	Broadcasts *mongo.Collection
-	Notify     *notification.Service
-	Apps       *mongo.Collection
-	Storage    *storage.Service
+	// ErrGroups/ErrEvents — dastur xatoliklari jurnali (internal/errlog,
+	// "3.12 · Xatoliklar"). Panel uchun deyarli faqat o'qish: yozuvni
+	// recorder qiladi, admin esa yolg'iz HOLATNI o'zgartira oladi.
+	ErrGroups *mongo.Collection
+	ErrEvents *mongo.Collection
+	// ErrSamples — batafsil ko'rinish uchun to'liq namunalar (stek,
+	// qadamlar, qurilma). Har guruhda bir nechtasi, 30 kun yashaydi.
+	ErrSamples *mongo.Collection
+	// TG / AlertChatID — batafsil ekrandagi "Telegram'ga yuborish" tugmasi.
+	// Konstruktorda emas, main.go da to'ldiriladi: NewHandler imzosi
+	// o'zgarmasin (uni testlar ham chaqiradi) va bog'lanmagan holat
+	// normal bo'lib qolsin — tugma 503 qaytaradi, panel ishlayveradi.
+	TG          *tgsend.Client
+	AlertChatID int64
+	Notify      *notification.Service
+	Apps        *mongo.Collection
+	Storage     *storage.Service
 
 	// Strikes — avtomatik moderatsiya bloklarini ochish uchun (superadmin).
 	Strikes *moderation.StrikeStore
@@ -55,8 +71,16 @@ type Handler struct {
 	// ish qilmasligi kerak.
 	Purger *account.Purger
 
+	// AI — xatolik sababini aniqlash uchun Gemini mijozi (errai.go).
+	// TG kabi main.go da to'ldiriladi: kalitsiz muhitda (test, CI, lokal)
+	// panel to'liq ishlashi kerak — faqat bitta tugma 503 qaytaradi.
+	AI *gemini.Client
+
 	// loginGuard caps failed logins per admin username — see loginguard.go.
 	loginGuard *loginGuard
+	// totpGuard caps failed 2FA enable/disable codes per admin id, so a stolen
+	// access token cannot be used to grind the second factor off the account.
+	totpGuard *loginGuard
 }
 
 func NewHandler(cfg config.Config, db *mongo.Database, n *notification.Service, s *storage.Service) *Handler {
@@ -71,11 +95,15 @@ func NewHandler(cfg config.Config, db *mongo.Database, n *notification.Service, 
 		Feedback:   db.Collection("feedback"),
 		AuditCol:   db.Collection("admin_audit"),
 		Broadcasts: db.Collection("broadcasts"),
+		ErrGroups:  db.Collection("error_groups"),
+		ErrEvents:  db.Collection("error_events"),
+		ErrSamples: db.Collection("error_samples"),
 		Notify:     n,
 		Apps:       db.Collection("applications"),
 		Storage:    s,
 		Strikes:    moderation.NewStrikeStore(db, cfg.ModerationStrikeLimit, cfg.ModerationBanDuration),
 		loginGuard: newLoginGuard(),
+		totpGuard:  newTOTPGuard(),
 	}
 }
 

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/pkg/httpx"
@@ -80,6 +81,47 @@ type codeReq struct {
 	Code string `json:"code"`
 }
 
+// verifyOwnCode checks a code the admin typed against their own secret and
+// charges the failure budget when it does not hold up.
+//
+// # WHY THE BUDGET IS HERE AND NOT ONLY ON LOGIN
+//
+// Both of these endpoints sit behind AdminAuth, which makes it tempting to
+// treat them as already-trusted. They are not: the exact scenario this guard
+// is for is an attacker who ALREADY has a valid access token (stolen from a
+// browser, lifted off a shared machine, replayed from a proxy log) and now
+// wants the second factor gone so the password alone lets them back in
+// tomorrow. Without a budget that is six digits and unlimited tries — minutes
+// of work. With it, five per quarter hour.
+//
+// The reported error separates "wrong" from "expired" because the screen asks
+// for two different corrections (retype vs wait for the next code). This is
+// safe to reveal HERE and nowhere else: the caller is authenticated as the
+// owner of this very secret, so it tells them nothing they could not get by
+// looking at their own phone. Login keeps both cases indistinguishable.
+//
+// Returns the counter to burn on success.
+func (h *Handler) verifyOwnCode(r *http.Request, a *models.Admin, code string, what string) (uint64, error) {
+	key := a.ID.Hex()
+	now := time.Now()
+	if h.totpGuard.exhausted(key, now) {
+		h.audit(r, "2fa_throttled", key, what)
+		return 0, httpx.NewError(429, "rate_limited", "too many attempts, try again later")
+	}
+	counter, res := totp.Check(a.TOTPSecret, code, a.TOTPLastCounter)
+	if res != totp.Valid {
+		h.totpGuard.recordFailure(key, now)
+		if res == totp.Expired {
+			return 0, httpx.NewError(400, "expired_totp", "code expired")
+		}
+		return 0, httpx.NewError(400, "bad_totp", "invalid code")
+	}
+	// A correct code proves possession of the device, so the honest admin who
+	// fat-fingered a digit twice is not left carrying it.
+	h.totpGuard.clear(key)
+	return counter, nil
+}
+
 // Enable2FA verifies the first code against the pending secret and activates 2FA.
 func (h *Handler) Enable2FA(w http.ResponseWriter, r *http.Request) {
 	a, err := h.currentAdmin(r)
@@ -96,9 +138,9 @@ func (h *Handler) Enable2FA(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	counter, ok := totp.ValidateCounter(a.TOTPSecret, req.Code, a.TOTPLastCounter)
-	if !ok {
-		httpx.Err(w, httpx.NewError(400, "bad_totp", "invalid code"))
+	counter, err := h.verifyOwnCode(r, a, req.Code, "enable")
+	if err != nil {
+		httpx.Err(w, err)
 		return
 	}
 	// Burn the enrollment code and turn 2FA on in the same write that revokes
@@ -130,8 +172,8 @@ func (h *Handler) Disable2FA(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	if _, ok := totp.ValidateCounter(a.TOTPSecret, req.Code, a.TOTPLastCounter); !ok {
-		httpx.Err(w, httpx.NewError(400, "bad_totp", "invalid code"))
+	if _, err := h.verifyOwnCode(r, a, req.Code, "disable"); err != nil {
+		httpx.Err(w, err)
 		return
 	}
 	// Dropping the second factor weakens the account, so it revokes sibling

@@ -40,7 +40,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -194,16 +196,37 @@ type safetySetting struct {
 }
 
 type schema struct {
-	Type       string             `json:"type"`
-	Properties map[string]*schema `json:"properties,omitempty"`
-	Enum       []string           `json:"enum,omitempty"`
-	Required   []string           `json:"required,omitempty"`
+	Type string `json:"type"`
+	// Description — modelga maydonning ma'nosini aytadi. Moderatsiyada
+	// kerak emas (kategoriya nomlari o'zi gapiradi), tahlilda esa muhim:
+	// "qayerda" maydoni fayl:qator kutayotganini shu yerda aytamiz.
+	Description string             `json:"description,omitempty"`
+	Properties  map[string]*schema `json:"properties,omitempty"`
+	// Items — ARRAY turidagi maydon elementining sxemasi. Usiz ro'yxat
+	// qaytarib bo'lmaydi (tahlildagi "tuzatish qadamlari").
+	Items    *schema  `json:"items,omitempty"`
+	Enum     []string `json:"enum,omitempty"`
+	Required []string `json:"required,omitempty"`
+}
+
+// thinkingConfig — Gemini 3.x "o'ylaydigan" modellar uchun MAJBURIY sozlama.
+//
+// Berilmasa model butun `maxOutputTokens` ni ichki mulohazaga sarflaydi va
+// `finishReason: "MAX_TOKENS"` bilan MATNSIZ javob qaytaradi (2026-09-01 da
+// jonli tekshirilgan). 2.5-avlod uslubidagi `thinkingBudget: 0` esa 400
+// INVALID_ARGUMENT beradi — shu sababli aynan `thinkingLevel` ishlatiladi.
+type thinkingConfig struct {
+	ThinkingLevel string `json:"thinkingLevel,omitempty"` // low|medium|high
 }
 
 type generationConfig struct {
-	Temperature      float64 `json:"temperature"`
-	ResponseMIMEType string  `json:"responseMimeType"`
-	ResponseSchema   *schema `json:"responseSchema"`
+	Temperature float64 `json:"temperature"`
+	// MaxOutputTokens/ThinkingConfig — faqat tahlil yo'lida to'ldiriladi;
+	// omitempty tufayli moderatsiya so'rovi bir baytga ham o'zgarmaydi.
+	MaxOutputTokens  int             `json:"maxOutputTokens,omitempty"`
+	ThinkingConfig   *thinkingConfig `json:"thinkingConfig,omitempty"`
+	ResponseMIMEType string          `json:"responseMimeType"`
+	ResponseSchema   *schema         `json:"responseSchema"`
 }
 
 type generateRequest struct {
@@ -231,6 +254,14 @@ type generateResponse struct {
 			Probability string `json:"probability"`
 		} `json:"safetyRatings"`
 	} `json:"promptFeedback"`
+	// UsageMetadata — sarflangan tokenlar. Moderatsiyada ishlatilmaydi;
+	// tahlilda esa panelda ko'rsatiladi (kvota pul turadi, admin nechta
+	// token ketganini bilishi kerak).
+	UsageMetadata *struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
 }
 
 type apiErrorBody struct {
@@ -238,6 +269,23 @@ type apiErrorBody struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Status  string `json:"status"`
+		// Details — google.rpc qo'shimchalari. Bizga ikkitasi kerak:
+		//
+		//  · RetryInfo — kvota tugaganda kutish muddati ("retryDelay":
+		//    "59s"). Uni taxmin qilish o'rniga o'qib olamiz.
+		//  · QuotaFailure — QAYSI kvota tugagani ("quotaId":
+		//    "GenerateRequestsPerDayPerProjectPerModel-FreeTier"). Bu
+		//    muhim, chunki RetryInfo KUNLIK chegarada ham qisqa muddat
+		//    (20-60 s) qaytaradi. Faqat retryDelay'ga ishonsak, panel
+		//    "42 soniyadan keyin urinib ko'ring" deb yozardi, aslida esa
+		//    kvota ertagacha tiklanmaydi — ochiq yolg'on.
+		Details []struct {
+			Type       string `json:"@type"`
+			RetryDelay string `json:"retryDelay"`
+			Violations []struct {
+				QuotaID string `json:"quotaId"`
+			} `json:"violations"`
+		} `json:"details"`
 	} `json:"error"`
 }
 
@@ -408,6 +456,21 @@ type APIError struct {
 	// UNAVAILABLE, DEADLINE_EXCEEDED.
 	RPCStatus string
 	Message   string
+	// RetryAfter — Google aytgan kutish muddati (soniya, 0 = noma'lum).
+	// Manba: javobdagi `Retry-After` sarlavhasi yoki xato tanasidagi
+	// google.rpc.RetryInfo. Taxminiy qiymat emas — shuning uchun uni
+	// foydalanuvchiga ko'rsatish mumkin.
+	//
+	// DIQQAT: KUNLIK kvota tugaganda ham Google shu yerga qisqa muddat
+	// (20-60 s) yozadi. Uni "shundan keyin ishlaydi" ma'nosida
+	// ko'rsatishdan oldin DailyQuota() ni tekshiring.
+	RetryAfter int
+	// QuotaID — 429 da QAYSI kvota tugagani, masalan
+	// "GenerateRequestsPerDayPerProjectPerModel-FreeTier" yoki
+	// "GenerateRequestsPerMinutePerProjectPerModel-FreeTier".
+	// Manba: google.rpc.QuotaFailure.violations[].quotaId; Google uni har
+	// doim ham yubormaydi, shuning uchun bo'sh bo'lishi mumkin.
+	QuotaID string
 }
 
 func (e *APIError) Error() string {
@@ -430,6 +493,17 @@ func (e *APIError) QuotaExceeded() bool {
 		strings.EqualFold(e.RPCStatus, "RESOURCE_EXHAUSTED")
 }
 
+// DailyQuota — tugagan kvota KUNLIK (sutkalik) chegarami.
+//
+// Bepul tarifda `gemini-3.6-flash` uchun kuniga 20 ta so'rov beriladi va u
+// tugaganda RetryAfter baribir 20-60 soniya bo'lib keladi. Shu sababli
+// chaqiruvchi bu ikki holatni ajratishi shart: daqiqalik limitda kutish
+// mantiqiy, kunlikda esa kutish foydasiz — kvota Tinch okeani vaqti bilan
+// yarim tunda yangilanadi.
+func (e *APIError) DailyQuota() bool {
+	return e.QuotaExceeded() && strings.Contains(strings.ToLower(e.QuotaID), "perday")
+}
+
 // Unauthorized — kalit noto'g'ri yoki ruxsat yo'q (server sozlamasi muammosi).
 func (e *APIError) Unauthorized() bool {
 	return e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden
@@ -442,12 +516,53 @@ func (c *Client) statusError(res *http.Response) error {
 	if json.Unmarshal(raw, &body) == nil {
 		e.Message = body.Error.Message
 		e.RPCStatus = body.Error.Status
+		// Ikkala qo'shimcha ham kerak, tartibi esa kafolatlanmagan —
+		// shuning uchun ro'yxat oxirigacha o'qiladi.
+		for _, d := range body.Error.Details {
+			switch {
+			case strings.HasSuffix(d.Type, "RetryInfo"):
+				if e.RetryAfter == 0 {
+					e.RetryAfter = parseRetryDelay(d.RetryDelay)
+				}
+			case strings.HasSuffix(d.Type, "QuotaFailure"):
+				for _, v := range d.Violations {
+					if v.QuotaID != "" {
+						e.QuotaID = v.QuotaID
+						break
+					}
+				}
+			}
+		}
+	}
+	if e.RetryAfter == 0 {
+		e.RetryAfter = parseRetryDelay(res.Header.Get("Retry-After"))
 	}
 	if e.Message == "" {
 		e.Message = strings.TrimSpace(string(raw))
 	}
 	e.Message = truncate(redactString(e.Message), 300)
 	return e
+}
+
+// parseRetryDelay — "59s", "59.18s" yoki oddiy "59" ni soniyaga aylantiradi.
+// Kasr qismi yuqoriga yaxlitlanadi: "0.4s" dan keyin darhol urinish yana
+// 429 berardi.
+func parseRetryDelay(v string) int {
+	v = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(v), "s"))
+	if v == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		return 0
+	}
+	n := int(math.Ceil(f))
+	// Yuqori chegara: buzilgan javob panelda "3 kundan keyin urinib
+	// ko'ring" degan ma'nosiz sanoqqa aylanmasin.
+	if n > 3600 {
+		return 3600
+	}
+	return n
 }
 
 // redact / redactString — xato matnidan API kalitiga o'xshash bo'lakni olib

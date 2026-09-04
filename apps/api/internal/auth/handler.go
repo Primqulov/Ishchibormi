@@ -136,7 +136,7 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 			moderation.BanMessage(until), map[string]any{"bannedUntil": until}))
 		return
 	}
-	user, err := h.upsertUser(ctx, phone, tgID, httpx.ClientPlatform(r))
+	user, err := h.upsertUser(ctx, phone, tgID, httpx.ClientPlatform(r), httpx.ClientDevice(r))
 	if err != nil {
 		// A distinct code from account_disabled: the clients treat that one as
 		// "your session was revoked" and tear down local state, which is the
@@ -282,7 +282,11 @@ func (h *Handler) releaseDeletedIdentity(ctx context.Context, phone string, tgID
 // bo'lishi mumkin: sarlavha yubormaydigan eski klient. Bo'sh qiymat hech
 // qachon YOZILMAYDI — aks holda mavjud yozuvni "noma'lum" bilan ustidan
 // bosib ketardi.
-func (h *Handler) upsertUser(ctx context.Context, phone string, tgID int64, platform string) (*models.User, error) {
+//
+// device — veb so'rov qaysi qurilma OS'idan kelgani (httpx.ClientDevice).
+// Xuddi shu qoida: bo'sh bo'lsa yozilmaydi. Mobil ilova uchun u doim bo'sh,
+// chunki u yerda platformaning o'zi qurilma OS'i.
+func (h *Handler) upsertUser(ctx context.Context, phone string, tgID int64, platform, device string) (*models.User, error) {
 	now := time.Now()
 	if err := h.releaseDeletedIdentity(ctx, phone, tgID); err != nil {
 		return nil, err
@@ -319,6 +323,14 @@ func (h *Handler) upsertUser(ctx context.Context, phone string, tgID int64, plat
 		update["$setOnInsert"].(bson.M)["signupPlatform"] = platform
 		update["$set"].(bson.M)["lastPlatform"] = platform
 		update["$set"].(bson.M)["lastSeenAt"] = now
+	}
+	// Qurilma — platforma bilan bir xil qoida bo'yicha. Alohida `if`:
+	// platforma aniq, qurilma noaniq bo'lishi mumkin (sarlavhada "web"
+	// yozilgan, UA esa brauzernikiga o'xshamaydi), va bunda platformani
+	// yozmay qo'yish noto'g'ri bo'lardi.
+	if device != "" {
+		update["$setOnInsert"].(bson.M)["signupDevice"] = device
+		update["$set"].(bson.M)["lastDevice"] = device
 	}
 	opts := options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)
 	var u models.User
@@ -455,8 +467,9 @@ const platformSeenInterval = 30 * time.Minute
 
 // touchPlatform foydalanuvchining oxirgi ishlatgan klientini yangilaydi.
 //
-// Yozuv UCHTA holatda bo'ladi va boshqa hech qachon:
+// Yozuv TO'RTTA holatda bo'ladi va boshqa hech qachon:
 //   - klient o'zgargan (ilovadan vebga o'tgan) — bu darhol qiziq;
+//   - qurilma o'zgargan (stol brauzeridan telefonga o'tgan) — xuddi shunday;
 //   - lastSeenAt yo'q (bu funksiyadan oldingi eski hisob);
 //   - lastSeenAt [platformSeenInterval] dan eski.
 //
@@ -469,19 +482,34 @@ func touchPlatform(r *http.Request, users *mongo.Collection, u *models.User) {
 	if p == "" {
 		return // klient o'zini tanitmadi — mavjud yozuvga tegmaymiz
 	}
+	d := httpx.ClientDevice(r)
 	now := time.Now()
 	fresh := u.LastSeenAt != nil && now.Sub(*u.LastSeenAt) < platformSeenInterval
-	if p == u.LastPlatform && fresh {
+	// Bo'sh `d` — "aniqlay olmadik", "o'zgardi" EMAS. Shuning uchun u
+	// yangilanishni qo'zg'atmaydi va quyida yozilmaydi ham.
+	if p == u.LastPlatform && (d == "" || d == u.LastDevice) && fresh {
 		return
 	}
 	set := bson.M{"lastPlatform": p, "lastSeenAt": now}
-	// Eski hisoblarda signupPlatform bo'sh. Uni SHU YERDA to'ldirmaymiz:
-	// hozir ishlatayotgan klient ro'yxatdan o'tgan klient degani emas, va
-	// taxmin qilingan qiymat hisobotda haqiqiydan farq qilmay qolardi.
+	if d != "" {
+		set["lastDevice"] = d
+	}
+	// Eski hisoblarda signupPlatform/signupDevice bo'sh. Ularni SHU YERDA
+	// to'ldirmaymiz: hozir ishlatayotgan klient ro'yxatdan o'tgan klient
+	// degani emas, va taxmin qilingan qiymat hisobotda haqiqiydan farq
+	// qilmay qolardi.
+	//
+	// Ilovaga o'tilganda eski `lastDevice` ham o'chirilmaydi: qurilma
+	// qiymati faqat platforma "web" bo'lganda o'qiladi (platformLabel'ga
+	// qarang), shuning uchun eskirgan qiymat hech qayerda ko'rinmaydi —
+	// va foydalanuvchi vebga qaytsa, u qayta aniqlanadi.
 	if _, err := users.UpdateOne(r.Context(), bson.M{"_id": u.ID}, bson.M{"$set": set}); err != nil {
 		return
 	}
 	u.LastPlatform, u.LastSeenAt = p, &now
+	if d != "" {
+		u.LastDevice = d
+	}
 }
 
 // DenyReviewAccount blocks routes the sandboxed Play review account has no

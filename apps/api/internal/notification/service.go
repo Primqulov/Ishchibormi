@@ -38,6 +38,25 @@ func New(db *mongo.Database) *Service {
 func (s *Service) AttachPusher(p Pusher) { s.Pusher = p }
 
 func (s *Service) Push(ctx context.Context, userID primitive.ObjectID, typ, title, body string, rel *models.RelatedEntity) {
+	s.push(ctx, userID, typ, title, body, rel, primitive.NilObjectID)
+}
+
+// PushFromAdmin — admin AYNAN SHU foydalanuvchiga qo'lda yozgan xabar
+// (internal/admin.NotifyUser).
+//
+// [Push] dan farqi bitta: yozuvda yuborgan admin qayd etiladi. Shu belgi
+// tufayli admin panelida "men bu odamga nima yozganman?" degan savolga
+// javob berish mumkin — broadcast bilan bir xil `type: "system"` bo'lsa
+// ham ular endi ajratiladi.
+//
+// Alohida metod, [Push] ga qo'shimcha parametr emas: Push o'nlab joydan
+// chaqiriladi va ularning hech biri adminga aloqador emas — hammasiga
+// bo'sh qiymat uzatish shovqin bo'lardi.
+func (s *Service) PushFromAdmin(ctx context.Context, userID, adminID primitive.ObjectID, title, body string) {
+	s.push(ctx, userID, "system", title, body, nil, adminID)
+}
+
+func (s *Service) push(ctx context.Context, userID primitive.ObjectID, typ, title, body string, rel *models.RelatedEntity, adminID primitive.ObjectID) {
 	// Sandbox choke point for the Google Play review account.
 	//
 	// Every notification in the app funnels through here, so this single check
@@ -55,6 +74,7 @@ func (s *Service) Push(ctx context.Context, userID primitive.ObjectID, typ, titl
 	n := models.Notification{
 		UserID: userID, Type: typ, Title: title, Body: body,
 		RelatedEntity: rel, IsRead: false, CreatedAt: time.Now(),
+		SentByAdminID: adminID,
 	}
 	res, err := s.Col.InsertOne(ctx, n)
 	if err == nil {

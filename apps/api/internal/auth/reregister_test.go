@@ -69,7 +69,7 @@ func TestUpsertUserAfterDeletionCreatesFreshAccount(t *testing.T) {
 		t.Fatalf("simulate delete: %v", err)
 	}
 
-	fresh, err := h.upsertUser(ctx, reusedPhone, 777001, "")
+	fresh, err := h.upsertUser(ctx, reusedPhone, 777001, "", "")
 	if err != nil {
 		t.Fatalf("upsertUser: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestUpsertUserAfterAdminDeleteCreatesFreshAccount(t *testing.T) {
 		t.Fatalf("simulate admin delete: %v", err)
 	}
 
-	fresh, err := h.upsertUser(ctx, phone, 777003, "")
+	fresh, err := h.upsertUser(ctx, phone, 777003, "", "")
 	if err != nil {
 		t.Fatalf("upsertUser: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestUpsertUserRefusesBlockedAccount(t *testing.T) {
 		t.Fatalf("seed blocked user: %v", err)
 	}
 
-	if _, err := h.upsertUser(ctx, phone, 777004, ""); !errors.Is(err, errAccountBlocked) {
+	if _, err := h.upsertUser(ctx, phone, 777004, "", ""); !errors.Is(err, errAccountBlocked) {
 		t.Fatalf("expected errAccountBlocked, got %v", err)
 	}
 }
@@ -169,11 +169,11 @@ func TestUpsertUserIsStableAcrossLogins(t *testing.T) {
 	h := NewHandler(config.Config{}, db)
 	ctx := context.Background()
 
-	first, err := h.upsertUser(ctx, reusedPhone, 777002, "")
+	first, err := h.upsertUser(ctx, reusedPhone, 777002, "", "")
 	if err != nil {
 		t.Fatalf("first login: %v", err)
 	}
-	second, err := h.upsertUser(ctx, reusedPhone, 777002, "")
+	second, err := h.upsertUser(ctx, reusedPhone, 777002, "", "")
 	if err != nil {
 		t.Fatalf("second login: %v", err)
 	}

@@ -8,6 +8,7 @@ import { api, Application, Category, Elon, User } from "@/lib/api";
 import { Shell } from "@/components/Shell";
 import { JobCard } from "@/components/JobCard";
 import { CategoryIcon } from "@/components/CategoryIcon";
+import { TestModeBanner } from "@/components/TestModeBanner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CardSkeleton } from "@/components/ui/Skeleton";
 import { T, useT } from "@/components/T";
@@ -70,6 +71,9 @@ export default function Dashboard() {
   return (
     <Shell wide>
       <div className="py-6 flex flex-col gap-6">
+        {/* ── Test rejimi eslatmasi — faqat shu sahifada ── */}
+        <TestModeBanner />
+
         {/* ── Hero ─────────────────────────────────────── */}
         <section className="gradient-hero rounded-[20px] p-6 sm:p-8 text-white grid lg:grid-cols-[1fr_300px] gap-6 items-center">
           <div className="min-w-0">

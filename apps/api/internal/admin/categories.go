@@ -20,21 +20,79 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// ListCategories — barcha kategoriyalar (o'chirilganlari ham). Ommaviy
-// ro'yxatdan farqi: bu yerda `usageCount` tarixiy jami bo'lib qoladi, uning
-// yonida `activeCount` — hozir feedda ko'rinib turgan e'lonlar soni. Admin
-// ikkalasini ham ko'rishi kerak: jami — kategoriya umuman qanchalik
+// Turkum maydonlarining chegaralari.
+//
+// # NEGA SERVERDA
+//
+// `httpx.Decode` tanani 1 MB gacha o'qiydi — ya'ni cheklovsiz `name` yoki
+// `slug` bazaga yuz minglab belgi bo'lib tushardi va Figma 3.7 jadvalining
+// 277 px'lik «Nomi» ustunini ham, mobil ilovadagi turkum tanlash ro'yxatini
+// ham buzardi. Turkum — butun platformaga ko'rinadigan yozuv, shuning uchun
+// chegara serverda: klientdagi `maxLength` faqat qulaylik uchun.
+const (
+	catNameMax = 60  // Figma 3.7: «Nomi» ustuni 277 px, 14 Semi Bold
+	catSlugMax = 60  // URL bo'lagi — nomdan uzun bo'lishining ma'nosi yo'q
+	catIconMax = 512 // odatdagi iconify havolasi ~90 belgi
+)
+
+// adminCategoryRow — Figma 3.7 jadvali chizadigan maydonlar, boshqasi yo'q.
+//
+// # NIMA ATAYLAB YO'Q — createdBy
+//
+// `models.Category` da turkumni yaratgan adminning ichki ID'si bor.
+// Turkumlar ro'yxatini HAR QANDAY tizimga kirgan admin o'qiydi (support
+// ham), yozishni esa faqat superadmin qiladi. Xodim ID'si jadvalda
+// chizilmagan — demak uni javobga qo'shishning sababi ham yo'q: o'qilmagan
+// maydon oqib ketolmaydi (xuddi adminApplicationRow dagi kabi).
+type adminCategoryRow struct {
+	ID              primitive.ObjectID `bson:"_id" json:"id"`
+	Name            string             `bson:"name" json:"name"`
+	Slug            string             `bson:"slug" json:"slug"`
+	Icon            string             `bson:"icon" json:"icon"`
+	IsSystemDefault bool               `bson:"isSystemDefault" json:"isSystemDefault"`
+	IsActive        bool               `bson:"isActive" json:"isActive"`
+	UsageCount      int                `bson:"usageCount" json:"usageCount"`
+	// ActiveCount bazada saqlanmaydi — har so'rovda `elons` ustidan
+	// hisoblanadi (models.Category.ActiveCount izohiga qarang).
+	ActiveCount int       `bson:"-" json:"activeCount"`
+	CreatedAt   time.Time `bson:"createdAt" json:"createdAt"`
+}
+
+// catRowProjection adminCategoryRow bilan maydonma-maydon bir xil.
+var catRowProjection = bson.M{
+	"name":            1,
+	"slug":            1,
+	"icon":            1,
+	"isSystemDefault": 1,
+	"isActive":        1,
+	"usageCount":      1,
+	"createdAt":       1,
+}
+
+// ListCategories — barcha turkumlar (nofaollari ham). Ommaviy ro'yxatdan
+// farqi: bu yerda `usageCount` tarixiy jami bo'lib qoladi, uning yonida
+// `activeCount` — hozir feedda ko'rinib turgan e'lonlar soni. Admin
+// ikkalasini ham ko'rishi kerak: jami — turkum umuman qanchalik
 // ishlatilganini, faol — bugun undan foyda bor-yo'qligini ko'rsatadi.
+//
+// # NIMA ATAYLAB YO'Q — SAHIFALASH
+//
+// Turkumlar soni o'n-yigirmadan oshmaydi (ularni faqat superadmin qo'lda
+// qo'shadi) va Figma 3.7 pastida shu ataylab yozilgan: «Bu ekranda
+// sahifalash yo'q — barcha turkumlar bitta ro'yxatda ko'rsatiladi».
 func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
-	cur, err := h.Cats.Find(r.Context(), bson.M{}, options.Find().SetSort(bson.D{{Key: "name", Value: 1}}))
+	cur, err := h.Cats.Find(r.Context(), bson.M{},
+		options.Find().
+			SetProjection(catRowProjection).
+			SetSort(bson.D{{Key: "name", Value: 1}}))
 	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
 	defer cur.Close(r.Context())
-	out := []models.Category{}
+	out := []adminCategoryRow{}
 	for cur.Next(r.Context()) {
-		var c models.Category
+		var c adminCategoryRow
 		if err := cur.Decode(&c); err == nil {
 			out = append(out, c)
 		}
@@ -54,6 +112,15 @@ type setActiveReq struct {
 	IsActive bool `json:"isActive"`
 }
 
+// SetCategoryActive — Figma 3.7a · «Superadmin nishonni bosib turkumni
+// darhol yoqadi yoki o'chiradi (oyna ochilmaydi)».
+//
+// # NEGA MatchedCount TEKSHIRILADI
+//
+// `UpdateOne` mos hujjat topilmasa ham xatosiz qaytadi. Tekshiruvsiz
+// variantda o'chirib yuborilgan turkumga yuborilgan so'rov 200 OK oladi va
+// audit jurnaliga hech qachon sodir bo'lmagan o'zgarish yozilib qoladi —
+// jurnal esa keyinchalik dalil sifatida o'qiladi.
 func (h *Handler) SetCategoryActive(w http.ResponseWriter, r *http.Request) {
 	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
 	if err != nil {
@@ -65,13 +132,26 @@ func (h *Handler) SetCategoryActive(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	_, err = h.Cats.UpdateOne(r.Context(), bson.M{"_id": id}, bson.M{"$set": bson.M{"isActive": req.IsActive}})
+	res, err := h.Cats.UpdateOne(r.Context(), bson.M{"_id": id}, bson.M{"$set": bson.M{"isActive": req.IsActive}})
 	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
-	h.audit(r, "category_active", id.Hex(), "")
+	if res.MatchedCount == 0 {
+		httpx.Err(w, httpx.NewError(404, "not_found", "category not found"))
+		return
+	}
+	h.audit(r, "category_active", id.Hex(), activeLabel(req.IsActive))
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
+}
+
+// activeLabel — audit jurnalidagi izoh. Kod («category_active») yoqilganmi
+// yoki o'chirilganmi ayta olmaydi, shuning uchun natija izohga yoziladi.
+func activeLabel(active bool) string {
+	if active {
+		return "faol"
+	}
+	return "nofaol"
 }
 
 type categoryReq struct {
@@ -89,10 +169,45 @@ func categoryIconURL(raw *string) (string, error) {
 	if icon == "" {
 		return "", httpx.NewError(400, "icon_required", "kategoriya ikonkasi majburiy")
 	}
+	if len(icon) > catIconMax {
+		return "", httpx.NewError(400, "icon_too_long", "ikonka havolasi juda uzun")
+	}
 	if !httpx.IsSafeHTTPURL(icon) {
 		return "", httpx.NewError(400, "bad_icon_url", "ikonka faqat http(s) URL bo'lishi kerak")
 	}
 	return icon, nil
+}
+
+// categoryName — «Nomi» maydonini tozalaydi va uzunligini cheklaydi.
+// Uzunlik RUNE bo'yicha o'lchanadi: «Yuk tashish» dagi lotin harflari 1
+// bayt, kirillcha nom esa harfiga 2 bayt — bayt bo'yicha cheklash bir xil
+// uzunlikdagi ikki nomni turlicha rad etardi.
+func categoryName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", httpx.NewError(400, "bad_request", "name required")
+	}
+	if len([]rune(name)) > catNameMax {
+		return "", httpx.NewError(400, "name_too_long", "turkum nomi 60 belgidan oshmasligi kerak")
+	}
+	return name, nil
+}
+
+// categorySlug — slug'ni normallashtiradi; so'rovda bo'sh bo'lsa nomdan
+// yasaydi. `slugify` faqat [a-z0-9-] qoldiradi, shuning uchun uzunlik bayt
+// bo'yicha o'lchanadi.
+func categorySlug(rawSlug, name string) (string, error) {
+	slug := slugify(rawSlug)
+	if slug == "" {
+		slug = slugify(name)
+	}
+	if slug == "" {
+		return "", httpx.NewError(400, "bad_slug", "could not derive slug")
+	}
+	if len(slug) > catSlugMax {
+		return "", httpx.NewError(400, "slug_too_long", "slug 60 belgidan oshmasligi kerak")
+	}
+	return slug, nil
 }
 
 // CreateCategory adds a new admin-defined category. Slug is derived from the
@@ -103,17 +218,14 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		httpx.Err(w, httpx.NewError(400, "bad_request", "name required"))
+	name, err := categoryName(req.Name)
+	if err != nil {
+		httpx.Err(w, err)
 		return
 	}
-	slug := slugify(req.Slug)
-	if slug == "" {
-		slug = slugify(req.Name)
-	}
-	if slug == "" {
-		httpx.Err(w, httpx.NewError(400, "bad_slug", "could not derive slug"))
+	slug, err := categorySlug(req.Slug, name)
+	if err != nil {
+		httpx.Err(w, err)
 		return
 	}
 	icon, err := categoryIconURL(req.Icon)
@@ -127,7 +239,7 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 	adminID, _ := primitive.ObjectIDFromHex(httpx.AdminID(r))
 	cat := models.Category{
-		Name: req.Name, Slug: slug, Icon: icon,
+		Name: name, Slug: slug, Icon: icon,
 		CreatedBy: adminID, IsSystemDefault: false, IsActive: active,
 		UsageCount: 0, CreatedAt: time.Now(),
 	}
@@ -141,11 +253,25 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cat.ID = res.InsertedID.(primitive.ObjectID)
-	h.audit(r, "category_create", cat.ID.Hex(), req.Name)
-	httpx.JSON(w, 201, cat)
+	h.audit(r, "category_create", cat.ID.Hex(), name)
+	// Javob ListCategories bilan bir xil shaklda — jadval yangi qatorni
+	// qayta so'rovsiz chizishi uchun. `createdBy` bu yerda ham yo'q.
+	httpx.JSON(w, 201, adminCategoryRow{
+		ID: cat.ID, Name: cat.Name, Slug: cat.Slug, Icon: cat.Icon,
+		IsSystemDefault: false, IsActive: cat.IsActive,
+		UsageCount: 0, ActiveCount: 0, CreatedAt: cat.CreatedAt,
+	})
 }
 
 // UpdateCategory edits name/slug/icon/active. Only provided fields change.
+//
+// # NEGA TIZIM TURKUMINING SLUG'I QULFLANGAN
+//
+// `category.EnsureDefaults` tizim turkumlarini SLUG bo'yicha topadi. Agar
+// superadmin «tozalash» ni «tozalash-2» ga aylantirsa, keyingi deploy eski
+// slug'ni topolmay YANGI turkum yaratardi — bazada bir xil ikkita
+// «Tozalash» paydo bo'lardi, biri esa bo'sh. Nom, ikonka va holat esa
+// tahrirlanadi: faqat slug o'zgarmaydi.
 func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
 	if err != nil {
@@ -157,14 +283,40 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
+	// Hujjat OLDIN o'qiladi: yo'q turkumga 404 qaytarish, tizim turkumini
+	// aniqlash va eski ikonkani o'chirish — hammasi shu bitta so'rovdan.
+	var current adminCategoryRow
+	if err := h.Cats.FindOne(r.Context(), bson.M{"_id": id},
+		options.FindOne().SetProjection(catRowProjection)).Decode(&current); err != nil {
+		httpx.Err(w, httpx.NewError(404, "not_found", "category not found"))
+		return
+	}
 	set := bson.M{}
-	if s := strings.TrimSpace(req.Name); s != "" {
-		set["name"] = s
+	nom := current.Name
+	if strings.TrimSpace(req.Name) != "" {
+		name, nameErr := categoryName(req.Name)
+		if nameErr != nil {
+			httpx.Err(w, nameErr)
+			return
+		}
+		set["name"] = name
+		nom = name
 	}
-	if s := slugify(req.Slug); s != "" {
-		set["slug"] = s
+	if slugify(req.Slug) != "" {
+		slug, slugErr := categorySlug(req.Slug, "")
+		if slugErr != nil {
+			httpx.Err(w, slugErr)
+			return
+		}
+		// O'zgarmagan slug xato emas — panel formani to'liq yuboradi.
+		if slug != current.Slug {
+			if current.IsSystemDefault {
+				httpx.Err(w, httpx.NewError(400, "protected", "tizim turkumining slug'ini o'zgartirib bo'lmaydi"))
+				return
+			}
+			set["slug"] = slug
+		}
 	}
-	var previous models.Category
 	if req.Icon != nil {
 		icon, iconErr := categoryIconURL(req.Icon)
 		if iconErr != nil {
@@ -172,7 +324,6 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set["icon"] = icon
-		_ = h.Cats.FindOne(r.Context(), bson.M{"_id": id}).Decode(&previous)
 	}
 	if req.IsActive != nil {
 		set["isActive"] = *req.IsActive
@@ -189,10 +340,10 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	if req.Icon != nil && previous.Icon != "" && previous.Icon != set["icon"] {
-		go deleteStoredCategoryIcon(h.Storage, previous.Icon)
+	if req.Icon != nil && current.Icon != "" && current.Icon != set["icon"] {
+		go deleteStoredCategoryIcon(h.Storage, current.Icon)
 	}
-	h.audit(r, "category_update", id.Hex(), "")
+	h.audit(r, "category_update", id.Hex(), nom)
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }
 

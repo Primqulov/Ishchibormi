@@ -108,6 +108,47 @@ html, body {
   }
 }
 
+/* ── Admin dashboard — kirish animatsiyasi ───────────────
+   Figma: "Animatsiya · vaqt chizig'i (jami 3.2 soniya)". Ekran ochilganda
+   bir marta o'ynaydi. Kechikish (delay) har bir elementga JS'dan inline
+   beriladi — u ketma-ketlik indeksiga bog'liq; davomiylik va harakat turi
+   esa shu yerda, shunda `prefers-reduced-motion` bitta joydan boshqariladi.
+
+   Har bir keyframe faqat `from` holatini beradi, `to` — elementning o'z
+   uslubi. Shu sababli harakat o'chirilganda (yoki tugaganda) element darhol
+   yakuniy, ya'ni KO'RINADIGAN holatda qoladi: animatsiyani o'chirish hech
+   qachon ma'lumotni yashirib qo'ymaydi. */
+@keyframes ib-in-left { from { opacity: 0; transform: translateX(-14px); } }
+@keyframes ib-in-up   { from { opacity: 0; transform: translateY(14px); } }
+@keyframes ib-in-zoom { from { opacity: 0; transform: scale(0.92); } }
+@keyframes ib-in-fade { from { opacity: 0; } }
+@keyframes ib-in-draw { from { stroke-dashoffset: var(--ib-len, 2000); } }
+@keyframes ib-in-grow { from { transform: scaleX(0); } }
+
+.ib-anim {
+  animation-duration: 400ms;
+  animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* backwards: kechikish davomida element boshlang'ich holatda turadi,
+     ya'ni o'z navbati kelgunicha ko'rinib qolmaydi. */
+  animation-fill-mode: backwards;
+}
+.ib-anim-nav   { animation-name: ib-in-left; animation-duration: 260ms; }
+.ib-anim-kpi   { animation-name: ib-in-up;   animation-duration: 500ms; }
+.ib-anim-plat  { animation-name: ib-in-zoom; animation-duration: 350ms; }
+.ib-anim-panel { animation-name: ib-in-up;   animation-duration: 480ms; }
+.ib-anim-fade  { animation-name: ib-in-fade; animation-duration: 320ms; }
+.ib-anim-bar   { animation-name: ib-in-grow; animation-duration: 400ms; transform-origin: left center; }
+.ib-anim-area  { animation-name: ib-in-fade; animation-duration: 300ms; }
+.ib-anim-line  {
+  animation-name: ib-in-draw;
+  animation-duration: 900ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ib-anim { animation: none !important; }
+}
+
 * { border-color: var(--border); }
 :focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); border-radius: 0.625rem; }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/ishchibormi/backend/internal/auth"
 	"github.com/ishchibormi/backend/internal/category"
 	"github.com/ishchibormi/backend/internal/elon"
+	"github.com/ishchibormi/backend/internal/errlog"
 	"github.com/ishchibormi/backend/internal/feedback"
 	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/notification"
@@ -35,6 +36,7 @@ import (
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/logger"
 	"github.com/ishchibormi/backend/pkg/storage"
+	"github.com/ishchibormi/backend/pkg/tgsend"
 )
 
 func main() {
@@ -50,8 +52,27 @@ func main() {
 		log.Error("mongo connect failed", "err", err)
 		os.Exit(1)
 	}
+	// Dastur xatoliklari jurnali ("3.12 · Xatoliklar"). Eng birinchi
+	// xizmatlardan biri bo'lib ko'tariladi — quyidagi boot tekshiruvlari
+	// (indekslar, migratsiya, moderatsiya, sirlar) o'z nosozliklarini shu
+	// yerga yozadi. Aks holda ular faqat boot logida qolib, hech kim
+	// ko'rmaydigan bir qator bo'lardi.
+	errRec := errlog.New(mdb, log, tgsend.New(cfg.TelegramBotToken), cfg.ErrorAlertChatID, cfg.JWTAccessSecret)
+	defer func() {
+		c, done := context.WithTimeout(context.Background(), 3*time.Second)
+		defer done()
+		errRec.Close(c)
+	}()
+	// httpx quyi qatlam bo'lgani uchun errlog'ni import qila olmaydi —
+	// panic'lar ilgak orqali keladi (pkg/httpx/middleware.go).
+	httpx.PanicHook = errRec.Hook
+
 	if err := db.EnsureIndexes(ctx, mdb); err != nil {
 		log.Warn("ensure indexes", "err", err)
+		errRec.Record(errlog.Event{
+			Code: "index_create_failed", Where: "pkg/db.EnsureIndexes",
+			Message: err.Error(), Origin: errlog.OriginServer,
+		})
 	}
 	// Bir martalik, versiyalangan migratsiyalar (schema_migrations' da qayd
 	// etiladi — har biri faqat bir marta ishlaydi, shuning uchun ma'lumot
@@ -60,6 +81,10 @@ func main() {
 	// moslashtiruvi) va bu registrga kirmaydi.
 	if err := db.RunMigrations(ctx, mdb); err != nil {
 		log.Warn("run migrations", "err", err)
+		errRec.Record(errlog.Event{
+			Code: "migration_failed", Where: "pkg/db.RunMigrations",
+			Message: err.Error(), Origin: errlog.OriginServer,
+		})
 	}
 	// Boshlang'ich tizim turkumlarini upsert qilamiz. Admin yaratgan turkumlar
 	// deploy/restart paytida o'zgartirilmaydi.
@@ -79,6 +104,13 @@ func main() {
 	if cfg.FCMCredentialsFile != "" {
 		if fcm, err := push.NewFCM(cfg.FCMCredentialsFile, mdb, log); err != nil {
 			log.Warn("fcm init failed — mobile push disabled", "err", err)
+			// Credentials fayli BERILGAN, ya'ni push kutilgan — lekin
+			// ishga tushmadi. Bu jimgina o'chib qolish: hech kim
+			// bildirishnoma kelmaganini darrov sezmaydi.
+			errRec.Record(errlog.Event{
+				Code: "fcm_init_failed", Where: "push.NewFCM",
+				Message: err.Error(), Origin: errlog.OriginServer,
+			})
 		} else {
 			notif.AttachPusher(fcm)
 			log.Info("fcm push ready", "project", fcm.ProjectID())
@@ -114,6 +146,11 @@ func main() {
 		if cfg.ModerationFailOpenInProd() {
 			log.Warn("moderation runs FAIL-OPEN in production — unchecked listings will be published whenever the moderation service is unavailable",
 				"fix", "unset MODERATION_FAIL_CLOSED or set it to true")
+			errRec.Record(errlog.Event{
+				Code: "moderation_fail_open", Where: "cmd/api/main.go",
+				Message: "MODERATION_FAIL_CLOSED o'rnatilmagan — xizmat uzilganda hamma e'lon tekshirilmay chop etiladi",
+				Origin:  errlog.OriginServer,
+			})
 		}
 	} else {
 		log.Info("content moderation disabled (GEMINI_API_KEY not set)")
@@ -129,6 +166,10 @@ func main() {
 		})
 		if err != nil {
 			log.Warn("s3 init", "err", err)
+			errRec.Record(errlog.Event{
+				Code: "storage_unavailable", Where: "storage.New",
+				Message: err.Error(), Origin: errlog.OriginServer,
+			})
 		} else {
 			log.Info("s3 ready", "bucket", cfg.AWSS3Bucket, "region", cfg.AWSRegion)
 		}
@@ -139,6 +180,10 @@ func main() {
 		s3svc, err = storage.NewLocal(cfg.UploadDir, cfg.UploadPublicBase)
 		if err != nil {
 			log.Warn("local storage init failed", "err", err)
+			errRec.Record(errlog.Event{
+				Code: "storage_unavailable", Where: "storage.NewLocal",
+				Message: err.Error(), Origin: errlog.OriginServer,
+			})
 		} else {
 			log.Info("local storage ready", "dir", cfg.UploadDir, "base", cfg.UploadPublicBase)
 		}
@@ -191,6 +236,27 @@ func main() {
 	// qaytaradi va yashirish odatdagidek ishlayveradi.
 	adminH.Purger = purger
 	log.Info("account retention active", "days", purger.RetentionDays())
+	// "Telegram'ga yuborish" tugmasi (Figma 3.12.1 sarlavhasi va 3.12.3 · L).
+	// Konstruktor imzosi o'zgarmadi: bog'lanmagan holat NORMAL — tugma 503
+	// qaytaradi, panelning qolgan qismi ishlayveradi.
+	adminH.TG = tgsend.New(cfg.TelegramBotToken)
+	adminH.AlertChatID = cfg.ErrorAlertChatID
+
+	// "Sababini aniqla" tugmasi (Figma 3.12.1) — xatolik kontekstini AI
+	// tahlil qiladi. Moderatsiyadan ALOHIDA kalit va model: bu ikki ish
+	// bir-biriga bog'liq emas va biri o'chganda ikkinchisi ishlab turishi
+	// kerak. Kalit berilmasa faqat shu tugma 503 qaytaradi.
+	aiModel := cfg.ErrorAIModel
+	if aiModel == "" {
+		aiModel = gemini.DefaultAnalyzeModel
+	}
+	adminH.AI = gemini.New(cfg.ErrorAIAPIKey, cfg.GeminiBaseURL, aiModel, cfg.ErrorAITimeout)
+	if adminH.AI.Configured() {
+		log.Info("error AI analysis ready", "model", adminH.AI.Model(),
+			"timeout", cfg.ErrorAITimeout.String())
+	} else {
+		log.Info("error AI analysis disabled (ERROR_AI_API_KEY not set)")
+	}
 
 	// Rate limiting keys off the real client IP. Only trust forwarding headers
 	// when explicitly configured to sit behind a trusted proxy; otherwise XFF is
@@ -207,7 +273,16 @@ func main() {
 	// overwrites r.RemoteAddr with the result, poisoning the fallback path too.
 	// httpx.clientIP resolves the client itself, counting from the trusted end.
 	r.Use(httpx.AccessLog)
+	// So'rov egasining "qutisi" — auth middleware'i uni ichkarida to'ldiradi,
+	// quyidagi ikkalasi esa tashqaridan o'qiydi ("Ta'sirlangan foydalanuvchi"
+	// ko'rsatkichi shundan chiqadi). Kontekst faqat pastga oqqani uchun
+	// boshqa yo'l yo'q — httpx.ActorSink izohiga qarang.
+	r.Use(httpx.ActorSink)
 	r.Use(httpx.Recover)
+	// Xatolik jurnali Recover'dan ICHKARIDA: panic bu yerdan o'tib ketadi va
+	// faqat PanicHook orqali bir marta yoziladi. Aks holda bitta panic ikki
+	// qator bo'lib tushardi — biri `panic`, ikkinchisi 500 javob sifatida.
+	r.Use(errRec.Middleware)
 	r.Use(httpx.SecurityHeaders)
 	// Foydalanuvchi oqimida auth — Authorization sarlavhasidagi Bearer token,
 	// cookie umuman ishlatilmaydi.
@@ -263,6 +338,74 @@ func main() {
 	// and stops the device_tokens collection being used as free storage.
 	deviceLimiter := httpx.NewLimiter(10, 0.05) // 10 burst, then 1 / 20s
 
+	// Mijoz xatoliklarini qabul qilish (internal/errlog · POST
+	// /api/client-errors). Ataylab TOR: bu endpoint admin ekraniga matn
+	// yozadigan yagona tashqi yo'l. Bitta hisob soatiga ~72 ta xabar
+	// yubora oladi — haqiqiy ilova uchun ortig'i bilan yetadi, jurnalni
+	// ko'mib tashlash uchun esa kam.
+	errReportLimiter := httpx.NewLimiter(10, 0.02) // 10 burst, keyin 1 / 50s
+	// CSV eksport bitta so'rovda 50 000 qatorgacha shaxsiy ma'lumot (telefon
+	// raqamlari) chiqaradi — perimetrdan chiqib ketadigan, muddati yo'q yassi
+	// fayl. Kaliti ADMIN ID, IP emas: bitta ofisdagi ikkinchi admin
+	// birinchisining budjetini yeb qo'ymasligi, o'g'irlangan token esa IP
+	// almashtirib cheklovni aylanib o'tolmasligi kerak. Qo'lda tahlil uchun
+	// 6 ta ketma-ket fayl yetadi; skript bilan "hammasini so'rib olish"
+	// esa shu yerda to'xtaydi.
+	exportLimiter := httpx.NewLimiter(6, 0.05) // 6 burst, keyin 1 / 20s (admin bo'yicha)
+	// Turkum yozuvlari (Figma 3.7) butun platformaga darhol ko'rinadi: turkum
+	// mobil ilovadagi feed filtri va e'lon berish formasidagi ro'yxat.
+	// Skript bilan «qo'shish → o'chirish» aylanmasi bazani ham, audit
+	// jurnalini ham chippakka chiqarardi, nishonni tez-tez bosish esa
+	// foydalanuvchilar uchun turkumni miltillatardi. Kaliti ADMIN ID: cheklov
+	// bitta hisob nima qila olishini chegaralaydi, IP esa almashtiriladi.
+	// Qo'lda ishlashga 30 ta ketma-ket amal yetib ortadi.
+	catWriteLimiter := httpx.NewLimiter(30, 0.5) // 30 burst, keyin 1 / 2s
+	// Ikonka yuklash — perimetrga 2 MB'lik fayl yozadigan yagona turkum
+	// amali, shuning uchun budjeti alohida va torroq.
+	catIconLimiter := httpx.NewLimiter(10, 0.05) // 10 burst, keyin 1 / 20s
+	// Ommaviy tarqatma (Figma 3.8) — paneldagi eng qaytarib bo'lmaydigan
+	// amal: bitta so'rov o'n minglab bildirishnomaga aylanadi va fon
+	// jarayoni butun `users` kolleksiyasini aylanib chiqadi. Yuborilgan
+	// xabarni ortga qaytarish yo'q. Skript bilan (yoki o'g'irlangan
+	// superadmin tokeni bilan) ketma-ket bosilsa — foydalanuvchilarning
+	// ommaviy spamlanishi va bir vaqtda ishlayotgan o'nlab to'liq
+	// skanerlash. Kaliti ADMIN ID: cheklov bitta hisob nima qila olishini
+	// chegaralaydi, IP esa almashtiriladi. Qo'lda ishlashga ketma-ket 3 ta
+	// tarqatma yetadi, keyin har ~2 daqiqada bittasi ochiladi.
+	//
+	// # NIMA ATAYLAB CHEKLANMAGAN
+	//
+	// «Bekor qilish» (DELETE /broadcasts/{id}) bu budjetga QO'SHILMAGAN:
+	// u to'xtatuvchi amal — rejalashtirilgan xabarni yuborilmasdan oldin
+	// olib qo'yadi. Uni sekinlashtirish xavfni kamaytirmaydi, oshiradi:
+	// vaqt qisilganda admin bekor qilib qolishga ulgurmasdi.
+	broadcastLimiter := httpx.NewLimiter(3, 0.0083) // 3 burst, keyin ~1 / 2 daqiqa
+	// Segment ro'yxati (Figma 3.8b: GET /broadcast/regions) — tarqatma
+	// formasidagi viloyat tanlagichi. Boshqa admin o'qishlaridan farqi:
+	// u sahifalanmaydigan GURUHLASH, ya'ni butun `users` kolleksiyasini
+	// aylanib chiqadi. Yuborishning o'zi 3 ta bilan cheklangani holda
+	// bu so'rovni cheksiz qoldirish — eng qimmat so'rovni eng ochiq
+	// qoldirish bo'lardi. Budjet forma bilan ishlashga mo'l: sahifa
+	// ochilganda bir marta va «Faqat faol» katakchasi almashganda
+	// so'raladi. Kaliti ADMIN ID.
+	broadcastSegmentLimiter := httpx.NewLimiter(20, 0.2) // 20 burst, keyin 1 / 5s
+	// Kadr hisoblari (Figma 3.9: POST/PATCH/DELETE /admins) — panelning
+	// KALITLARINI tarqatadigan yozuvlar: yangi admin, rol o'zgarishi, parol
+	// tiklash, 2FA ni o'chirish. Har biri bcrypt hisoblaydi yoki sessiyalarni
+	// uzadi, ya'ni arzon emas. O'g'irlangan superadmin tokeni bilan skript
+	// bir soniyada o'nlab yashirin hisob ochib ketishi mumkin edi — cheklov
+	// buni sekinlashtiradi va audit jurnalida ko'rinadigan iz qoldiradi.
+	// Kaliti ADMIN ID: cheklov bitta hisob nima qila olishini chegaralaydi,
+	// IP esa almashtiriladi. Qo'lda ishlashga 20 ta ketma-ket amal yetadi.
+	//
+	// # NIMA ATAYLAB CHEKLANMAGAN
+	//
+	// `GET /admins` bu budjetga QO'SHILMAGAN: jadval har amaldan keyin
+	// o'zini qayta so'raydi, ya'ni o'qish yozuvlar bilan bir budjetga
+	// qo'yilsa, cheklov jadvalni ham to'xtatib, adminni eskirgan ro'yxat
+	// oldida qoldirardi.
+	staffLimiter := httpx.NewLimiter(20, 0.2) // 20 burst, keyin 1 / 5s
+
 	// Evict idle per-IP buckets so the limiter maps don't grow unbounded (each
 	// unique client IP would otherwise leave a permanent entry). The 15-min idle
 	// threshold is far above every bucket's full-refill time (<=40s), so eviction
@@ -282,6 +425,16 @@ func main() {
 	elonLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
 	inboxLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
 	deviceLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
+	errReportLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
+	exportLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
+	catWriteLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
+	catIconLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
+	// Tarqatma budjeti bo'shdan to'lguncha ~6 daqiqa ketadi, shuning uchun
+	// 30 daqiqalik bo'sh turish chegarasi xavfsiz: undan oldin tozalash
+	// egasiga yangi to'liq budjet berib, cheklovni bekor qilardi.
+	broadcastLimiter.StartCleanup(ctx, 15*time.Minute, 30*time.Minute)
+	broadcastSegmentLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
+	staffLimiter.StartCleanup(ctx, 5*time.Minute, 15*time.Minute)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { httpx.JSON(w, 200, map[string]string{"status": "ok"}) })
 
@@ -363,6 +516,15 @@ func main() {
 			r.With(deviceLimiter.MiddlewareKey("device-token", httpx.UserID)).
 				Post("/users/me/device-token", pushH.Register)
 			r.Delete("/users/me/device-token", pushH.Unregister)
+
+			// Mijoz ilovasidagi DASTUR xatoliklari ("3.12 · Xatoliklar",
+			// C6 guruhi). Autentifikatsiya ostida ATAYLAB: bu endpoint
+			// admin ekraniga matn olib chiqadigan yagona tashqi yo'l,
+			// ochiq bo'lsa uni to'ldirib qo'yish arzon bo'lardi. Daraja
+			// va modul mijozdan SO'RALMAYDI — ular kod bo'yicha
+			// katalogdan olinadi (internal/errlog/ingest.go).
+			r.With(errReportLimiter.MiddlewareKey("client-errors", httpx.UserID)).
+				Post("/client-errors", errRec.ClientReport)
 
 			// Self-service account deletion, confirmed by a code pushed to the
 			// user's Telegram. Rate-limited on both halves: /request pushes a
@@ -455,12 +617,61 @@ func main() {
 			r.Post("/2fa/setup", adminH.Setup2FA)
 			r.Post("/2fa/enable", adminH.Enable2FA)
 			r.Post("/2fa/disable", adminH.Disable2FA)
+			// Admin ilovasining (Flutter) o'z xatoliklari — C5 guruhi va
+			// biometrik qulf. Har qanday admin roli yubora oladi: bu
+			// o'sha adminning qurilmasida yuz bergan nosozlik.
+			r.With(errReportLimiter.MiddlewareKey("admin-client-errors", httpx.AdminID)).
+				Post("/client-errors", errRec.AdminReport)
 
 			// Moderation — superadmin + moderator.
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.RequireRole("moderator"))
 				// Audit log — superadmin + moderator only (support ko'rmaydi).
 				r.Get("/audit", adminH.Audit)
+				// Dastur xatoliklari (Figma 3.12) — O'QISH. RBAC aynan
+				// 3.12.2 · G dagidek: superadmin hammasini, moderator
+				// faqat ko'radi, support uchun sahifa umuman yo'q.
+				// Stek va so'rov qiymatlari bu yerda saqlanmaydi
+				// (internal/errlog/scrub.go), lekin ro'yxatning o'zi
+				// ham tizim ichki tuzilishini ochadi — shuning uchun
+				// support darajasidan yuqorida.
+				r.Get("/errors", adminH.Errors)
+				r.Get("/errors/stats", adminH.ErrorStats)
+				// Batafsil ko'rinish (Figma 3.12.1 va 3.12.3). Statik
+				// `/errors/stats` yuqorida turadi, lekin tartib muhim
+				// emas: chi statik yo'lni `{id}` shablonidan oldin
+				// tekshiradi, shuning uchun ular to'qnashmaydi.
+				// Mas'ul tanlash ro'yxati — TOR proyeksiya, faqat faol
+				// hisoblar (internal/admin/errors.go · Assignees).
+				// `GET /admins` bu maqsad uchun ishlatilmaydi: u
+				// superadmin darajasida va kadr hisobining hammasini
+				// beradi.
+				r.Get("/errors/assignees", adminH.Assignees)
+				r.Get("/errors/{id}", adminH.GetError)
+				r.Get("/errors/{id}/events", adminH.ErrorEvents)
+				// AI uchun kontekst (3.12.3 · L). Matn SERVERDA
+				// yig'iladi va niqob o'chirib bo'lmaydi; o'z chastota
+				// chegarasi bor — internal/admin/errexport.go.
+				r.Get("/errors/{id}/context", adminH.GetErrorContext)
+				// Xuddi shu kontekst bo'yicha AI xulosasi (3.12.1
+				// "Sababini aniqla"). GET emas, POST: chaqiruv tashqi
+				// xizmatga chiqadi, pul turadi va natijani guruhga
+				// yozadi — ya'ni bu o'zgartiruvchi amal.
+				r.Post("/errors/{id}/ai", adminH.PostErrorAI)
+				// Hayot siklini yuritish (3.12.3 · J) — kuzatish va
+				// tuzatish oqimi moderator uchun ham ochiq.
+				// "E'tiborsiz qoldirish" esa handler ichida YANA BIR
+				// MARTA superadmin deb tekshiriladi va majburiy sabab
+				// talab qiladi. Nima uchun handler ichida: bu bitta
+				// endpointning bitta qiymatiga tegishli chegara, uni
+				// router darajasida ajratish oqimni ikkiga bo'lardi.
+				r.Patch("/errors/{id}/status", adminH.PatchErrorStatus)
+				r.Patch("/errors/{id}/assignee", adminH.PatchErrorAssignee)
+				r.Post("/errors/{id}/notes", adminH.PostErrorNote)
+				// Kanalga QO'LDA yuborish — guruh bo'yicha 60 s sovish
+				// oynasi bilan (avtomatik ogohlantirishning o'z
+				// throttle'i alohida).
+				r.Post("/errors/{id}/telegram", adminH.PostErrorTelegram)
 				r.Get("/users", adminH.ListUsers)
 				r.Get("/users/{id}", adminH.GetUser)
 				r.Post("/users/{id}/block", adminH.BlockUser)
@@ -468,14 +679,29 @@ func main() {
 				r.Post("/users/{id}/verify", adminH.VerifyUser)
 				r.Post("/users/{id}/notify", adminH.NotifyUser)
 				r.Get("/elons", adminH.ListElons)
+				// Bitta e'lonning batafsil ko'rinishi (Figma 3.5.1) —
+				// `GET /users/{id}` bilan bir xil daraja: superadmin +
+				// moderator. Mexanizmi internal/admin/elon_detail.go.
+				r.Get("/elons/{id}", adminH.GetElon)
 				r.Delete("/elons/{id}", adminH.DeleteElon)
 				r.Patch("/elons/{id}/status", adminH.SetElonStatus)
 				r.Get("/reports", adminH.ListReports)
 				r.Patch("/reports/{id}/resolve", repH.Resolve)
+				// Arizalar ro'yxati (Figma 3.6) va bitta arizaning batafsil
+				// ko'rinishi (Figma 3.6.1) — FAQAT o'qish uchun.
+				// Arizani qabul qilish/rad etish admin ishi emas: holatni
+				// ishchi va ish beruvchi o'zgartiradi, shuning uchun bu
+				// yerda birorta PATCH/DELETE yo'q (Figma 3.6a · qoida).
 				r.Get("/applications", adminH.ListApplications)
-				r.Get("/export/users.csv", adminH.ExportUsers)
-				r.Get("/export/elons.csv", adminH.ExportElons)
-				r.Get("/export/applications.csv", adminH.ExportApplications)
+				r.Get("/applications/{id}", adminH.GetApplication)
+				// CSV eksportlar alohida guruhda: ular yagona yo'l bo'lib,
+				// bitta so'rovda minglab telefon raqamini chiqaradi.
+				r.Group(func(r chi.Router) {
+					r.Use(exportLimiter.MiddlewareKey("admin-export", httpx.AdminID))
+					r.Get("/export/users.csv", adminH.ExportUsers)
+					r.Get("/export/elons.csv", adminH.ExportElons)
+					r.Get("/export/applications.csv", adminH.ExportApplications)
+				})
 			})
 
 			// Support desk — superadmin + moderator + support.
@@ -489,18 +715,42 @@ func main() {
 			// RequireRole() with no args admits only superadmin (always-allowed).
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.RequireRole())
-				r.Post("/categories/icon", adminH.UploadCategoryIcon)
-				r.Patch("/categories/{id}/active", adminH.SetCategoryActive)
 				// Avtomatik moderatsiya blokini ochish — faqat superadmin.
 				r.Delete("/users/{id}/moderation-ban", adminH.LiftModerationBan)
-				r.Post("/categories", adminH.CreateCategory)
-				r.Put("/categories/{id}", adminH.UpdateCategory)
-				r.Delete("/categories/{id}", adminH.DeleteCategory)
+				// Turkum yozuvlari — o'z budjeti bilan (yuqoridagi
+				// catWriteLimiter izohiga qarang). O'qish (`GET
+				// /categories`) bu guruhdan tashqarida: uni jadval har
+				// amaldan keyin qayta so'raydi.
+				r.Group(func(r chi.Router) {
+					r.Use(catWriteLimiter.MiddlewareKey("admin-cat", httpx.AdminID))
+					r.Patch("/categories/{id}/active", adminH.SetCategoryActive)
+					r.Post("/categories", adminH.CreateCategory)
+					r.Put("/categories/{id}", adminH.UpdateCategory)
+					r.Delete("/categories/{id}", adminH.DeleteCategory)
+				})
+				r.With(catIconLimiter.MiddlewareKey("admin-cat-icon", httpx.AdminID)).
+					Post("/categories/icon", adminH.UploadCategoryIcon)
+				// Kadr hisoblari (Figma 3.9). O'qish cheklovsiz — jadval
+				// har amaldan keyin o'zini qayta so'raydi; yozuvlar esa
+				// o'z budjetida (yuqoridagi staffLimiter izohiga qarang).
 				r.Get("/admins", adminH.ListAdmins)
-				r.Post("/admins", adminH.CreateAdmin)
-				r.Patch("/admins/{id}", adminH.UpdateAdmin)
-				r.Delete("/admins/{id}", adminH.DeleteAdmin)
-				r.Post("/broadcast", adminH.Broadcast)
+				r.Group(func(r chi.Router) {
+					r.Use(staffLimiter.MiddlewareKey("admin-staff", httpx.AdminID))
+					r.Post("/admins", adminH.CreateAdmin)
+					r.Patch("/admins/{id}", adminH.UpdateAdmin)
+					r.Delete("/admins/{id}", adminH.DeleteAdmin)
+				})
+				// Yuborish — o'z budjeti bilan (yuqoridagi broadcastLimiter
+				// izohiga qarang). Tarix o'qish va bekor qilish ataylab
+				// cheklanmagan: biri o'qish, ikkinchisi to'xtatuvchi amal.
+				r.With(broadcastLimiter.MiddlewareKey("admin-broadcast", httpx.AdminID)).
+					Post("/broadcast", adminH.Broadcast)
+				// Segment ro'yxati — o'z budjeti bilan (yuqoridagi
+				// broadcastSegmentLimiter izohiga qarang). Bu yerda,
+				// superadmin guruhida: viloyatlar bo'yicha sanoq —
+				// foydalanuvchi bazasi haqidagi ma'lumot.
+				r.With(broadcastSegmentLimiter.MiddlewareKey("admin-broadcast-segment", httpx.AdminID)).
+					Get("/broadcast/regions", adminH.BroadcastRegions)
 				r.Get("/broadcasts", adminH.ListBroadcasts)
 				r.Delete("/broadcasts/{id}", adminH.CancelBroadcast)
 			})
@@ -516,6 +766,24 @@ func main() {
 		log.Info("play review login", "state", status)
 	} else {
 		log.Warn("play review login IS NOT DISABLED", "state", status)
+		errRec.Record(errlog.Event{
+			Code: "review_login_enabled", Where: "cmd/api/main.go",
+			Message: "Play tekshiruv kirishi ochiq: " + status,
+			Origin:  errlog.OriginServer,
+		})
+	}
+
+	// Dev standartlari haqiqiy serverda. Productionda bu holat boot'ni
+	// to'xtatadi (config.mustValidate), shuning uchun bu yerga faqat
+	// APP_ENV=dev bilan ko'tarilgan mashina tushadi — staging yoki demo.
+	// O'zgaruvchi NOMLARI yoziladi, qiymatlari emas.
+	if bad := cfg.InsecureDefaults(); len(bad) > 0 {
+		log.Warn("insecure dev defaults are in use", "vars", strings.Join(bad, ", "), "env", cfg.AppEnv)
+		errRec.Record(errlog.Event{
+			Code: "insecure_default_secret", Where: "config.Load",
+			Message: "APP_ENV=" + cfg.AppEnv + " · o'zgartirilmagan: " + strings.Join(bad, ", "),
+			Origin:  errlog.OriginServer,
+		})
 	}
 
 	srv := &http.Server{

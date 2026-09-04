@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strings"
@@ -138,16 +139,114 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	// qaroriga e'tiroz kelganda ("men hech narsa qilmadim") yagona dalil shu.
 	// Yozuv TELEFON bo'yicha saqlanadi, ya'ni hisob o'chirilib qayta ochilgan
 	// bo'lsa ham tarix joyida qoladi.
-	var strikes any
+	var strikeRec *moderation.StrikeRecord
 	if h.Strikes != nil {
 		if rec, err := h.Strikes.FindByUser(ctx, id); err == nil && rec != nil {
-			strikes = rec
+			strikeRec = rec
 		}
+	}
+	// `any` ataylab: yozuv yo'q bo'lsa javobda `null` turishi kerak, bo'sh
+	// obyekt emas — panel "hech qachon qoida buzmagan" ni shu orqali biladi.
+	var strikes any
+	if strikeRec != nil {
+		strikes = strikeRec
 	}
 	httpx.JSON(w, 200, map[string]any{
 		"user": u, "elons": elons, "applications": apps, "reports": reports,
 		"moderationStrikes": strikes,
+		// Adminlar shu odamga QO'LDA yozgan xabarlar. Broadcast'lar kirmaydi
+		// (ular `sentByAdminId` siz saqlanadi) — savol "men bu odamga nima
+		// yozganman?", "u qanday e'lonlarni olgan?" emas.
+		"adminNotifications": h.adminNotificationsFor(ctx, id),
+		// Hisob holatining vaqt chizig'i — mexanizmi user_status.go da.
+		// Rol faqat superadminga ko'rsatiladi (adminBrief.label izohi).
+		"statusHistory": h.statusHistory(ctx, &u, strikeRec, httpx.AdminRole(r) == "superadmin"),
 	})
+}
+
+// adminNotificationEntry — foydalanuvchi kartasidagi bitta xabar.
+//
+// models.Notification ni to'g'ridan-to'g'ri qaytarmaymiz: unda panelga
+// keraksiz maydonlar bor (userId, type, relatedEntity), va aksincha,
+// kerak bo'lgani yo'q — yuborgan adminning NOMI. Faqat id qaytarilsa,
+// panel uni ko'rsata olmasdi va "kim yozgan?" degan savol javobsiz
+// qolardi.
+type adminNotificationEntry struct {
+	ID        primitive.ObjectID `json:"id"`
+	Title     string             `json:"title"`
+	Body      string             `json:"body"`
+	IsRead    bool               `json:"isRead"`
+	CreatedAt time.Time          `json:"createdAt"`
+	// SentBy — yuborgan adminning username'i. Admin o'chirilgan bo'lsa
+	// bo'sh qoladi: xabar yozuvi qoladi, muallifi esa endi noma'lum.
+	SentBy string `json:"sentBy,omitempty"`
+}
+
+// maxAdminNotifications — kartada ko'rsatiladigan xabarlar chegarasi.
+// Bu tarix sahifasi emas: bitta odamga yuzlab xabar yozilgan bo'lsa,
+// kartani cheksiz uzaytirishning ma'nosi yo'q.
+const maxAdminNotifications = 50
+
+// adminNotificationsFor — shu foydalanuvchiga QO'LDA yuborilgan xabarlar,
+// yangisidan boshlab.
+//
+// Filtr `sentByAdminId` MAVJUDLIGIGA qarab ishlaydi, `type` ga emas:
+// broadcast ham `type: "system"` bilan saqlanadi, ya'ni tur bo'yicha
+// ajratib bo'lmaydi. Bu maydonsiz eski yozuvlar ham tushmaydi — ular
+// haqiqatan qaysi yo'l bilan yuborilgani endi bilib bo'lmaydi.
+func (h *Handler) adminNotificationsFor(ctx context.Context, userID primitive.ObjectID) []adminNotificationEntry {
+	out := []adminNotificationEntry{}
+	if h.Notify == nil || h.Notify.Col == nil {
+		return out
+	}
+	cur, err := h.Notify.Col.Find(ctx,
+		bson.M{"userId": userID, "sentByAdminId": bson.M{"$exists": true}},
+		options.Find().
+			SetSort(bson.D{{Key: "createdAt", Value: -1}}).
+			SetLimit(maxAdminNotifications),
+	)
+	if err != nil {
+		return out
+	}
+	defer cur.Close(ctx)
+
+	rows := []models.Notification{}
+	adminIDs := map[primitive.ObjectID]bool{}
+	for cur.Next(ctx) {
+		var n models.Notification
+		if cur.Decode(&n) != nil {
+			continue
+		}
+		rows = append(rows, n)
+		if !n.SentByAdminID.IsZero() {
+			adminIDs[n.SentByAdminID] = true
+		}
+	}
+
+	names := h.adminNames(ctx, adminIDs)
+	for _, n := range rows {
+		out = append(out, adminNotificationEntry{
+			ID: n.ID, Title: n.Title, Body: n.Body,
+			IsRead: n.IsRead, CreatedAt: n.CreatedAt,
+			SentBy: names[n.SentByAdminID],
+		})
+	}
+	return out
+}
+
+// adminNames — id -> username.
+//
+// `adminBriefs` (user_status.go) ustida qurilgan: ikkovi ham bir xil
+// so'rovni yuborardi, va ikkita nusxa ertaga bir-biridan farq qilib
+// qolardi (masalan proyeksiya bir joyda yangilanib, ikkinchisida yo'q).
+// Rol bu yerda ataylab tashlanadi — xabarlar ro'yxatida faqat "kim
+// yozgan" degan savol bor.
+func (h *Handler) adminNames(ctx context.Context, ids map[primitive.ObjectID]bool) map[primitive.ObjectID]string {
+	out := map[primitive.ObjectID]string{}
+	for id, b := range h.adminBriefs(ctx, ids) {
+		out[id] = b.Username
+	}
+	return out
 }
 
 func (h *Handler) VerifyUser(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +286,11 @@ func (h *Handler) NotifyUser(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(400, "bad_notification", "notification is empty or too long"))
 		return
 	}
-	h.Notify.Push(r.Context(), id, "system", req.Title, req.Body, nil)
+	// Yuborgan adminni yozuvda qoldiramiz — shu belgi orqali bu xabar
+	// keyinchalik foydalanuvchi kartasida ko'rinadi va broadcast'dan
+	// ajratiladi.
+	adminID, _ := primitive.ObjectIDFromHex(httpx.AdminID(r))
+	h.Notify.PushFromAdmin(r.Context(), id, adminID, req.Title, req.Body)
 	h.audit(r, "user_notify", id.Hex(), req.Title)
 	httpx.JSON(w, 200, map[string]bool{"ok": true})
 }

@@ -58,6 +58,13 @@ type Config struct {
 	TelegramBotToken    string
 	TelegramBotUsername string
 
+	// ErrorAlertChatID — "3.12 · Xatoliklar" ning Kritik/Yuqori
+	// ogohlantirishlari yuboriladigan Telegram chat (#dev-alerts).
+	// 0 bo'lsa ogohlantirish JIMGINA o'chiq: jurnal panelda to'liq
+	// ishlayveradi, faqat xabar ketmaydi. Sozlanmagani xizmatni
+	// to'xtatmaydi — bu qulaylik, majburiy bog'liqlik emas.
+	ErrorAlertChatID int64
+
 	// FCMCredentialsFile — Firebase service-account JSON fayl yo'li (mobil
 	// push uchun). Bo'sh bo'lsa push jimgina o'chiq: API to'liq ishlayveradi,
 	// bildirishnomalar faqat in-app (polling) bo'lib qoladi.
@@ -79,6 +86,26 @@ type Config struct {
 	// GeminiTimeout — bitta moderatsiya chaqiruvi uchun yuqori chegara.
 	// Rasm base64 holida yuborilgani uchun matnga qaraganda uzoqroq ketadi.
 	GeminiTimeout time.Duration
+
+	// ── Xatolik tahlili (AI) ─────────────────────────────────────────
+	// "3.12.1 · Xatolik — batafsil" ekranidagi "Sababini aniqla" tugmasi.
+	// internal/admin/errai.go ga qarang.
+
+	// ErrorAIAPIKey — tahlil uchun Gemini kaliti. ATAYLAB alohida
+	// o'zgaruvchi: moderatsiya har bir e'londa ishlaydigan yuqori hajmli
+	// oqim, tahlil esa kamdan-kam va admin qo'li bilan chaqiriladi —
+	// ikkalasi bitta bepul kvotani bo'lishsa, moderatsiya limitga urilib
+	// qolishi mumkin. Bo'sh bo'lsa GEMINI_API_KEY ga tushadi; u ham bo'sh
+	// bo'lsa tahlil jimgina o'chiq (tugma 503, panel ishlayveradi).
+	ErrorAIAPIKey string
+	// ErrorAIModel — bo'sh bo'lsa pkg/gemini.DefaultAnalyzeModel.
+	ErrorAIModel string
+	// ErrorAITimeout — bitta tahlil chaqiruvi uchun chegara. Server
+	// WriteTimeout 60 s (cmd/api/main.go), shuning uchun bu qiymat undan
+	// sezilarli kichik bo'lishi SHART: aks holda mijoz javob o'rniga
+	// uzilgan ulanishni ko'radi.
+	ErrorAITimeout time.Duration
+
 	// ModerationMaxImageBytes — moderatsiyaga qabul qilinadigan rasm hajmi
 	// chegarasi. E'lon rasmi chegarasi (8 MiB) bilan bir xil bo'lgani ma'qul.
 	ModerationMaxImageBytes int64
@@ -259,13 +286,19 @@ func Load() Config {
 		OTPDevReturn:        envBool("OTP_DEV_RETURN", false),
 		TelegramBotToken:    envStr("TELEGRAM_BOT_TOKEN", ""),
 		TelegramBotUsername: envStr("TELEGRAM_BOT_USERNAME", ""),
+		ErrorAlertChatID:    int64(envInt("ERROR_ALERT_CHAT_ID", 0)),
 
 		FCMCredentialsFile: envStr("FCM_CREDENTIALS_FILE", ""),
 
-		GeminiAPIKey:            strings.TrimSpace(envStr("GEMINI_API_KEY", "")),
-		GeminiBaseURL:           strings.TrimSpace(envStr("GEMINI_BASE_URL", "")),
-		GeminiModel:             strings.TrimSpace(envStr("GEMINI_MODEL", "")),
-		GeminiTimeout:           time.Duration(envInt("GEMINI_TIMEOUT_SECONDS", 20)) * time.Second,
+		GeminiAPIKey:  strings.TrimSpace(envStr("GEMINI_API_KEY", "")),
+		GeminiBaseURL: strings.TrimSpace(envStr("GEMINI_BASE_URL", "")),
+		GeminiModel:   strings.TrimSpace(envStr("GEMINI_MODEL", "")),
+		GeminiTimeout: time.Duration(envInt("GEMINI_TIMEOUT_SECONDS", 20)) * time.Second,
+		// Tahlil kaliti berilmasa moderatsiya kalitiga tushadi — bitta
+		// kalitli o'rnatishda ham tugma ishlab ketaveradi.
+		ErrorAIAPIKey:           strings.TrimSpace(envStr("ERROR_AI_API_KEY", envStr("GEMINI_API_KEY", ""))),
+		ErrorAIModel:            strings.TrimSpace(envStr("ERROR_AI_MODEL", "")),
+		ErrorAITimeout:          time.Duration(envInt("ERROR_AI_TIMEOUT_SECONDS", 40)) * time.Second,
 		ModerationMaxImageBytes: int64(envInt("MODERATION_MAX_IMAGE_MB", 8)) << 20,
 		ModerationStrikeLimit:   envInt("MODERATION_STRIKE_LIMIT", 3),
 		ModerationBanDuration:   time.Duration(envInt("MODERATION_BAN_DAYS", 730)) * 24 * time.Hour,
@@ -320,6 +353,45 @@ func (c Config) IsProd() bool { return c.AppEnv == "production" || c.AppEnv == "
 // uzilganda tekshirilmagan e'lonlar ommaga chiqadi.
 func (c Config) ModerationFailOpenInProd() bool {
 	return c.IsProd() && c.moderationFailClosedExplicit && !c.ModerationFailClosed
+}
+
+// InsecureDefaults — hali ham o'rnida turgan DEV standartlarining ro'yxati
+// (nomlar, qiymatlar emas). Bo'sh bo'lsa hammasi joyida.
+//
+// # NEGA KERAK
+//
+// Productionda bularning har biri boot'ni to'xtatadi (mustValidate quyida),
+// ya'ni u yerda muammo yo'q. Xavf boshqa joyda: APP_ENV=dev bilan ko'tarilgan
+// HAQIQIY server — staging, demo, "vaqtinchalik" mashina. U tashqaridan
+// ochiq bo'ladi, standart parol bilan panelga kiriladi va hech qanday
+// ogohlantirish chiqmaydi, chunki hamma tekshiruv `IsProd()` ostida.
+// main.go shu ro'yxatni "3.12 · Xatoliklar" jurnaliga Kritik sifatida
+// yozadi — jim ochiq eshik hech bo'lmasa ko'rinadigan bo'lsin.
+//
+// Sirlarning O'ZI hech qachon qaytarilmaydi — faqat o'zgaruvchi nomlari.
+func (c Config) InsecureDefaults() []string {
+	weak := map[string]bool{
+		"": true, "dev-access-secret": true, "dev-refresh-secret": true,
+		"change-me-access": true, "change-me-refresh": true,
+		"dev-shared": true, "change-me-shared": true,
+	}
+	var out []string
+	if weak[c.JWTAccessSecret] || len(c.JWTAccessSecret) < 32 {
+		out = append(out, "JWT_ACCESS_SECRET")
+	}
+	if weak[c.JWTRefreshSecret] || len(c.JWTRefreshSecret) < 32 {
+		out = append(out, "JWT_REFRESH_SECRET")
+	}
+	if weak[c.BotSharedSecret] || len(c.BotSharedSecret) < 32 {
+		out = append(out, "BOT_SHARED_SECRET")
+	}
+	if c.AdminSeedPass == "Admin123!" || len(c.AdminSeedPass) < 12 {
+		out = append(out, "ADMIN_SEED_PASS")
+	}
+	if c.OTPDevReturn {
+		out = append(out, "OTP_DEV_RETURN")
+	}
+	return out
 }
 
 // mustValidate fails fast in production when insecure defaults are left in
