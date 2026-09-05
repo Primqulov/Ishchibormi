@@ -7,7 +7,7 @@ import {
   Phone, Mail, Instagram, Youtube, LifeBuoy, Users, Wallet,
   Star, ShieldCheck, Languages, Clock, AlertTriangle, RefreshCw,
   Smartphone, Bell, Signal, Wifi, BatteryFull, Briefcase, Home,
-  ClipboardList, UserRound, Navigation,
+  ClipboardList, UserRound, Navigation, Menu, X,
 } from "lucide-react";
 import { AUTH_BOT, CONTACT, SOCIAL } from "@/lib/contact";
 import { GooglePlayBadge, PlayGlyph } from "@/components/GooglePlayBadge";
@@ -42,6 +42,20 @@ const APP_UI = {
   subtle: "#737686",
 } as const;
 
+/** Navbardagi bo'lim havolalari — BITTA manba.
+ *
+ * Keng ekranda tepa qatorda, tor ekranda burger menyusida aynan shu ro'yxat
+ * chiziladi. Ikki nusxa bo'lsa, biriga qo'shilgan bo'lim ikkinchisida
+ * ko'rinmay qolardi. `href` — sahifadagi `id` bilan bir xil bo'lishi shart. */
+const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
+  { href: "#qanday", label: "Qanday ishlaydi" },
+  { href: "#imkoniyatlar", label: "Imkoniyatlar" },
+  { href: "#kategoriyalar", label: "Kategoriyalar" },
+  { href: "#narxlar", label: "Narxlar" },
+  { href: "#ilova", label: "Ilova" },
+  { href: "#savollar", label: "Savollar" },
+];
+
 /** Figma "00 · Landing sahifa". */
 export default function Landing() {
   const t = useT();
@@ -55,6 +69,18 @@ export default function Landing() {
   // uchun auth'ga bog'liq shohobchalarni faqat mount'dan keyin ko'rsatamiz.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // Tor ekrandagi navbar menyusi: bo'lim havolalari tepa qatoriga sig'maydi
+  // (pastdagi <header> izohiga qara), shuning uchun ular shu menyuda.
+  const [navOpen, setNavOpen] = useState(false);
+
+  // Menyu Esc bilan ham yopiladi: klaviaturadan foydalanuvchi uchun ochilgan
+  // qatlamdan chiqishning odatiy yo'li — «X» ni ko'rish emas, Esc bosish.
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNavOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
 
   // Tizimga kirgan foydalanuvchiga landing ko'rsatilmaydi — to'g'ridan-to'g'ri
   // kabinetga (yoki ro'yxatdan o'tish tugamagan bo'lsa onboardingga) yo'naltiramiz.
@@ -85,29 +111,102 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* ── Nav — Figma "Landing Nav": h 80 ───────────────────────── */}
+      {/* ── Nav — Figma "Landing Nav": h 80 ─────────────────────────
+        *
+        * NEGA HAVOLALAR `xl` DAN BOSHLAB: oltita bo'lim havolasi ~565 px,
+        * ustiga logotip, til, mavzu va tugma ~490 px qo'shiladi. `md:px-
+        * [100px]` bilan 1024 px ekranda ichki kenglik faqat 824 px — ya'ni
+        * havolalar `lg` da sig'masdi va tugmani chetga surib yuborardi.
+        *
+        * NEGA HAR BIR O'NG ELEMENTDA `shrink-0`: tugma matni bir qatorda
+        * (`.btn` · `white-space: nowrap`), shuning uchun flex uni qisqartira
+        * olmaydi — joy yetmasa qator kengayib, tugmaning o'ng cheti ekrandan
+        * tashqarida qolardi. Endi joy yetmasligi mumkin bo'lgan yagona
+        * element — havolalar bloki (`min-w-0 overflow-hidden`), u esa
+        * `xl` dan pastda umuman chizilmaydi.
+        */}
       <header
         className="sticky top-0 z-40 border-b backdrop-blur-md"
         style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--card) 92%, transparent)" }}
       >
-        <div className="mx-auto max-w-shell flex h-[72px] md:h-20 items-center gap-8 px-5 md:px-[100px]">
+        <div className="mx-auto max-w-shell flex h-[72px] md:h-20 items-center gap-3 md:gap-4 xl:gap-6 px-5 md:px-[100px]">
           <Logo />
-          <nav className="hidden lg:flex items-center gap-6 xl:gap-10 text-sm font-semibold muted">
-            <a href="#qanday" className="hover:text-[color:var(--brand)] transition"><T>Qanday ishlaydi</T></a>
-            <a href="#imkoniyatlar" className="hover:text-[color:var(--brand)] transition"><T>Imkoniyatlar</T></a>
-            <a href="#kategoriyalar" className="hover:text-[color:var(--brand)] transition"><T>Kategoriyalar</T></a>
-            <a href="#narxlar" className="hover:text-[color:var(--brand)] transition"><T>Narxlar</T></a>
-            <a href="#ilova" className="hover:text-[color:var(--brand)] transition"><T>Ilova</T></a>
-            <a href="#savollar" className="hover:text-[color:var(--brand)] transition"><T>Savollar</T></a>
+          <nav className="hidden xl:flex min-w-0 overflow-hidden items-center gap-5 2xl:gap-8 text-sm font-semibold muted">
+            {NAV_LINKS.map(({ href, label }) => (
+              <a key={href} href={href} className="whitespace-nowrap hover:text-[color:var(--brand)] transition">
+                <T>{label}</T>
+              </a>
+            ))}
           </nav>
           <div className="flex-1" />
-          <div className="flex items-center gap-2">
+          {/* Til va mavzu — `sm` dan boshlab qatorda, undan tor ekranda
+            * menyu ichida (kabinet topbari ham shunday: components/Shell.tsx). */}
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
             <LangMenu />
             <ThemeToggle />
-            <Link href={ctaHref} className="btn btn-primary"><T>Bepul boshlash</T></Link>
           </div>
+          {/* 360 px dan tor ekranda tugma ham menyuga tushadi: u yerda
+            * logotip va burgerdan boshqasiga joy qolmaydi. */}
+          <Link
+            href={ctaHref}
+            className="btn btn-primary shrink-0 hidden min-[360px]:inline-flex px-4 sm:px-[22px]"
+          >
+            <span className="sm:hidden"><T>Boshlash</T></span>
+            <span className="hidden sm:inline"><T>Bepul boshlash</T></span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            aria-label={t("Menyu")}
+            aria-expanded={navOpen}
+            className="xl:hidden grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full transition hover:opacity-80"
+            style={{ background: "var(--bg-subtle)", color: "var(--text-muted)" }}
+          >
+            <Menu size={18} />
+          </button>
         </div>
       </header>
+
+      {/* Tor ekran menyusi — kabinetdagi chekka panel bilan bir xil qurilma:
+        * qorong'i fon (bosilsa yopiladi) + `var(--card)` ustidagi panel. */}
+      {navOpen && (
+        <div className="fixed inset-0 z-50 xl:hidden">
+          <div className="absolute inset-0 bg-black/40 animate-fade-in" onClick={() => setNavOpen(false)} />
+          <aside
+            className="absolute right-0 top-0 h-full w-[290px] max-w-[86vw] p-4 flex flex-col gap-1 animate-slide-up"
+            style={{ background: "var(--card)" }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <Logo />
+              <button
+                type="button"
+                onClick={() => setNavOpen(false)}
+                aria-label={t("Yopish")}
+                className="p-2 rounded-lg muted hover:bg-[color:var(--bg-subtle)] transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {NAV_LINKS.map(({ href, label }) => (
+              // Havola bosilgach menyu yopiladi: aks holda sahifa bo'limga
+              // sakraydi, lekin panel uni to'sib turadi.
+              <a key={href} href={href} onClick={() => setNavOpen(false)} className="sidenav-item">
+                <T>{label}</T>
+              </a>
+            ))}
+            <div className="divider my-3" />
+            {/* Faqat `sm` dan tor ekranda: kengida bular tepa qatorda turadi
+              * va ikki nusxa ko'rinmasligi kerak. */}
+            <div className="flex sm:hidden items-center gap-2 px-1 pb-3">
+              <LangMenu />
+              <ThemeToggle />
+            </div>
+            <Link href={ctaHref} onClick={() => setNavOpen(false)} className="btn btn-primary w-full">
+              <T>Bepul boshlash</T>
+            </Link>
+          </aside>
+        </div>
+      )}
 
       {serviceError && (
         <div
