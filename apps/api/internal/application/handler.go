@@ -112,18 +112,22 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 	// number that could impersonate somebody else.
 	phone := worker.Phone
 	app := models.Application{
-		ElonID:       elonID,
-		ElonTitle:    elon.Title,
-		WorkerID:     uid,
-		EmployerID:   elon.OwnerID,
-		WorkerPhone:  phone,
-		PeopleCount:  people,
-		Amount:       elon.PerWorkerAmount,
-		IsNegotiable: elon.PricingType == "negotiable",
-		Status:       "pending",
-		AppliedAt:    time.Now(),
+		ElonID:                elonID,
+		ElonTitle:             elon.Title,
+		WorkerID:              uid,
+		EmployerID:            elon.OwnerID,
+		WorkerPhone:           phone,
+		PeopleCount:           people,
+		Amount:                elon.PerWorkerAmount,
+		ElonOwnerRevision:     elon.OwnerRevision,
+		ElonWorkDetails:       elon.WorkDetails(),
+		ListingRecheckPending: true,
+		IsNegotiable:          elon.PricingType == "negotiable",
+		Status:                "pending",
+		AppliedAt:             time.Now(),
 		// Elon snapshot (ishchining arizalar ro'yxati uchun).
 		ElonCategoryName: elon.CategoryName,
+		ElonCategoryID:   elon.CategoryID,
 		ElonRegion:       elon.Region,
 		ElonDistrict:     elon.District,
 		OwnerName:        elon.OwnerName,
@@ -157,12 +161,16 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		}
 		// cancelled | rejected → o'sha yozuvni qayta faollashtiramiz.
 		res := h.Apps.FindOneAndUpdate(r.Context(),
-			bson.M{"_id": existing.ID},
+			bson.M{"_id": existing.ID, "status": existing.Status},
 			bson.M{
 				"$set": bson.M{
 					"status": "pending", "peopleCount": people, "workerPhone": phone,
 					"amount": app.Amount, "isNegotiable": app.IsNegotiable, "appliedAt": time.Now(),
-					"elonTitle": elon.Title, "elonCategoryName": elon.CategoryName,
+					"elonOwnerRevision":     app.ElonOwnerRevision,
+					"elonWorkDetails":       app.ElonWorkDetails,
+					"listingRecheckPending": true,
+					"elonCategoryId":        elon.CategoryID,
+					"elonTitle":             elon.Title, "elonCategoryName": elon.CategoryName,
 					"elonRegion": elon.Region, "elonDistrict": elon.District,
 					"ownerName": elon.OwnerName, "ownerRating": elon.OwnerRating,
 					"ownerAvatarUrl": elon.OwnerAvatarURL,
@@ -183,6 +191,10 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		}
 		var updated models.Application
 		_ = res.Decode(&updated)
+		if err := h.recheckAppliedListing(r.Context(), &updated); err != nil {
+			httpx.Err(w, err)
+			return
+		}
 		h.Notify.Push(r.Context(), elon.OwnerID, "new_application", "Yangi ariza", "Sizning e'loningizga ariza tushdi: "+elon.Title, &models.RelatedEntity{Type: "application", ID: updated.ID})
 		httpx.JSON(w, 201, updated)
 		return
@@ -198,6 +210,10 @@ func (h *Handler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app.ID = res.InsertedID.(primitive.ObjectID)
+	if err := h.recheckAppliedListing(r.Context(), &app); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	h.Notify.Push(r.Context(), elon.OwnerID, "new_application", "Yangi ariza", "Sizning e'loningizga ariza tushdi: "+elon.Title, &models.RelatedEntity{Type: "application", ID: app.ID})
 	httpx.JSON(w, 201, app)
 }
@@ -274,8 +290,9 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, decision string
 		var elon models.Elon
 		reserve := h.Elons.FindOneAndUpdate(r.Context(),
 			bson.M{
-				"_id":    app.ElonID,
-				"status": bson.M{"$in": []string{"recruiting", "filled"}},
+				"_id": app.ElonID, "ownerId": uid,
+				"isDeleted": bson.M{"$ne": true},
+				"status":    bson.M{"$in": []string{"recruiting", "filled"}},
 				"$expr": bson.M{"$lte": bson.A{
 					bson.M{"$add": bson.A{"$acceptedCount", people}}, "$workersNeeded",
 				}},
@@ -293,8 +310,8 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, decision string
 		}
 		filled := false
 		if elon.AcceptedCount >= elon.WorkersNeeded && elon.Status == "recruiting" {
-			_, _ = h.Elons.UpdateOne(r.Context(), bson.M{"_id": elon.ID}, bson.M{"$set": bson.M{"status": "filled"}})
-			filled = true
+			res, err := h.Elons.UpdateOne(r.Context(), filledListingFilter(elon.ID), bson.M{"$set": bson.M{"status": "filled"}})
+			filled = err == nil && res.ModifiedCount == 1
 		}
 		h.Notify.Push(r.Context(), app.WorkerID, "application_accepted", "Arizangiz qabul qilindi", elon.Title, &models.RelatedEntity{Type: "application", ID: appID})
 
@@ -312,11 +329,13 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, decision string
 				}
 				_ = rcur.Close(r.Context())
 				for _, ra := range rest {
-					_, _ = h.Apps.UpdateOne(r.Context(), bson.M{"_id": ra.ID, "status": "pending"}, bson.M{"$set": bson.M{
+					res, err := h.Apps.UpdateOne(r.Context(), bson.M{"_id": ra.ID, "status": "pending"}, bson.M{"$set": bson.M{
 						"status": "rejected", "decidedAt": now,
 						"cancelReason": "Ish o'rinlari to'ldi",
 					}})
-					h.Notify.Push(r.Context(), ra.WorkerID, "application_rejected", "Joy to'ldi", ra.ElonTitle+" — ish o'rinlari to'ldi, arizangiz qabul qilinmadi", &models.RelatedEntity{Type: "application", ID: ra.ID})
+					if err == nil && res.ModifiedCount == 1 {
+						h.Notify.Push(r.Context(), ra.WorkerID, "application_rejected", "Joy to'ldi", ra.ElonTitle+" — ish o'rinlari to'ldi, arizangiz qabul qilinmadi", &models.RelatedEntity{Type: "application", ID: ra.ID})
+					}
 				}
 			}
 		}
@@ -405,7 +424,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 			bson.M{"$inc": bson.M{"acceptedCount": -people}, "$set": bson.M{"updatedAt": time.Now()}},
 			options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&elon)
 		if elon.Status == "filled" && elon.AcceptedCount < elon.WorkersNeeded {
-			_, _ = h.Elons.UpdateOne(r.Context(), bson.M{"_id": elon.ID}, bson.M{"$set": bson.M{"status": "recruiting"}})
+			_, _ = h.Elons.UpdateOne(r.Context(), reopenedListingFilter(elon.ID), bson.M{"$set": bson.M{"status": "recruiting"}})
 		}
 	}
 	// notify the other party
@@ -441,13 +460,29 @@ func (h *Handler) ConfirmDone(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(403, "forbidden", "not your application"))
 		return
 	}
-	_, err = h.Apps.UpdateOne(r.Context(), bson.M{"_id": appID}, bson.M{"$set": bson.M{setField: true}})
+	if err := h.checkCompletionListing(r.Context(), app.ElonID); err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	confirmed, err := h.Apps.UpdateOne(r.Context(), bson.M{"_id": appID, "status": "accepted"}, bson.M{"$set": bson.M{setField: true}})
 	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
+	if confirmed.MatchedCount != 1 {
+		httpx.Err(w, httpx.NewError(409, "state_changed", "Ish holati o'zgardi. Yangilab, qayta tekshiring."))
+		return
+	}
 	// refetch and decide
 	if err := h.Apps.FindOne(r.Context(), bson.M{"_id": appID}).Decode(&app); err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	if app.Status != "accepted" {
+		httpx.Err(w, httpx.NewError(409, "state_changed", "Ish holati o'zgardi. Yangilab, qayta tekshiring."))
+		return
+	}
+	if err := h.checkCompletionListing(r.Context(), app.ElonID); err != nil {
 		httpx.Err(w, err)
 		return
 	}
@@ -457,14 +492,20 @@ func (h *Handler) ConfirmDone(w http.ResponseWriter, r *http.Request) {
 		// yakunlash scheduleri ayni paytda shu arizani yopib qo'ygan bo'lsa,
 		// ModifiedCount 0 bo'ladi va sanoqni ikki marta oshirmaymiz.
 		res, uerr := h.Apps.UpdateOne(r.Context(), bson.M{"_id": appID, "status": "accepted"}, bson.M{"$set": bson.M{"status": "completed", "completedAt": now}})
-		if uerr == nil && res.ModifiedCount == 1 {
-			// bump completedJobsCount on both users
-			_, _ = h.Users.UpdateOne(r.Context(), bson.M{"_id": app.WorkerID}, bson.M{"$inc": bson.M{"completedJobsCount": 1}})
-			_, _ = h.Users.UpdateOne(r.Context(), bson.M{"_id": app.EmployerID}, bson.M{"$inc": bson.M{"completedJobsCount": 1}})
-			// notify both
-			h.Notify.Push(r.Context(), app.WorkerID, "job_completed", "Ish yakunlandi", app.ElonTitle, &models.RelatedEntity{Type: "application", ID: appID})
-			h.Notify.Push(r.Context(), app.EmployerID, "job_completed", "Ish yakunlandi", app.ElonTitle, &models.RelatedEntity{Type: "application", ID: appID})
+		if uerr != nil {
+			httpx.Err(w, uerr)
+			return
 		}
+		if res.ModifiedCount != 1 {
+			httpx.Err(w, httpx.NewError(409, "state_changed", "Ish holati o'zgardi. Yangilab, qayta tekshiring."))
+			return
+		}
+		// bump completedJobsCount on both users
+		_, _ = h.Users.UpdateOne(r.Context(), bson.M{"_id": app.WorkerID}, bson.M{"$inc": bson.M{"completedJobsCount": 1}})
+		_, _ = h.Users.UpdateOne(r.Context(), bson.M{"_id": app.EmployerID}, bson.M{"$inc": bson.M{"completedJobsCount": 1}})
+		// notify both
+		h.Notify.Push(r.Context(), app.WorkerID, "job_completed", "Ish yakunlandi", app.ElonTitle, &models.RelatedEntity{Type: "application", ID: appID})
+		h.Notify.Push(r.Context(), app.EmployerID, "job_completed", "Ish yakunlandi", app.ElonTitle, &models.RelatedEntity{Type: "application", ID: appID})
 		httpx.JSON(w, 200, map[string]string{"status": "completed"})
 		return
 	}
@@ -490,7 +531,7 @@ func pageOpts(r *http.Request, defaultLimit, maxLimit int) *options.FindOptions 
 		page = 10_000
 	}
 	return options.Find().
-		SetSort(bson.D{{Key: "appliedAt", Value: -1}}).
+		SetSort(bson.D{{Key: "appliedAt", Value: -1}, {Key: "_id", Value: -1}}).
 		SetSkip(int64((page - 1) * limit)).
 		SetLimit(int64(limit))
 }

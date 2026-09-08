@@ -20,15 +20,16 @@ import (
 )
 
 type Handler struct {
-	Users   *mongo.Collection
-	Storage *storage.Service
+	Users         *mongo.Collection
+	Storage       *storage.Service
+	AvatarUploads *mongo.Collection
 
 	// Ixtiyoriy kontent tekshiruvi (AttachModerator orqali).
 	guard *moderation.Guard
 }
 
 func NewHandler(db *mongo.Database, s *storage.Service) *Handler {
-	return &Handler{Users: db.Collection("users"), Storage: s}
+	return &Handler{Users: db.Collection("users"), Storage: s, AvatarUploads: db.Collection("avatar_uploads")}
 }
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
@@ -120,12 +121,39 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	// If avatar is changing, delete the previous file from S3 (best-effort).
+	// Read the current avatar before changing it. The conditional write below
+	// rejects a concurrent administrator deletion or a different replacement.
+	var prev models.User
+	var avatarMeta *models.AvatarMetadata
 	if req.AvatarURL != nil {
-		var prev models.User
-		if err := h.Users.FindOne(r.Context(), bson.M{"_id": uid}).Decode(&prev); err == nil {
-			if prev.AvatarURL != "" && prev.AvatarURL != *req.AvatarURL {
-				go upload.DeleteByURL(h.Storage, prev.AvatarURL)
+		if err := h.Users.FindOne(r.Context(), bson.M{"_id": uid}).Decode(&prev); err != nil {
+			httpx.Err(w, httpx.NewError(404, "not_found", "user not found"))
+			return
+		}
+		if *req.AvatarURL != "" {
+			if *req.AvatarURL != prev.AvatarURL && !strings.HasPrefix(h.Storage.KeyFromURL(*req.AvatarURL), "avatars/"+uid.Hex()+"/") {
+				httpx.Err(w, httpx.NewError(400, "bad_avatar_url", "profil rasmi avatar sifatida yuklanishi kerak"))
+				return
+			}
+			avatarMeta = &models.AvatarMetadata{URL: *req.AvatarURL, ModerationStatus: "unknown"}
+			if prev.AvatarMetadata != nil && prev.AvatarMetadata.URL == *req.AvatarURL {
+				avatarMeta = prev.AvatarMetadata
+			}
+			if h.AvatarUploads != nil {
+				var record models.AvatarUpload
+				err := h.AvatarUploads.FindOne(r.Context(), bson.M{"_id": *req.AvatarURL}).Decode(&record)
+				if err == nil {
+					if record.UserID != uid || record.DeletedAt != nil {
+						httpx.Err(w, httpx.NewError(400, "bad_avatar_url", "rasm o'chirilgan yoki hisobga tegishli emas"))
+						return
+					}
+					if prev.AvatarMetadata == nil || prev.AvatarURL != *req.AvatarURL {
+						avatarMeta = &record.Metadata
+					}
+				} else if err != mongo.ErrNoDocuments {
+					httpx.Err(w, httpx.NewError(503, "avatar_unavailable", "rasm ma'lumotlarini tekshirib bo'lmadi"))
+					return
+				}
 			}
 		}
 	}
@@ -140,6 +168,7 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AvatarURL != nil {
 		set["avatarUrl"] = *req.AvatarURL
+		set["avatarMetadata"] = avatarMeta
 	}
 	if req.Region != nil {
 		set["region"] = *req.Region
@@ -163,16 +192,51 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	if (req.FirstName != nil && *req.FirstName != "") && (req.Region != nil && *req.Region != "") {
 		set["onboardingCompleted"] = true
 	}
+	filter := bson.M{"_id": uid}
+	update := bson.M{"$set": set}
+	if req.AvatarURL != nil {
+		filter = avatarWriteFilter(uid, prev, *req.AvatarURL)
+		update["$inc"] = bson.M{"avatarRevision": 1}
+		if *req.AvatarURL != "" && *req.AvatarURL != prev.AvatarURL {
+			update["$unset"] = bson.M{"avatarDeletedAt": "", "avatarDeletedBy": "", "avatarDeletedReason": ""}
+		}
+	}
 	res := h.Users.FindOneAndUpdate(r.Context(),
-		bson.M{"_id": uid},
-		bson.M{"$set": set},
+		filter,
+		update,
 		options.FindOneAndUpdate().SetReturnDocument(options.After))
 	var u models.User
 	if err := res.Decode(&u); err != nil {
+		if req.AvatarURL != nil && err == mongo.ErrNoDocuments {
+			httpx.Err(w, httpx.NewError(409, "avatar_changed", "profil rasmi o'zgargan, qayta urinib ko'ring"))
+			return
+		}
 		httpx.Err(w, httpx.NewError(404, "not_found", "user not found"))
 		return
 	}
+	if req.AvatarURL != nil && prev.AvatarURL != "" && prev.AvatarURL != *req.AvatarURL {
+		go upload.DeleteByURL(h.Storage, prev.AvatarURL)
+	}
 	httpx.JSON(w, 200, u)
+}
+
+// The revision closes the window between metadata validation and the final
+// write: completed deletion jobs may disappear, but that old snapshot remains
+// invalid even if the current avatar is still empty.
+func avatarWriteFilter(uid primitive.ObjectID, prev models.User, target string) bson.M {
+	filter := bson.M{"_id": uid, "avatarRevision": prev.AvatarRevision}
+	if prev.AvatarRevision == 0 {
+		filter["avatarRevision"] = bson.M{"$in": []any{nil, int64(0)}}
+	}
+	if prev.AvatarURL == "" {
+		filter["$or"] = []bson.M{{"avatarUrl": ""}, {"avatarUrl": nil}}
+	} else {
+		filter["avatarUrl"] = prev.AvatarURL
+	}
+	if target != "" {
+		filter["avatarDeletionJobs.url"] = bson.M{"$ne": target}
+	}
+	return filter
 }
 
 func validateProfileFields(req updateMeReq) error {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/category"
+	"github.com/ishchibormi/backend/internal/elonimages"
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/internal/moderation"
 	"github.com/ishchibormi/backend/internal/notification"
@@ -363,12 +364,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	// E'lon darhol chop etiladi — alohida "qoralama" bosqichi yo'q.
 	e := models.Elon{
+		ID:                primitive.NewObjectID(),
 		OwnerID:           uid,
 		Title:             strings.TrimSpace(req.Title),
 		CategoryID:        catID,
 		CategoryName:      cat.Name,
 		Description:       req.Description,
 		LocationURL:       locationURL,
+		LocationText:      req.LocationText,
 		Lat:               req.Lat,
 		Lng:               req.Lng,
 		Region:            region,
@@ -390,7 +393,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		OwnerRating:       owner.Rating,
 		OwnerReviewsCount: owner.ReviewsCount,
 		OwnerAvatarURL:    owner.AvatarURL,
-		Images:            req.Images,
+		OwnerSnapshot: &models.ElonOwnerSnapshot{
+			Name:  strings.TrimSpace(owner.FirstName + " " + owner.LastName),
+			Phone: owner.Phone, AvatarURL: owner.AvatarURL,
+			Region: owner.Region, District: owner.District, Complete: !owner.ID.IsZero(),
+		},
+		Images: req.Images,
 		// E'lonni Google Play demo hisobi yaratgan bo'lsa belgilaymiz: bunday
 		// e'lonlar feed/qidiruv/sitemap'dan chiqariladi, ya'ni real
 		// foydalanuvchi ularni hech qachon ko'rmaydi. Egasining o'z
@@ -400,6 +408,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		// AI kvotasi tugagan paytda chop etilgan e'lon — keyin qo'lda
 		// ko'rib chiqiladi. Foydalanuvchi buni bilmaydi (json:"-").
 		ModerationPending: modSkipped,
+	}
+	if err := elonimages.Reserve(r.Context(), h.Col.Database(), h.Storage, e.ID, uid, e.Images); err != nil {
+		httpx.Err(w, err)
+		return
 	}
 	res, err := h.Col.InsertOne(r.Context(), e)
 	if err != nil {
@@ -453,7 +465,23 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
 		return
 	}
-	var req upsertReq
+	prev, err := h.ownerElon(r.Context(), id, uid)
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	if !ownerEditable(prev.Status) {
+		httpx.Err(w, httpx.NewError(409, "bad_state", "Bu holatdagi e'lonni tahrirlab bo'lmaydi."))
+		return
+	}
+	// Mobile clients omit unchanged schedule/location fields. Decode into the
+	// existing values so omission preserves them; an explicit empty value can
+	// still clear an optional field. Web clients may send the original values.
+	req := upsertReq{
+		StartDate: prev.StartDate, WorkTimeFrom: prev.WorkTimeFrom, WorkTimeTo: prev.WorkTimeTo,
+		LocationURL: prev.LocationURL, LocationText: prev.LocationText, Lat: prev.Lat, Lng: prev.Lng,
+		Region: prev.Region, District: prev.District,
+	}
 	if err := httpx.Decode(r, &req); err != nil {
 		httpx.Err(w, err)
 		return
@@ -462,53 +490,61 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, err)
 		return
 	}
-	if err := validateStartDate(req.StartDate, time.Now(), true); err != nil {
-		httpx.Err(w, err)
-		return
+	if req.StartDate != prev.StartDate {
+		if err := validateStartDate(req.StartDate, time.Now(), true); err != nil {
+			httpx.Err(w, err)
+			return
+		}
 	}
 	if err := validateURLs(&req, h.Storage, uid.Hex()); err != nil {
 		httpx.Err(w, err)
 		return
 	}
-	// Avvalgi holat ikki joyda kerak: moderatsiya faqat O'ZGARGAN qismni
-	// tekshirishi uchun va quyidagi rasm farqi uchun. Ilgari u faqat rasm
-	// farqi uchun olinardi — endi bitta so'rov ikkalasiga xizmat qiladi.
-	var prev *models.Elon
-	{
-		var doc models.Elon
-		if err := h.Col.FindOne(r.Context(), bson.M{"_id": id, "ownerId": uid}).Decode(&doc); err == nil {
-			prev = &doc
+	if req.WorkersNeeded < prev.AcceptedCount {
+		httpx.Err(w, httpx.NewError(409, "accepted_workers_limit", "Ishchilar soni qabul qilingan kishilar sonidan kam bo'la olmaydi."))
+		return
+	}
+	catID, catName := prev.CategoryID, prev.CategoryName
+	if req.CategoryID != "" {
+		catID, err = primitive.ObjectIDFromHex(req.CategoryID)
+		if err != nil {
+			httpx.Err(w, httpx.NewError(400, "bad_request", "bad categoryId"))
+			return
 		}
+		var cat models.Category
+		if err := h.Categories.FindOne(r.Context(), bson.M{"_id": catID}).Decode(&cat); err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				err = httpx.NewError(404, "not_found", "category not found")
+			}
+			httpx.Err(w, err)
+			return
+		}
+		catName = cat.Name
 	}
 	// Kontent moderatsiyasi — geokodlash va bazaga yozishdan OLDIN, ya'ni rad
 	// etilgan tahrir hech qanday iz qoldirmaydi (rasm farqi ham bajarilmaydi).
-	modSkipped, err := h.moderateElonUpdate(r.Context(), uid, &req, prev)
+	modSkipped, err := h.moderateElonUpdate(r.Context(), uid, &req, &prev)
 	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
 	pType, total, per := req.computePrice()
-	region, district := resolveLocation(r.Context(), req.Lat, req.Lng, req.Region, req.District)
+	region, district := req.Region, req.District
+	if req.Lat != prev.Lat || req.Lng != prev.Lng {
+		region, district = resolveLocation(r.Context(), req.Lat, req.Lng, req.Region, req.District)
+	}
 	locationURL := req.LocationURL
-	if locationURL == "" && (req.Lat != 0 || req.Lng != 0) {
+	if (req.Lat != prev.Lat || req.Lng != prev.Lng) && (req.Lat != 0 || req.Lng != 0) &&
+		(locationURL == "" || locationURL == prev.LocationURL) {
 		locationURL = mapsURL(req.Lat, req.Lng)
 	}
-	// Image diff: delete any S3 images that are removed from the new list.
-	if req.Images != nil && prev != nil {
-		keep := map[string]bool{}
-		for _, u := range req.Images {
-			keep[u] = true
-		}
-		for _, u := range prev.Images {
-			if !keep[u] {
-				go upload.DeleteByURL(h.Storage, u)
-			}
-		}
-	}
 	set := bson.M{
-		"title":           req.Title,
+		"title":           strings.TrimSpace(req.Title),
+		"categoryId":      catID,
+		"categoryName":    catName,
 		"description":     req.Description,
 		"locationUrl":     locationURL,
+		"locationText":    req.LocationText,
 		"lat":             req.Lat,
 		"lng":             req.Lng,
 		"region":          region,
@@ -524,114 +560,63 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		"gender":          normalizeGender(req.Gender),
 		"updatedAt":       time.Now(),
 		// Tekshirilmasdan saqlangan tahrir keyin qo'lda ko'riladi.
-		"moderationPending": modSkipped,
+		"moderationPending":    modSkipped,
+		"ownerFollowupPending": true,
+	}
+	updatedWork := (models.Elon{
+		StartDate: req.StartDate, WorkTimeFrom: req.WorkTimeFrom, WorkTimeTo: req.WorkTimeTo,
+		LocationURL: locationURL, LocationText: req.LocationText, Lat: req.Lat, Lng: req.Lng,
+		Region: region, District: district,
+	}).WorkDetails()
+	if *prev.WorkDetails() != *updatedWork {
+		set["ownerWorkDetailsRevision"] = prev.OwnerRevision + 1
 	}
 	if req.Images != nil {
 		set["images"] = req.Images
 	}
-	if req.CategoryID != "" {
-		if catID, err := primitive.ObjectIDFromHex(req.CategoryID); err == nil {
-			var cat models.Category
-			if err := h.Categories.FindOne(r.Context(), bson.M{"_id": catID}).Decode(&cat); err == nil {
-				set["categoryId"] = catID
-				set["categoryName"] = cat.Name
-			}
+	// A changed worker limit can fill or reopen the listing. The conditional
+	// write below rechecks acceptedCount if an acceptance races this edit.
+	if prev.Status != "draft" {
+		if req.WorkersNeeded <= prev.AcceptedCount {
+			set["status"] = "filled"
+		} else {
+			set["status"] = "recruiting"
 		}
 	}
+	if err := elonimages.Reserve(r.Context(), h.Col.Database(), h.Storage, prev.ID, uid, addedImages(req.Images, prev.Images)); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	res := h.Col.FindOneAndUpdate(r.Context(),
-		bson.M{"_id": id, "ownerId": uid, "status": bson.M{"$in": []string{"draft", "recruiting", "filled"}}},
-		bson.M{"$set": set},
+		ownerUpdateFilter(prev, req.WorkersNeeded),
+		bson.M{"$set": set, "$inc": bson.M{"ownerRevision": 1, "ownerFollowupVersion": 1}},
 		options.FindOneAndUpdate().SetReturnDocument(options.After))
 	var e models.Elon
 	if err := res.Decode(&e); err != nil {
-		httpx.Err(w, httpx.NewError(404, "not_found_or_forbidden", "elon not found or not yours"))
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			err = httpx.NewError(409, "state_changed", "E'lon o'zgardi. Yangilab, qayta urinib ko'ring.")
+		}
+		httpx.Err(w, err)
 		return
 	}
+	// A rejected or stale save must never remove files from the live listing.
+	if req.Images != nil {
+		for _, u := range addedImages(prev.Images, req.Images) {
+			go upload.DeleteByURL(h.Storage, u)
+		}
+	}
+	h.notifyCandidateChanges(r.Context(), prev, e)
 	httpx.JSON(w, 200, e)
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	uid, _ := primitive.ObjectIDFromHex(httpx.UserID(r))
-	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
-		return
-	}
-	// Rasmlarni S3/diskdan o'chirish uchun oldin o'qib olamiz.
-	var prev models.Elon
-	_ = h.Col.FindOne(r.Context(), bson.M{"_id": id, "ownerId": uid}).Decode(&prev)
-	// E'lonni bazadan BUTUNLAY o'chiramiz (soft-delete emas).
-	res, err := h.Col.DeleteOne(r.Context(), bson.M{"_id": id, "ownerId": uid})
-	if err != nil {
-		httpx.Err(w, err)
-		return
-	}
-	if res.DeletedCount == 0 {
-		httpx.Err(w, httpx.NewError(404, "not_found_or_forbidden", "elon not found or not yours"))
-		return
-	}
-	// Shu e'longa bog'liq arizalarni ham o'chiramiz (bog'liqsiz yozuvlar qolmasligi uchun).
-	_, _ = h.Applications.DeleteMany(r.Context(), bson.M{"elonId": id})
-	for _, u := range prev.Images {
-		go upload.DeleteByURL(h.Storage, u)
-	}
-	httpx.JSON(w, 200, map[string]bool{"ok": true})
+	h.closeOwnerElon(w, r, true)
 }
 
-// Cancel: e'lon egasi o'z e'lonini yopadi — ilovadagi "E'lonni o'chirish".
-//
-// Yozuv bazadan o'chirilmaydi (Delete dan farqi shu): `status` "cancelled"
-// bo'lgani uchun e'lon ommaviy feeddan chiqadi va yangi ariza qabul qilmaydi,
-// ammo egasining "E'lon qilingan ishlar" tarixida "Bekor qilingan" holatida
-// ko'rinib turadi. `isDeleted` ataylab tegilmaydi — aks holda egasi o'sha
-// karta ustidan e'lon tafsilotlarini ocholmay qolardi (Get uni filtrlaydi).
+// Cancel archives a listing with its reason. Both close endpoints retain the
+// listing, images and applications so the owner and candidates can read history.
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
-	uid, _ := primitive.ObjectIDFromHex(httpx.UserID(r))
-	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
-		return
-	}
-	// Faqat hali ochiq e'lonni bekor qilish mumkin: yakunlangan ish tarixi
-	// o'zgarmasligi va e'lon ikki marta bekor qilinmasligi kerak.
-	res := h.Col.FindOneAndUpdate(r.Context(),
-		bson.M{"_id": id, "ownerId": uid, "status": bson.M{"$in": []string{"draft", "recruiting", "filled", "in_progress"}}},
-		bson.M{"$set": bson.M{"status": "cancelled", "updatedAt": time.Now()}},
-		options.FindOneAndUpdate().SetReturnDocument(options.After))
-	var e models.Elon
-	if err := res.Decode(&e); err != nil {
-		httpx.Err(w, httpx.NewError(404, "not_found_or_forbidden", "elon not found or not yours"))
-		return
-	}
-	// Javob kutayotgan yoki qabul qilingan arizalar ochiq qolib ketmasin —
-	// ishchi bekor qilingan ishni kutib o'tirmasligi uchun ular ham yopiladi.
-	cur, cerr := h.Applications.Find(r.Context(),
-		bson.M{"elonId": id, "status": bson.M{"$in": []string{"pending", "accepted"}}})
-	workers := []primitive.ObjectID{}
-	if cerr == nil {
-		for cur.Next(r.Context()) {
-			var a models.Application
-			if cur.Decode(&a) == nil {
-				workers = append(workers, a.WorkerID)
-			}
-		}
-		cur.Close(r.Context())
-	}
-	_, _ = h.Applications.UpdateMany(r.Context(),
-		bson.M{"elonId": id, "status": bson.M{"$in": []string{"pending", "accepted"}}},
-		bson.M{"$set": bson.M{
-			"status":       "cancelled",
-			"cancelledBy":  "employer",
-			"cancelReason": "E'lon bekor qilindi",
-			"decidedAt":    time.Now(),
-		}})
-	if h.Notify != nil {
-		for _, wid := range workers {
-			h.Notify.Push(r.Context(), wid, "application_cancelled", "Ariza bekor qilindi",
-				e.Title+" — e'lon bekor qilindi", &models.RelatedEntity{Type: "elon", ID: id})
-		}
-	}
-	httpx.JSON(w, 200, e)
+	h.closeOwnerElon(w, r, false)
 }
 
 // Feed: public listing for recruiting only (paged). Ish o'rinlari to'lgan

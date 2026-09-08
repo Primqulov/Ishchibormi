@@ -81,6 +81,8 @@ html, body {
 
 ::selection { background: var(--brand-tint); color: var(--brand); }
 
+.owner-action-dialog::backdrop { background: rgba(11, 28, 48, 0.46); }
+
 /* Ish o'rinlari to'lish progress-bari uchun chapdan o'ngga yugurib turuvchi yorug'lik. */
 @keyframes slot-shimmer {
   0%   { transform: translateX(-120%); }

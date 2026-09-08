@@ -63,6 +63,7 @@ const (
 // foydalanuvchiga tegishli emas.
 var statusAuditActions = bson.A{
 	"user_block", "user_unblock", "user_verify", "user_delete", "moderation_ban_lift",
+	moderation.AuditActionBan,
 }
 
 // maxStatusEvents — javobdagi yozuvlar chegarasi.
@@ -92,6 +93,8 @@ type statusEvent struct {
 	Auto bool `json:"auto,omitempty"`
 	// Until — blok qachongacha (faqat muddatli avtomatik blokda).
 	Until *time.Time `json:"until,omitempty"`
+	// A moderation-only lift does not release a simultaneous manual block.
+	moderationOnly bool
 }
 
 // statusHistory — hisobning holat o'zgarishlari, yangisidan boshlab.
@@ -104,6 +107,16 @@ func (h *Handler) statusHistory(
 	rec *moderation.StrikeRecord,
 	showRoles bool,
 ) []statusEvent {
+	return h.statusHistoryAt(ctx, u, rec, showRoles, time.Now())
+}
+
+func (h *Handler) statusHistoryAt(
+	ctx context.Context,
+	u *models.User,
+	rec *moderation.StrikeRecord,
+	showRoles bool,
+	now time.Time,
+) []statusEvent {
 	out := make([]statusEvent, 0, 12)
 
 	// 1) Ro'yxatdan o'tish — tarixning boshlanish nuqtasi. Panel qaysi
@@ -112,20 +125,14 @@ func (h *Handler) statusHistory(
 		out = append(out, statusEvent{Kind: statusKindSignup, At: u.CreatedAt, Auto: true})
 	}
 
-	// 2) Adminlar bajargan amallar.
+	// 2) Admin amallari va saqlangan avtomatik bloklar.
 	out = append(out, h.statusFromAudit(ctx, u.ID, showRoles)...)
 
-	// 3) HOZIRGI avtomatik moderatsiya bloki.
-	//
-	//    Uni audit logdan olib bo'lmaydi: blokni admin emas, tizim qo'yadi
-	//    (moderation.applyBan) va u hech qanday so'rov ichida bajarilmaydi.
-	//    Yagona ishonchli vaqt belgisi — hisobdagi `blockedAt`, va u faqat
-	//    manba "moderation" bo'lganda shu blokka tegishli.
-	//
-	//    O'TGAN avtomatik bloklar tarixda yo'q va bo'lishi ham mumkin emas:
-	//    blok ochilganda maydonlar tozalanadi. Ularning izi — quyidagi
-	//    ogohlantirishlar.
-	if u.BlockSource == moderation.BlockSourceModeration && u.BlockedAt != nil {
+	// 3) Eski serverdan qolgan, hali auditga yozilmagan avtomatik blok.
+	//    Faqat ma'lum vaqt va sabab ishlatiladi; tozalangan o'tmish taxmin
+	//    qilinmaydi. Yangi audit yozuvi bo'lsa bir blok ikki marta chiqmaydi.
+	if u.BlockSource == moderation.BlockSourceModeration && u.BlockedAt != nil &&
+		!u.BlockedAt.IsZero() && !hasAutomaticBlock(out, *u.BlockedAt) {
 		out = append(out, statusEvent{
 			Kind:   statusKindBlock,
 			At:     *u.BlockedAt,
@@ -134,6 +141,11 @@ func (h *Handler) statusHistory(
 			Until:  u.ModerationBannedUntil,
 		})
 	}
+	// Muddati o'tgan blok hech qanday login yoki fon vazifasisiz kuchini
+	// yo'qotadi. Hodisa vaqti — ko'rish vaqti emas, saqlangan muddatning o'zi.
+	// Oldinroq qo'lda ochilgan yoki boshqa blok kuchda qolgan bo'lsa bu
+	// muddat umumiy "Blokdan chiqarildi" hodisasini anglatmaydi.
+	out = append(out, automaticExpirations(out, u, now)...)
 
 	// 4) Moderatsiya ogohlantirishlari — nomaqbul kontent urinishlari.
 	//
@@ -162,6 +174,82 @@ func (h *Handler) statusHistory(
 	return out
 }
 
+func hasAutomaticBlock(history []statusEvent, at time.Time) bool {
+	for _, ev := range history {
+		if ev.Kind == statusKindBlock && ev.Auto && ev.At.UnixMilli() == at.UnixMilli() {
+			return true
+		}
+	}
+	return false
+}
+
+func automaticExpirations(history []statusEvent, user *models.User, now time.Time) []statusEvent {
+	out := []statusEvent{}
+	seen := map[int64]bool{}
+	for _, ban := range history {
+		if ban.Kind != statusKindBlock || !ban.Auto || ban.Until == nil ||
+			!ban.Until.After(ban.At) || ban.Until.After(now) {
+			continue
+		}
+		until := *ban.Until
+		if seen[until.UnixMilli()] || automaticBanReleased(history, ban.At, until) ||
+			otherBlockActiveAt(history, user, until) {
+			continue
+		}
+		seen[until.UnixMilli()] = true
+		out = append(out, statusEvent{
+			Kind: statusKindUnblock, At: until, Auto: true,
+			Detail: "Blok muddati tugadi — o'z-o'zidan ochildi",
+		})
+	}
+	return out
+}
+
+// Both manual unblock actions release an automatic ban. Audit timestamps
+// share Mongo's millisecond precision, so an unblock in the same millisecond
+// as a ban also suppresses a later automatic expiry.
+func automaticBanReleased(history []statusEvent, from, through time.Time) bool {
+	for _, ev := range history {
+		if ev.Kind == statusKindUnblock && !ev.Auto &&
+			!ev.At.Before(from) && !ev.At.After(through) {
+			return true
+		}
+	}
+	return false
+}
+
+func otherBlockActiveAt(history []statusEvent, user *models.User, at time.Time) bool {
+	if user.IsDeleted && (user.DeletedAt == nil || !user.DeletedAt.After(at)) {
+		return true
+	}
+	var manual *statusEvent
+	for i := range history {
+		ev := &history[i]
+		if ev.At.After(at) {
+			continue
+		}
+		if ev.Kind == statusKindBlock && ev.Auto && ev.Until != nil &&
+			ev.Until.After(at) && !automaticBanReleased(history, ev.At, at) {
+			return true
+		}
+		if ev.Auto || (ev.Kind != statusKindBlock &&
+			(ev.Kind != statusKindUnblock || ev.moderationOnly)) {
+			continue
+		}
+		// Audit rows are newest first; ties retain that order.
+		if manual == nil || ev.At.After(manual.At) {
+			manual = ev
+		}
+	}
+	if manual != nil && manual.Kind == statusKindBlock {
+		return true
+	}
+	// Old accounts may have a manual flag without a retained audit event.
+	// Do not claim such an account opened while its known block remains.
+	return user.IsBlocked && (user.BlockSource != moderation.BlockSourceAdmin ||
+		user.BlockedAt == nil || !user.BlockedAt.After(at))
+}
+
 // statusFromAudit — audit jurnalidagi holat amallari.
 func (h *Handler) statusFromAudit(
 	ctx context.Context,
@@ -177,7 +265,7 @@ func (h *Handler) statusFromAudit(
 	cur, err := h.AuditCol.Find(ctx,
 		bson.M{"target": userID.Hex(), "action": bson.M{"$in": statusAuditActions}},
 		options.Find().
-			SetSort(bson.D{{Key: "createdAt", Value: -1}}).
+			SetSort(bson.D{{Key: "createdAt", Value: -1}, {Key: "_id", Value: -1}}).
 			SetLimit(maxStatusEvents),
 	)
 	if err != nil {
@@ -205,10 +293,13 @@ func (h *Handler) statusFromAudit(
 			continue
 		}
 		out = append(out, statusEvent{
-			Kind:   kind,
-			At:     a.CreatedAt,
-			Detail: detail,
-			Actor:  briefs[a.AdminID].label(showRoles),
+			Kind:           kind,
+			At:             a.CreatedAt,
+			Detail:         detail,
+			Actor:          briefs[a.AdminID].label(showRoles),
+			Auto:           a.Action == moderation.AuditActionBan,
+			Until:          a.Until,
+			moderationOnly: a.Action == "moderation_ban_lift",
 		})
 	}
 	return out
@@ -223,7 +314,7 @@ func (h *Handler) statusFromAudit(
 // ingliz tilidagi ichki qiymat chiqib turardi.
 func statusFromAction(action, detail string) (kind, out string) {
 	switch action {
-	case "user_block":
+	case "user_block", moderation.AuditActionBan:
 		// Blok sababi — adminning o'zi yozgan matn, tegilmaydi.
 		return statusKindBlock, detail
 	case "user_unblock":

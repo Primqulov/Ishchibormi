@@ -2,8 +2,13 @@ package admin
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,6 +137,96 @@ func TestUsersFilterCombinesSearchAndBlocked(t *testing.T) {
 	}
 	if len(found) != 1 || found[0] != "+998901112200" {
 		t.Errorf("qidiruv + blok filtri = %v, want [+998901112200]", found)
+	}
+}
+
+// Old clients may still send verified. List rows, totals and CSV must include
+// every verification state while continuing to respect the remaining filters.
+func TestUsersListAndExportIgnoreVerificationFilter(t *testing.T) {
+	db := filterDB(t)
+	h := &Handler{Users: db.Collection("users"), AuditCol: db.Collection("admin_audit")}
+	now := time.Now()
+	rows := []bson.M{
+		{"isPhoneVerified": true},
+		{"isPhoneVerified": false},
+		{}, // Older account with no verification field.
+		{"firstName": "Bobur"},
+		{"region": "Buxoro"},
+		{"lastPlatform": "ios"},
+		{"isBlocked": true},
+		{"moderationBannedUntil": now.Add(24 * time.Hour)},
+		{"isDeleted": true},
+	}
+	docs := make([]any, len(rows))
+	wantIDs := make([]string, 0, 3)
+	for i, fields := range rows {
+		id := primitive.NewObjectID()
+		doc := bson.M{
+			"_id": id, "firstName": "Anvar", "region": "Toshkent sh.",
+			"lastPlatform": "android", "createdAt": now.Add(-time.Duration(i) * time.Minute),
+		}
+		for key, value := range fields {
+			doc[key] = value
+		}
+		docs[i] = doc
+		if i < 3 {
+			wantIDs = append(wantIDs, id.Hex())
+		}
+	}
+	if _, err := h.Users.InsertMany(context.Background(), docs); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	for _, verified := range []string{"", "1", "0"} {
+		t.Run("verified="+verified, func(t *testing.T) {
+			q := url.Values{
+				"q": {"Anvar"}, "region": {"Toshkent sh."}, "platform": {"android"},
+				"blocked": {"0"}, "deleted": {"hide"},
+			}
+			if verified != "" {
+				q.Set("verified", verified)
+			}
+			list := httptest.NewRecorder()
+			h.ListUsers(list, httptest.NewRequest(http.MethodGet, "/api/admin/users?"+q.Encode(), nil))
+			if list.Code != http.StatusOK {
+				t.Fatalf("list status = %d, body = %s", list.Code, list.Body.String())
+			}
+			var page struct {
+				Items []struct {
+					ID string `json:"id"`
+				} `json:"items"`
+				Total int `json:"total"`
+			}
+			if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil {
+				t.Fatalf("decode list: %v", err)
+			}
+			gotIDs := make([]string, 0, len(page.Items))
+			for _, user := range page.Items {
+				gotIDs = append(gotIDs, user.ID)
+			}
+			if !equal(gotIDs, wantIDs) || page.Total != len(wantIDs) {
+				t.Errorf("list = %v, total = %d; want %v, total = %d", gotIDs, page.Total, wantIDs, len(wantIDs))
+			}
+
+			export := httptest.NewRecorder()
+			h.ExportUsers(export, httptest.NewRequest(http.MethodGet, "/api/admin/export/users.csv?"+q.Encode(), nil))
+			if export.Code != http.StatusOK {
+				t.Fatalf("export status = %d, body = %s", export.Code, export.Body.String())
+			}
+			reader := csv.NewReader(strings.NewReader(strings.TrimPrefix(export.Body.String(), "\uFEFF")))
+			reader.Comma = ';'
+			records, err := reader.ReadAll()
+			if err != nil {
+				t.Fatalf("decode CSV: %v", err)
+			}
+			gotIDs = make([]string, 0, len(records)-1)
+			for _, record := range records[1:] {
+				gotIDs = append(gotIDs, record[0])
+			}
+			if !equal(gotIDs, wantIDs) {
+				t.Errorf("CSV = %v, want %v", gotIDs, wantIDs)
+			}
+		})
 	}
 }
 

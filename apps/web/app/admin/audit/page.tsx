@@ -266,6 +266,21 @@ const AMAL: Record<string, AmalMeta> = {
     guruh: "foydalanuvchi",
     maqsad: "foydalanuvchi",
   },
+  "avatar.download": {
+    yorliq: "Profil rasmini yuklab oldi",
+    guruh: "foydalanuvchi",
+    maqsad: "foydalanuvchi",
+  },
+  "avatar.delete": {
+    yorliq: "Profil rasmini o'chirdi",
+    guruh: "foydalanuvchi",
+    maqsad: "foydalanuvchi",
+  },
+  moderation_ban: {
+    yorliq: "Foydalanuvchi avtomatik bloklandi",
+    guruh: "foydalanuvchi",
+    maqsad: "foydalanuvchi",
+  },
   moderation_ban_lift: {
     yorliq: "Avtomatik blokni bekor qildi",
     guruh: "foydalanuvchi",

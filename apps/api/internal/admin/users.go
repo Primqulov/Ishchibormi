@@ -18,7 +18,8 @@ import (
 )
 
 // usersFilter builds the Mongo query shared by ListUsers and the users CSV
-// export. Params: q (name/phone), region, blocked=1|0, verified=1|0.
+// export. Params: q (name/phone), region, blocked=1|0, deleted=hide|only,
+// platform=web|android|ios|unknown.
 func usersFilter(q url.Values) bson.M {
 	// O'chirilganlar ham ko'rinadi — `?deleted=` bilan ajratiladi.
 	// Nega standart shunday: deletemode.go izohiga qarang.
@@ -67,12 +68,6 @@ func usersFilter(q url.Values) bson.M {
 	case httpx.PlatformUnknown:
 		filter["lastPlatform"] = bson.M{"$in": bson.A{nil, ""}}
 	}
-	switch q.Get("verified") {
-	case "1":
-		filter["isPhoneVerified"] = true
-	case "0":
-		filter["isPhoneVerified"] = bson.M{"$ne": true}
-	}
 	return filter
 }
 
@@ -90,7 +85,8 @@ func andOf(filter bson.M) bson.A {
 
 // ListUsers: paginated + searchable + filterable. Query params:
 //
-//	page, limit, q (name/phone), region, blocked=1|0, verified=1|0
+//	page, limit, q (name/phone), region, blocked=1|0, deleted=hide|only,
+//	platform=web|android|ios|unknown
 func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	page, limit, skip := pageParams(r)
@@ -339,6 +335,10 @@ func (h *Handler) BlockUser(w http.ResponseWriter, r *http.Request) {
 				"sabab juda uzun"))
 			return
 		}
+		if err := moderation.RecordBanHistory(ctx, h.AuditCol, &u); err != nil {
+			httpx.Err(w, err)
+			return
+		}
 		set := bson.M{
 			"isBlocked":   true,
 			"blockReason": reason,
@@ -394,6 +394,10 @@ func (h *Handler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	// hujjatida blok qolib ketishi mumkin bo'lgan har qanday yo'lni yopish
 	// uchun. Aynan shunday holat bo'lgan: admin "blokdan chiqarildi" degan
 	// xabarni ko'rar, foydalanuvchi esa baribir kira olmasdi.
+	if err := moderation.RecordBanHistory(ctx, h.AuditCol, &u); err != nil {
+		httpx.Err(w, err)
+		return
+	}
 	if _, err := h.Users.UpdateOne(ctx, bson.M{"_id": id}, bson.M{
 		"$set": bson.M{"isBlocked": false, "updatedAt": now},
 		"$unset": bson.M{

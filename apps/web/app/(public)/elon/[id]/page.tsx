@@ -20,8 +20,11 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 
 export default async function Page({ params }: Params) {
   const e = await getElon(params.id);
-  // E'lon topilmasa (yoki o'chirilgan bo'lsa) — haqiqiy 404, indekslanmaydi.
-  if (!e) notFound();
+  if (!/^[a-f0-9]{24}$/i.test(params.id)) notFound();
+  // The server has no access to the browser's bearer session. An archived
+  // listing is private, so let the authenticated client check owner access.
+  // Missing public data already receives noindex metadata and no JobPosting.
+  if (!e) return <ElonClient />;
 
   const jobPostingLd = buildJobPostingLd(e, params.id);
   // "<" ni escape qilamiz — tavsif matnida "</script>" bo'lsa ham xavfsiz bo'lsin.

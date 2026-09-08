@@ -120,12 +120,21 @@ func (s *Service) Upload(ctx context.Context, prefix, originalName, contentType 
 		Key:          aws.String(key),
 		Body:         bytes.NewReader(buf),
 		ContentType:  aws.String(contentType),
-		CacheControl: aws.String("public, max-age=31536000, immutable"),
+		CacheControl: aws.String(objectCacheControl(key)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("s3 put: %w", err)
 	}
 	return &UploadResult{Key: key, URL: s.publicBaseURL + "/" + key}, nil
+}
+
+func objectCacheControl(key string) string {
+	// Avatars and listing images can be removed by moderation. An immutable entry
+	// would continue exposing the image after its backing object is deleted.
+	if strings.HasPrefix(key, "avatars/") || strings.HasPrefix(key, "elons/") {
+		return "no-store"
+	}
+	return "public, max-age=31536000, immutable"
 }
 
 func safeExtension(originalName, contentType string) string {

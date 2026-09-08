@@ -51,7 +51,6 @@ const LIMIT = 20;
    bu yerdagi holat buzilib qolsa ham (masalan, eski `sessionStorage`)
    kutilmagan parametr ketishining oldini oladi. */
 const HOLAT_QIY = ["", "0", "1"] as const;
-const TASDIQ_QIY = ["", "0", "1"] as const;
 const OCHIRILGAN_QIY = ["", "hide", "only"] as const;
 const PLATFORMA_QIY: readonly string[] = ["", ...CLIENT_PLATFORMS];
 
@@ -135,7 +134,6 @@ export default function AdminUsers() {
   const [q, setQ] = useState("");
   const [region, setRegion] = useState("");
   const [blocked, setBlocked] = useState("");
-  const [verified, setVerified] = useState("");
   const [platform, setPlatform] = useState("");
   // O'chirish oynasi butun `User` ni oladi, `id` ni emas: oyna kimni
   // o'chirayotganini ismi va raqami bilan ko'rsatadi va tasdiq uchun
@@ -185,7 +183,6 @@ export default function AdminUsers() {
       if (q) params.set("q", q);
       if (region) params.set("region", region);
       if (oq(blocked, HOLAT_QIY)) params.set("blocked", blocked);
-      if (oq(verified, TASDIQ_QIY)) params.set("verified", verified);
       if (oq(platform, PLATFORMA_QIY)) params.set("platform", platform);
       if (oq(deleted, OCHIRILGAN_QIY)) params.set("deleted", deleted);
       const javob = await api.get<Paged<User>>(`/api/admin/users?${params}`, { auth: "admin" } as any);
@@ -199,12 +196,12 @@ export default function AdminUsers() {
     } finally {
       if (men === soravRaqami.current) setYuklanmoqda(false);
     }
-  }, [page, q, region, blocked, verified, platform, deleted]);
+  }, [page, q, region, blocked, platform, deleted]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setIsSuper(getAdminRole() === "superadmin"); }, []);
   // Filtr o'zgarsa 1-sahifaga qaytamiz.
-  useEffect(() => { setPage(1); }, [q, region, blocked, verified, platform, deleted]);
+  useEffect(() => { setPage(1); }, [q, region, blocked, platform, deleted]);
 
   /** Bu foydalanuvchini shu admin blokdan chiqara oladimi. */
   function canUnblock(u: User): boolean {
@@ -262,13 +259,12 @@ export default function AdminUsers() {
 
   function exportCsv() {
     // Figma 6-panel: "Tugma ekrandagi filtrlarni saqlab qoladi — qidiruv,
-    // viloyat, holat, tasdiq va platforma eksportga ham qo'llanadi."
+    // viloyat, holat va platforma eksportga ham qo'llanadi."
     // `deleted` ataylab yuborilmaydi: eksport faol hisoblar ro'yxati.
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (region) params.set("region", region);
     if (oq(blocked, HOLAT_QIY)) params.set("blocked", blocked);
-    if (oq(verified, TASDIQ_QIY)) params.set("verified", verified);
     if (oq(platform, PLATFORMA_QIY)) params.set("platform", platform);
     downloadAdminCsv("/api/admin/export/users.csv", params);
   }
@@ -326,11 +322,6 @@ export default function AdminUsers() {
             <option value="">Holat (barchasi)</option>
             <option value="0">Faol</option>
             <option value="1">Bloklangan</option>
-          </Tanlov>
-          <Tanlov nomi="Tasdiq" kenglik={155} qiymat={verified} ozgardi={(v) => setVerified(oq(v, TASDIQ_QIY))}>
-            <option value="">Tasdiq (barchasi)</option>
-            <option value="1">Tasdiqlangan</option>
-            <option value="0">Tasdiqlanmagan</option>
           </Tanlov>
           <Tanlov nomi="O'chirilganlar" kenglik={178} qiymat={deleted} ozgardi={(v) => setDeleted(oq(v, OCHIRILGAN_QIY))}>
             <option value="">O&apos;chirilganlar bilan</option>

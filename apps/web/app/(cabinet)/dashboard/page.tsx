@@ -14,6 +14,7 @@ import { CardSkeleton } from "@/components/ui/Skeleton";
 import { T, useT } from "@/components/T";
 import { fmtSum } from "@/lib/format";
 import { REGIONS } from "@/lib/regions";
+import { loadAllOwnerApplications } from "@/lib/owner-listing";
 
 /** Figma "03 · Bosh sahifa": ko'k hero + statistika + kategoriyalar + yangi e'lonlar. */
 export default function Dashboard() {
@@ -35,9 +36,9 @@ export default function Dashboard() {
     queryKey: ["my-applications"],
     queryFn: () => api.get<Application[]>("/api/my/applications"),
   });
-  const { data: received } = useQuery<Record<string, Application[]>>({
+  const { data: received, isError: receivedError, refetch: refetchReceived } = useQuery<Record<string, Application[]>>({
     queryKey: ["my-elons-applications"],
-    queryFn: () => api.get<Record<string, Application[]>>("/api/my/elons/applications"),
+    queryFn: ({ signal }) => loadAllOwnerApplications(signal),
   });
   const { data: myElons } = useQuery<{ active: Elon[]; archived: Elon[] }>({
     queryKey: ["my-elons"],
@@ -146,10 +147,15 @@ export default function Dashboard() {
         {/* ── Statistika ───────────────────────────────── */}
         <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard value={myApps.length}          label="Yuborgan arizalarim"   href="/process"   tone="blue" />
-          <StatCard value={receivedList.length}    label="E'lonlarimga arizalar" href="/process"   tone="green" />
+          <StatCard value={received && !receivedError ? receivedList.length : null} label="E'lonlarimga arizalar" href="/process" tone="green" />
           <StatCard value={me?.completedJobsCount || 0} label="Bajarilgan ishlar" href="/history"  tone="amber" />
           <StatCard value={myElons?.active.length || 0} label="Faol e'lonlarim"   href="/my-elons" tone="pink" />
         </section>
+
+        {receivedError && <div role="alert" className="card p-4 flex flex-wrap items-center justify-between gap-3 text-sm muted">
+          <T>Arizalar ro'yxatini to'liq yuklab bo'lmadi.</T>
+          <button type="button" onClick={() => void refetchReceived()} className="btn btn-outline btn-sm"><T>Qayta urinish</T></button>
+        </div>}
 
         {/* ── Kategoriyalar ────────────────────────────── */}
         {(cats || []).length > 0 && (
@@ -264,13 +270,13 @@ const TONE: Record<string, { bg: string; fg: string }> = {
   pink:  { bg: "#FDE8EF", fg: "#BE185D" },
 };
 
-function StatCard({ value, label, href, tone }: { value: number; label: string; href: string; tone: keyof typeof TONE }) {
+function StatCard({ value, label, href, tone }: { value: number | null; label: string; href: string; tone: keyof typeof TONE }) {
   const c = TONE[tone];
   return (
     <Link href={href} className="card p-4 flex items-center gap-3.5 transition hover:-translate-y-0.5 hover:shadow-pop">
       <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-[17px] font-bold"
             style={{ background: c.bg, color: c.fg }}>
-        {value}
+        {value ?? "—"}
       </span>
       <div className="min-w-0">
         <div className="text-[13.5px] font-bold heading leading-tight"><T>{label}</T></div>

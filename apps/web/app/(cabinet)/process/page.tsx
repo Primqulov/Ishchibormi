@@ -1,13 +1,15 @@
 "use client";
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, Application, Notification, Elon } from "@/lib/api";
+import { api, Application, Notification, Elon, User } from "@/lib/api";
+import { invalidateOwnerListingQueries, loadAllOwnerApplications, loadOwnerListingGuard, MyElons, ownerListingError } from "@/lib/owner-listing";
 import { Shell } from "@/components/Shell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SlotProgress } from "@/components/ui/SlotProgress";
 import { Avatar } from "@/components/ui/Avatar";
 import { Modal } from "@/components/Modal";
-import { Phone, MapPin, ChevronDown, ExternalLink, Send, Inbox, Plus, Users, Clock } from "lucide-react";
+import { Phone, MapPin, ChevronDown, ExternalLink, Send, Inbox, Plus, Users, Clock, ArrowLeft } from "lucide-react";
 import { T, useT } from "@/components/T";
 import { fmtSum, fmtSumSom, fromNow } from "@/lib/format";
 import Link from "next/link";
@@ -27,24 +29,32 @@ const STRIPE: Record<string, string> = {
 };
 
 /** Figma "07/09 · Mening arizalarim": ikki rejim — yuborgan arizalarim va menga kelgan arizalar. */
-export default function Process() {
-  const [tab, setTab] = useState<"worker" | "employer">("worker");
+export default function ProcessPage() {
+  return <Suspense fallback={<div className="p-8 text-center muted"><T>Yuklanmoqda…</T></div>}><Process /></Suspense>;
+}
+
+function Process() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tab = searchParams.get("tab") === "employer" ? "employer" : "worker";
+  const requestedElon = tab === "employer" ? searchParams.get("elon") || "" : "";
   const [status, setStatus] = useState<string>("");
   const [cancelId, setCancelId] = useState("");
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelAsOwner, setCancelAsOwner] = useState(false);
   const [openElons, setOpenElons] = useState<Record<string, boolean>>({});
   const [reasonView, setReasonView] = useState<Application | null>(null);
   const [errMsg, setErrMsg] = useState("");
   const t = useT();
   const qc = useQueryClient();
 
-  const { data: mine } = useQuery<Application[]>({
+  const { data: mine, isLoading: mineLoading, isError: mineError, refetch: refetchMine } = useQuery<Application[]>({
     queryKey: ["my-applications"],
     queryFn: () => api.get<Application[]>("/api/my/applications"),
   });
-  const { data: received } = useQuery<Record<string, Application[]>>({
+  const { data: received, isLoading: receivedLoading, isError: receivedError, refetch: refetchReceived } = useQuery<Record<string, Application[]>>({
     queryKey: ["my-elons-applications"],
-    queryFn: () => api.get<Record<string, Application[]>>("/api/my/elons/applications"),
+    queryFn: ({ signal }) => loadAllOwnerApplications(signal),
   });
   const { data: notifs } = useQuery<Notification[]>({
     queryKey: ["notifications"],
@@ -52,13 +62,14 @@ export default function Process() {
   });
   // Har bir e'lonning to'lish holatini (acceptedCount / workersNeeded) ko'rsatish
   // uchun ish beruvchining e'lonlarini olamiz.
-  const { data: myElons } = useQuery<{ active: Elon[]; archived: Elon[] }>({
+  const { data: myElons, isLoading: listingsLoading, isError: listingsError, refetch: refetchListings } = useQuery<MyElons>({
     queryKey: ["my-elons"],
-    queryFn: () => api.get<{ active: Elon[]; archived: Elon[] }>("/api/my/elons"),
+    queryFn: () => api.get<MyElons>("/api/my/elons", { cache: "no-store" }),
   });
+  const { data: me, isSuccess: identityResolved } = useQuery<User>({ queryKey: ["me"], queryFn: () => api.get<User>("/api/me"), retry: false });
   const elonById = useMemo(() => {
     const m: Record<string, Elon> = {};
-    [...(myElons?.active || []), ...(myElons?.archived || [])].forEach((e) => { m[e.id] = e; });
+    [...(myElons?.active || []), ...(myElons?.drafts || []), ...(myElons?.archived || [])].forEach((e) => { m[e.id] = e; });
     return m;
   }, [myElons]);
 
@@ -80,33 +91,59 @@ export default function Process() {
   const workerDot = (mine || []).some((a) => unreadAppIds.has(a.id));
   const employerDot = Object.values(received || {}).some((apps) => apps.some((a) => unreadAppIds.has(a.id)));
 
-  function refreshLists() {
-    qc.invalidateQueries({ queryKey: ["my-elons-applications"] });
-    qc.invalidateQueries({ queryKey: ["my-applications"] });
-    qc.invalidateQueries({ queryKey: ["my-elons"] });
+  function refreshLists() { return invalidateOwnerListingQueries(qc, requestedElon); }
+
+  async function verifyEmployerApplication(applicationId: string, statuses: Application["status"][], listingStatuses: Elon["status"][]) {
+    const application = Object.values(received || {}).flat().find((item) => item.id === applicationId);
+    if (!application) throw new Error("Ariza topilmadi. Sahifani yangilang.");
+    const fresh = await loadOwnerListingGuard(application.elonId);
+    qc.setQueryData(["elon", application.elonId], fresh.listing);
+    qc.setQueryData<Record<string, Application[]>>(["my-elons-applications"], (previous) => ({ ...previous, [application.elonId]: fresh.applications }));
+    const current = fresh.applications.find((item) => item.id === applicationId);
+    if (!current || !statuses.includes(current.status) || !listingStatuses.includes(fresh.listing.status)) {
+      throw new Error("Bu ariza bilan hozir amal bajarib bo'lmaydi. Ma'lumotlar yangilandi.");
+    }
+    return current;
+  }
+  function decisionError(error: unknown) {
+    setErrMsg(ownerListingError(error));
+    void refreshLists();
   }
   const accept = useMutation({
-    mutationFn: (id: string) => api.post(`/api/applications/${id}/accept`),
+    mutationFn: async (id: string) => { await verifyEmployerApplication(id, ["pending"], ["recruiting", "filled"]); return api.post(`/api/applications/${id}/accept`); },
     onSuccess: refreshLists,
-    onError: (e: any) => setErrMsg(e?.message || "Xatolik yuz berdi"),
+    onError: decisionError,
   });
   const reject = useMutation({
-    mutationFn: (id: string) => api.post(`/api/applications/${id}/reject`),
+    mutationFn: async (id: string) => { await verifyEmployerApplication(id, ["pending"], ["recruiting", "filled"]); return api.post(`/api/applications/${id}/reject`); },
     onSuccess: refreshLists,
+    onError: decisionError,
   });
   const cancel = useMutation({
-    mutationFn: () => api.post(`/api/applications/${cancelId}/cancel`, { reason: cancelReason.trim() }),
-    onSuccess: () => { setCancelId(""); setCancelReason(""); refreshLists(); },
+    mutationFn: async () => {
+      if (cancelAsOwner) await verifyEmployerApplication(cancelId, ["accepted"], ["recruiting", "filled", "confirmed", "in_progress"]);
+      return api.post(`/api/applications/${cancelId}/cancel`, { reason: cancelReason.trim() });
+    },
+    onSuccess: async () => { setCancelId(""); setCancelReason(""); setCancelAsOwner(false); await refreshLists(); },
+    onError: decisionError,
   });
   const done = useMutation({
-    mutationFn: (id: string) => api.post(`/api/applications/${id}/confirm-done`),
+    mutationFn: async ({ id, asOwner }: { id: string; asOwner: boolean }) => {
+      if (asOwner) await verifyEmployerApplication(id, ["accepted"], ["recruiting", "filled", "confirmed", "in_progress"]);
+      return api.post(`/api/applications/${id}/confirm-done`);
+    },
     onSuccess: refreshLists,
+    onError: decisionError,
   });
 
   const myApps = mine || [];
   const receivedCount = Object.values(received || {}).flat().length;
   const filtered = status ? myApps.filter((a) => a.status === status) : myApps;
   const countOf = (s: string) => myApps.filter((a) => a.status === s).length;
+  const employerBusy = accept.isPending || reject.isPending || done.isPending || cancel.isPending;
+  const employerGroups: [string, Application[]][] = requestedElon
+    ? received?.[requestedElon] || elonById[requestedElon] ? [[requestedElon, received?.[requestedElon] || []]] : []
+    : Object.entries(received || {});
 
   return (
     <Shell wide>
@@ -125,12 +162,12 @@ export default function Process() {
         {/* Rejim kartalari — Figma: ikkita katta tanlov */}
         <div className="grid sm:grid-cols-2 gap-4">
           <ModeCard
-            active={tab === "worker"} onClick={() => { setTab("worker"); setStatus(""); }}
+            active={tab === "worker"} onClick={() => { router.push("/process"); setStatus(""); }}
             icon={<Send size={17} />} title="Ishga arizalarim" subtitle="Men yuborgan arizalar"
             count={myApps.length} dot={workerDot}
           />
           <ModeCard
-            active={tab === "employer"} onClick={() => { setTab("employer"); setStatus(""); }}
+            active={tab === "employer"} onClick={() => router.push("/my-elons")}
             icon={<Inbox size={17} />} title="Ish e'lonlarim" subtitle="Menga kelgan arizalar"
             count={receivedCount} dot={employerDot}
           />
@@ -148,7 +185,7 @@ export default function Process() {
             </div>
 
             <div className="flex flex-col gap-4">
-              {filtered.length === 0 && (
+              {mineLoading ? <div className="card p-10 text-center muted text-sm"><T>Yuklanmoqda…</T></div> : mineError ? <div role="alert" className="card p-6 flex flex-wrap gap-3 items-center justify-between text-sm muted"><T>Arizalarni yuklab bo'lmadi.</T><button type="button" onClick={() => void refetchMine()} className="btn btn-outline btn-sm"><T>Qayta urinish</T></button></div> : filtered.length === 0 && (
                 <div className="card p-10 text-center muted text-sm"><T>Sizda ariza yo'q.</T></div>
               )}
               {filtered.map((a) => (
@@ -201,11 +238,11 @@ export default function Process() {
                         <>
                           <a href={`tel:${a.workerPhone}`} className="btn btn-outline btn-sm gap-1.5"><Phone size={13} /><T>Aloqa</T></a>
                           <Link href={`/elon/${a.elonId}`} className="btn btn-outline btn-sm gap-1.5"><MapPin size={13} /><T>Manzil</T></Link>
-                          <button onClick={() => done.mutate(a.id)} className="btn btn-primary btn-sm"><T>Bajarildi</T></button>
+                          <button onClick={() => done.mutate({ id: a.id, asOwner: false })} disabled={done.isPending} className="btn btn-primary btn-sm"><T>Bajarildi</T></button>
                         </>
                       )}
                       {(a.status === "pending" || a.status === "accepted") && (
-                        <button onClick={() => { setCancelReason(""); setCancelId(a.id); }}
+                        <button onClick={() => { setCancelReason(""); setCancelAsOwner(false); setCancelId(a.id); }}
                                 className="btn btn-sm !bg-transparent text-danger hover:!bg-[rgba(217,45,32,0.08)]">
                           <T>Arizani bekor qilish</T>
                         </button>
@@ -222,19 +259,28 @@ export default function Process() {
         {/* ── Menga kelgan arizalar ────────────────────────────── */}
         {tab === "employer" && (
           <div className="flex flex-col gap-4">
-            {Object.keys(received || {}).length === 0 && (
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <Link href="/my-elons" className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: "var(--brand)" }}><ArrowLeft size={14} /><T>Ish e'lonlarimga qaytish</T></Link>
+              {requestedElon && <Link href="/process?tab=employer" className="text-[13px] font-semibold" style={{ color: "var(--brand)" }}><T>Barcha e'lonlarning arizalari</T></Link>}
+            </div>
+            {(receivedLoading || listingsLoading) ? <div className="card p-10 text-center muted text-sm"><T>Yuklanmoqda…</T></div> : (receivedError || listingsError) ? <div role="alert" className="card p-6 flex flex-wrap gap-3 items-center justify-between text-sm muted">
+              <T>Arizalar yoki e'lon ma'lumotlarini yuklab bo'lmadi.</T><button type="button" onClick={() => { void refetchReceived(); void refetchListings(); }} className="btn btn-outline btn-sm"><T>Qayta urinish</T></button>
+            </div> : employerGroups.length === 0 && (
               <div className="card p-10 text-center muted text-sm"><T>Hozircha arizalar yo'q.</T></div>
             )}
-            {Object.entries(received || {}).map(([elonId, apps]) => {
-              const open = !!openElons[elonId];
+            {employerGroups.map(([elonId, apps]) => {
+              const open = requestedElon === elonId ? openElons[elonId] !== false : !!openElons[elonId];
               const el = elonById[elonId];
+              const owned = !!(identityResolved && me && el && el.ownerId === me.id && !el.isDeleted && !listingsError && !receivedError);
+              const canManage = owned && ["recruiting", "filled", "confirmed", "in_progress"].includes(el.status);
+              const canDecide = owned && ["recruiting", "filled"].includes(el.status);
               return (
-                <div key={elonId} className="card p-5">
+                <div key={elonId} className="card p-5" id={`applications-${elonId}`}>
                   {/* Sarlavha bosilganda sahifa ochilmaydi — pastidan arizachilar ro'yxati ochiladi. */}
                   <button
                     type="button"
                     onClick={() => {
-                      setOpenElons((s) => ({ ...s, [elonId]: !s[elonId] }));
+                      setOpenElons((s) => ({ ...s, [elonId]: !open }));
                       if (!open) markSeen(...apps.map((a) => a.id));
                     }}
                     className="w-full flex items-center justify-between gap-3 text-left"
@@ -244,7 +290,8 @@ export default function Process() {
                         {apps.some((a) => unreadAppIds.has(a.id)) && (
                           <span className="h-2 w-2 rounded-full shrink-0" style={{ background: "var(--brand)" }} />
                         )}
-                        <span className="text-[17px] font-bold heading truncate"><T>{apps[0]?.elonTitle || "E'lon"}</T></span>
+                        <span className="text-[17px] font-bold heading truncate"><T>{el?.title || apps[0]?.elonTitle || "E'lon"}</T></span>
+                        {el && <StatusBadge status={el.status} />}
                       </span>
                       {el && (
                         <span className="mt-1 flex items-center gap-3 text-[12.5px] muted">
@@ -261,7 +308,7 @@ export default function Process() {
                     </span>
                   </button>
 
-                  {el && (
+                  {el && canManage && (
                     <div className="mt-3.5">
                       <SlotProgress accepted={el.acceptedCount} needed={el.workersNeeded} />
                     </div>
@@ -273,6 +320,8 @@ export default function Process() {
                             style={{ color: "var(--brand)" }}>
                         <ExternalLink size={12} /><T>E'lonni ochish</T>
                       </Link>
+                      {!receivedLoading && !receivedError && apps.length === 0 && <p className="py-4 text-sm muted"><T>Bu e'longa hali ariza yuborilmagan.</T></p>}
+                      {el && (el.isDeleted || ["cancelled", "completed", "hidden"].includes(el.status)) && <p className="py-1 text-[12px] muted"><T>E'lon yopilgan. Arizalar tarixini ko'rishingiz mumkin.</T></p>}
                       {apps.map((a) => (
                         <div key={a.id} className="surface p-3.5 flex flex-wrap items-center gap-3">
                           <Avatar name={a.workerName?.trim() || a.workerPhone} src={a.workerAvatarUrl} size="sm" />
@@ -294,18 +343,19 @@ export default function Process() {
                             )}
                           </div>
                           <StatusBadge status={a.status} />
-                          <a href={`tel:${a.workerPhone}`} className="btn btn-outline btn-sm gap-1.5"><Phone size={12} /><T>Qo'ng'iroq</T></a>
-                          {a.status === "pending" && (
+                          <Link href={`/u/${a.workerId}`} className="btn btn-soft btn-sm"><T>Profilni ko'rish</T></Link>
+                          {canManage && a.workerPhone && <a href={`tel:${a.workerPhone.replace(/[^\d+]/g, "")}`} className="btn btn-outline btn-sm gap-1.5"><Phone size={12} /><T>Qo'ng'iroq</T></a>}
+                          {a.status === "pending" && canDecide && (
                             <>
-                              <button onClick={() => { markSeen(a.id); accept.mutate(a.id); }} className="btn btn-primary btn-sm"><T>Qabul qilish</T></button>
-                              <button onClick={() => { markSeen(a.id); reject.mutate(a.id); }}
+                              <button onClick={() => { markSeen(a.id); accept.mutate(a.id); }} disabled={employerBusy} className="btn btn-primary btn-sm"><T>Qabul qilish</T></button>
+                              <button onClick={() => { markSeen(a.id); reject.mutate(a.id); }} disabled={employerBusy}
                                       className="btn btn-sm !bg-transparent text-danger hover:!bg-[rgba(217,45,32,0.08)]"><T>Rad etish</T></button>
                             </>
                           )}
-                          {a.status === "accepted" && (
+                          {a.status === "accepted" && canManage && (
                             <>
-                              <button onClick={() => { markSeen(a.id); done.mutate(a.id); }} className="btn btn-primary btn-sm"><T>Bajarildi</T></button>
-                              <button onClick={() => { markSeen(a.id); setCancelReason(""); setCancelId(a.id); }}
+                              <button onClick={() => { markSeen(a.id); done.mutate({ id: a.id, asOwner: true }); }} disabled={employerBusy || !!a.employerConfirmedDone} className="btn btn-primary btn-sm"><T>{a.employerConfirmedDone ? "Tasdiqlangan" : "Bajarildi"}</T></button>
+                              <button onClick={() => { markSeen(a.id); setCancelReason(""); setCancelAsOwner(true); setCancelId(a.id); }} disabled={employerBusy}
                                       className="btn btn-sm !bg-transparent text-danger hover:!bg-[rgba(217,45,32,0.08)]"><T>Bekor qilish</T></button>
                             </>
                           )}
@@ -320,16 +370,16 @@ export default function Process() {
         )}
       </div>
 
-      <Modal open={!!cancelId} onClose={() => setCancelId("")} title={t("Ishni bekor qilasizmi?")} footer={
+      <Modal open={!!cancelId} onClose={() => { if (!cancel.isPending) setCancelId(""); }} title={t("Ishni bekor qilasizmi?")} footer={
         <>
-          <button onClick={() => setCancelId("")} className="btn-secondary"><T>Yo'q</T></button>
+          <button onClick={() => setCancelId("")} disabled={cancel.isPending} className="btn-secondary"><T>Yo'q</T></button>
           <button onClick={() => cancel.mutate()} disabled={cancel.isPending || !cancelReason.trim()} className="btn-danger disabled:opacity-50"><T>Ha, bekor qilish</T></button>
         </>
       }>
-        <p className="text-sm muted mb-3"><T>Ushbu ishni bekor qilasiz. Keyinroq qayta ariza topshirishingiz mumkin.</T></p>
+        <p className="text-sm muted mb-3"><T>{cancelAsOwner ? "Tanlangan ishchi bilan kelishuv bekor qilinadi. Sababi ariza tarixida saqlanadi." : "Ushbu ishni bekor qilasiz. Keyinroq qayta ariza topshirishingiz mumkin."}</T></p>
         <label className="block">
           <span className="text-sm font-medium"><T>BEKOR QILISH SABABI</T> <span className="text-danger">*</span></span>
-          <textarea className="input mt-1" rows={3} value={cancelReason} onChange={(ev) => setCancelReason(ev.target.value)} placeholder={t("Masalan: rejalarim o'zgardi")} />
+          <textarea className="input mt-1" rows={3} maxLength={500} disabled={cancel.isPending} value={cancelReason} onChange={(ev) => setCancelReason(ev.target.value)} placeholder={t("Masalan: rejalarim o'zgardi")} />
           {!cancelReason.trim() && <span className="text-xs text-danger mt-1 block"><T>Sababni yozmasangiz bekor qila olmaysiz.</T></span>}
         </label>
       </Modal>

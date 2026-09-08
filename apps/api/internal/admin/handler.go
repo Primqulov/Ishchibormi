@@ -52,11 +52,12 @@ type Handler struct {
 	// Konstruktorda emas, main.go da to'ldiriladi: NewHandler imzosi
 	// o'zgarmasin (uni testlar ham chaqiradi) va bog'lanmagan holat
 	// normal bo'lib qolsin — tugma 503 qaytaradi, panel ishlayveradi.
-	TG          *tgsend.Client
-	AlertChatID int64
-	Notify      *notification.Service
-	Apps        *mongo.Collection
-	Storage     *storage.Service
+	TG            *tgsend.Client
+	AlertChatID   int64
+	Notify        *notification.Service
+	Apps          *mongo.Collection
+	Storage       *storage.Service
+	AvatarUploads *mongo.Collection
 
 	// Strikes — avtomatik moderatsiya bloklarini ochish uchun (superadmin).
 	Strikes *moderation.StrikeStore
@@ -85,25 +86,26 @@ type Handler struct {
 
 func NewHandler(cfg config.Config, db *mongo.Database, n *notification.Service, s *storage.Service) *Handler {
 	return &Handler{
-		Cfg:        cfg,
-		Admins:     db.Collection("admins"),
-		Sessions:   db.Collection("admin_sessions"),
-		Users:      db.Collection("users"),
-		Elons:      db.Collection("elons"),
-		Cats:       db.Collection("categories"),
-		Reports:    db.Collection("reports"),
-		Feedback:   db.Collection("feedback"),
-		AuditCol:   db.Collection("admin_audit"),
-		Broadcasts: db.Collection("broadcasts"),
-		ErrGroups:  db.Collection("error_groups"),
-		ErrEvents:  db.Collection("error_events"),
-		ErrSamples: db.Collection("error_samples"),
-		Notify:     n,
-		Apps:       db.Collection("applications"),
-		Storage:    s,
-		Strikes:    moderation.NewStrikeStore(db, cfg.ModerationStrikeLimit, cfg.ModerationBanDuration),
-		loginGuard: newLoginGuard(),
-		totpGuard:  newTOTPGuard(),
+		Cfg:           cfg,
+		Admins:        db.Collection("admins"),
+		Sessions:      db.Collection("admin_sessions"),
+		Users:         db.Collection("users"),
+		Elons:         db.Collection("elons"),
+		Cats:          db.Collection("categories"),
+		Reports:       db.Collection("reports"),
+		Feedback:      db.Collection("feedback"),
+		AuditCol:      db.Collection("admin_audit"),
+		Broadcasts:    db.Collection("broadcasts"),
+		ErrGroups:     db.Collection("error_groups"),
+		ErrEvents:     db.Collection("error_events"),
+		ErrSamples:    db.Collection("error_samples"),
+		Notify:        n,
+		Apps:          db.Collection("applications"),
+		Storage:       s,
+		AvatarUploads: db.Collection("avatar_uploads"),
+		Strikes:       moderation.NewStrikeStore(db, cfg.ModerationStrikeLimit, cfg.ModerationBanDuration),
+		loginGuard:    newLoginGuard(),
+		totpGuard:     newTOTPGuard(),
 	}
 }
 

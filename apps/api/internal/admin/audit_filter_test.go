@@ -16,6 +16,7 @@ func TestActionCodeRe(t *testing.T) {
 		"session_idle_expired", "2fa_enable", "2fa_disable", "2fa_throttled",
 		"category_icon_upload", "user_unblock", "moderation_ban_lift",
 		"export_applications",
+		"avatar.download", "avatar.delete",
 	}
 	for _, v := range ok {
 		if !actionCodeRe.MatchString(v) {

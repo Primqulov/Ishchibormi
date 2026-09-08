@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/ishchibormi/backend/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -30,6 +32,7 @@ type StrikeStore struct {
 	col   *mongo.Collection
 	users *mongo.Collection
 	elons *mongo.Collection
+	audit *mongo.Collection
 	limit int
 	ban   time.Duration
 }
@@ -68,6 +71,9 @@ type StrikeRecord struct {
 	BannedUntil *time.Time    `bson:"bannedUntil,omitempty" json:"bannedUntil,omitempty"`
 	Events      []StrikeEvent `bson:"events,omitempty" json:"events,omitempty"`
 	UpdatedAt   time.Time     `bson:"updatedAt" json:"updatedAt"`
+	// Cleared only after user/listing enforcement and history all succeed.
+	// A retry keeps the original start/reason/deadline instead of extending it.
+	PendingBan *pendingBan `bson:"pendingBan,omitempty" json:"-"`
 }
 
 // Banned — hozir blokdami.
@@ -87,6 +93,7 @@ func NewStrikeStore(db *mongo.Database, limit int, ban time.Duration) *StrikeSto
 		col:   db.Collection("moderation_strikes"),
 		users: db.Collection("users"),
 		elons: db.Collection("elons"),
+		audit: db.Collection("admin_audit"),
 		limit: limit,
 		ban:   ban,
 	}
@@ -120,21 +127,22 @@ func (s *StrikeStore) RecordByUser(ctx context.Context, userID primitive.ObjectI
 	if s == nil {
 		return nil, nil
 	}
-	var u struct {
-		Phone string `bson:"phone"`
-	}
+	var u models.User
 	if err := s.users.FindOne(ctx, bson.M{"_id": userID},
-		options.FindOne().SetProjection(bson.M{"phone": 1})).Decode(&u); err != nil {
+		options.FindOne().SetProjection(bson.M{
+			"phone": 1, "blockSource": 1, "blockReason": 1,
+			"blockedAt": 1, "moderationBannedUntil": 1,
+		})).Decode(&u); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(u.Phone) == "" {
 		return nil, ErrNoPhone
 	}
-	return s.record(ctx, u.Phone, userID, kind, detail)
+	return s.record(ctx, u.Phone, userID, kind, detail, &u)
 }
 
 // record — sanoqni oshiradi va chegaraga yetilsa bloklaydi.
-func (s *StrikeStore) record(ctx context.Context, phone string, userID primitive.ObjectID, kind, detail string) (*StrikeRecord, error) {
+func (s *StrikeStore) record(ctx context.Context, phone string, userID primitive.ObjectID, kind, detail string, previous *models.User) (*StrikeRecord, error) {
 	now := time.Now()
 	ev := StrikeEvent{Kind: kind, Detail: detail, At: now}
 
@@ -160,12 +168,49 @@ func (s *StrikeStore) record(ctx context.Context, phone string, userID primitive
 	// cheksiz cho'zib yubormasligi kerak.
 	if rec.Strikes >= s.limit && !rec.Banned(now) {
 		until := now.Add(s.ban)
-		if _, err := s.col.UpdateOne(ctx, bson.M{"_id": rec.ID},
-			bson.M{"$set": bson.M{"bannedUntil": until, "updatedAt": now}}); err != nil {
+		pending := pendingBan{
+			UserID: userID, At: now, Until: until, Reason: AutoBanReason(rec.Strikes),
+			Previous: knownBanSnapshot(previous),
+		}
+		// An older expired claim can still await audit recovery. Carry its
+		// exact targets/snapshots forward if history is still unavailable;
+		// starting the new punishment must not discard that retained history.
+		if err := s.flushPendingBanHistory(ctx, rec.PendingBan); err != nil {
+			pending.Retained = rec.PendingBan.snapshots()
+		}
+		// Only one concurrent threshold-crossing request may start this ban.
+		// Otherwise its deadline and durable history would be duplicated.
+		err := s.col.FindOneAndUpdate(ctx, bson.M{
+			"_id": rec.ID,
+			"$or": bson.A{
+				bson.M{"bannedUntil": nil},
+				bson.M{"bannedUntil": bson.M{"$lte": now}},
+			},
+		}, bson.M{"$set": bson.M{
+			"bannedUntil": until, "updatedAt": now, "pendingBan": pending,
+		}},
+			options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&rec)
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			rec = StrikeRecord{}
+			err = s.col.FindOne(ctx, bson.M{"phone": phone}).Decode(&rec)
+		}
+		if err != nil {
 			return &rec, err
 		}
-		rec.BannedUntil = &until
-		s.applyBan(ctx, userID, until, rec.Strikes)
+	}
+	// A prior attempt may have claimed the ban but failed to write history
+	// or enforce one of its projections. Retry that same claim while active.
+	// Expired pending state is never applied as a new punishment.
+	if rec.PendingBan != nil && rec.Banned(time.Now()) {
+		if err := s.applyBan(ctx, rec.PendingBan); err != nil {
+			return &rec, err
+		}
+		if _, err := s.col.UpdateOne(ctx, bson.M{
+			"_id": rec.ID, "bannedUntil": *rec.BannedUntil, "pendingBan.at": rec.PendingBan.At,
+		}, bson.M{"$unset": bson.M{"pendingBan": ""}}); err != nil {
+			return &rec, err
+		}
+		rec.PendingBan = nil
 	}
 	return &rec, nil
 }
@@ -179,25 +224,41 @@ func (s *StrikeStore) record(ctx context.Context, phone string, userID primitive
 //
 // `ownerBlocked` esa e'lonlarni ommaviy feeddan darhol olib tashlaydi
 // (admin bloklashda ham xuddi shunday qilinadi).
-func (s *StrikeStore) applyBan(ctx context.Context, userID primitive.ObjectID, until time.Time, strikes int) {
-	if userID.IsZero() {
-		return
+func (s *StrikeStore) applyBan(ctx context.Context, pending *pendingBan) error {
+	if pending.UserID.IsZero() || pending.At.IsZero() || pending.Until.IsZero() {
+		return errors.New("moderation: pending ban identity, start or deadline missing")
 	}
-	now := time.Now()
+	userID := pending.UserID
+	until := pending.Until
+	var writeErrors []error
 	// Sabab hujjatga yoziladi, faqat sana emas: admin panelida "bu odam nega
 	// bloklangan?" degan savolga ertaga ham javob bo'lishi kerak. Matn tayyor
 	// va bexatar — qaysi tasnif ishlagani bu yerga tushmaydi (u faqat
 	// `moderation_strikes.events[].detail` da, admin ko'rinishida).
-	_, _ = s.users.UpdateOne(ctx, bson.M{"_id": userID},
+	result, userErr := s.users.UpdateOne(ctx, bson.M{"_id": userID},
 		bson.M{"$set": bson.M{
 			"moderationBannedUntil": until,
-			"blockReason":           AutoBanReason(strikes),
+			"blockReason":           pending.Reason,
 			"blockSource":           BlockSourceModeration,
-			"blockedAt":             now,
-			"updatedAt":             now,
+			"blockedAt":             pending.At,
+			"updatedAt":             time.Now(),
 		}})
-	_, _ = s.elons.UpdateMany(ctx, bson.M{"ownerId": userID},
-		bson.M{"$set": bson.M{"ownerBlocked": true, "updatedAt": now}})
+	if userErr == nil && result.MatchedCount == 0 {
+		userErr = mongo.ErrNoDocuments
+	}
+	if userErr != nil {
+		writeErrors = append(writeErrors, userErr)
+	}
+	// A history error must never bypass enforcement for existing sessions
+	// or leave the user's listings public. Attempt both independently.
+	if _, err := s.elons.UpdateMany(ctx, bson.M{"ownerId": userID},
+		bson.M{"$set": bson.M{"ownerBlocked": true, "updatedAt": time.Now()}}); err != nil {
+		writeErrors = append(writeErrors, err)
+	}
+	if err := s.flushPendingBanHistory(ctx, pending); err != nil {
+		writeErrors = append(writeErrors, err)
+	}
+	return errors.Join(writeErrors...)
 }
 
 // Blok manbalari — models.User.BlockSource qiymatlari.
@@ -278,12 +339,31 @@ func (s *StrikeStore) BanByPhone(ctx context.Context, phone string) (until time.
 	if rec.Banned(now) {
 		return *rec.BannedUntil, true, nil
 	}
-	if rec.BannedUntil != nil {
-		// Muddat tugagan — yozuvni tiklaymiz.
-		_, _ = s.col.UpdateOne(ctx, bson.M{"_id": rec.ID}, bson.M{
-			"$set":   bson.M{"strikes": 0, "updatedAt": now},
-			"$unset": bson.M{"bannedUntil": ""},
-		})
+	if rec.BannedUntil != nil || rec.PendingBan != nil {
+		// Expiry never waits for the audit service to recover. Retain failed
+		// history snapshots privately, then flush them on a later login even
+		// when the effective bannedUntil has already been removed.
+		historyErr := s.flushPendingBanHistory(ctx, rec.PendingBan)
+		if historyErr != nil {
+			log.Printf("moderation: pending ban history not saved: %v", historyErr)
+		}
+		filter := bson.M{"_id": rec.ID, "bannedUntil": rec.BannedUntil}
+		set := bson.M{"updatedAt": now}
+		unset := bson.M{}
+		if rec.BannedUntil != nil {
+			set["strikes"] = 0
+			unset["bannedUntil"] = ""
+		}
+		if rec.PendingBan != nil {
+			filter["pendingBan.at"] = rec.PendingBan.At
+			filter["pendingBan.userId"] = rec.PendingBan.UserID
+			if historyErr == nil {
+				unset["pendingBan"] = ""
+			}
+		}
+		if len(unset) > 0 {
+			_, _ = s.col.UpdateOne(ctx, filter, bson.M{"$set": set, "$unset": unset})
+		}
 	}
 	return time.Time{}, false, nil
 }
@@ -305,17 +385,30 @@ func (s *StrikeStore) LiftBanByUser(ctx context.Context, userID primitive.Object
 	if s == nil {
 		return errors.New("moderation: strike store not configured")
 	}
-	var u struct {
-		Phone     string `bson:"phone"`
-		IsBlocked bool   `bson:"isBlocked"`
-	}
+	var u models.User
 	if err := s.users.FindOne(ctx, bson.M{"_id": userID},
-		options.FindOne().SetProjection(bson.M{"phone": 1, "isBlocked": 1})).Decode(&u); err != nil {
+		options.FindOne().SetProjection(bson.M{
+			"phone": 1, "isBlocked": 1, "blockSource": 1, "blockReason": 1,
+			"blockedAt": 1, "moderationBannedUntil": 1,
+		})).Decode(&u); err != nil {
+		return err
+	}
+	if err := RecordBanHistory(ctx, s.audit, &u); err != nil {
 		return err
 	}
 	if strings.TrimSpace(u.Phone) != "" {
-		if _, err := s.col.DeleteOne(ctx, bson.M{"phone": u.Phone}); err != nil {
+		var rec StrikeRecord
+		err := s.col.FindOne(ctx, bson.M{"phone": u.Phone}).Decode(&rec)
+		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 			return err
+		}
+		if err == nil {
+			if err := s.flushPendingBanHistory(ctx, rec.PendingBan); err != nil {
+				return err
+			}
+			if _, err := s.col.DeleteOne(ctx, bson.M{"_id": rec.ID}); err != nil {
+				return err
+			}
 		}
 	}
 	// Sabab maydonlari blok bilan birga tozalanadi — lekin FAQAT moderatsiya

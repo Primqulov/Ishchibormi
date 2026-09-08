@@ -5,6 +5,7 @@ package upload
 import (
 	"bytes"
 	"context"
+	"image"
 	"io"
 	"log"
 	"net/http"
@@ -12,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"github.com/ishchibormi/backend/pkg/storage"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // Rasm siqishda uzun tomon uchun maksimal o'lcham (px), fayl turi bo'yicha.
@@ -25,7 +28,8 @@ var maxDimByKind = map[string]int{
 }
 
 type Handler struct {
-	Storage *storage.Service
+	Storage       *storage.Service
+	AvatarUploads *mongo.Collection
 
 	// Ixtiyoriy kontent tekshiruvi (AttachModerator orqali). Profil rasmi
 	// ham, e'lon rasmi ham SAQLASHDAN OLDIN tekshiriladi.
@@ -164,11 +168,16 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	// siqilgan variantni emas. Profil rasmi ham, e'lon rasmi ham shu yerdan
 	// o'tadi, ya'ni rad etilgan rasm storage'ga UMUMAN yozilmaydi.
 	ownerID, _ := primitive.ObjectIDFromHex(uid)
-	if err := h.moderateUpload(r.Context(), ownerID, kind, ct, raw); err != nil {
+	moderationStatus, err := h.moderateWithStatus(r.Context(), ownerID, kind, ct, raw)
+	if err != nil {
 		httpx.Err(w, err)
 		return
 	}
-	body := compressImage(raw, ct, maxDimByKind[kind])
+	body := raw
+	// The viewer/download preserves the avatar's original bytes and aspect ratio.
+	if kind != "avatar" {
+		body = compressImage(raw, ct, maxDimByKind[kind])
+	}
 
 	// Build a prefix that scopes the object to this user (and entity, if any).
 	// The optional scope is always nested UNDER the user's own prefix so a
@@ -184,7 +193,35 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Err(w, httpx.NewError(500, "upload_failed", "fayl yuklab bo'lmadi"))
 		return
 	}
+	if kind == "avatar" && h.AvatarUploads != nil {
+		cfg, _, _ := image.DecodeConfig(bytes.NewReader(body))
+		now := time.Now().UTC()
+		record := models.AvatarUpload{ID: out.URL, UserID: ownerID, Metadata: models.AvatarMetadata{
+			URL: out.URL, Width: cfg.Width, Height: cfg.Height, SizeBytes: int64(len(body)),
+			ContentType: ct, UploadedAt: &now, ModerationStatus: moderationStatus,
+		}}
+		if _, err := h.AvatarUploads.InsertOne(r.Context(), record); err != nil {
+			DeleteByURL(h.Storage, out.URL)
+			httpx.Err(w, httpx.NewError(503, "upload_metadata_failed", "rasm ma'lumotlarini saqlab bo'lmadi"))
+			return
+		}
+	}
 	httpx.JSON(w, 201, out)
+}
+
+// Optional richer interface avoids the moderation -> upload import cycle.
+// A legacy moderator returning only nil cannot prove a check happened.
+func (h *Handler) moderateWithStatus(ctx context.Context, uid primitive.ObjectID, kind, mime string, data []byte) (string, error) {
+	if m, ok := h.guard.(interface {
+		CheckImageStatus(context.Context, primitive.ObjectID, string, string, string, string, []byte) (string, error)
+	}); ok && h.guard.On() {
+		label := "elon-image"
+		if kind == "avatar" {
+			label = "avatar"
+		}
+		return m.CheckImageStatus(ctx, uid, label, "image_rejected", imageReasonPrefix, mime, data)
+	}
+	return "unknown", h.moderateUpload(ctx, uid, kind, mime, data)
 }
 
 // DELETE /api/uploads?key=...  or  DELETE /api/uploads?url=...

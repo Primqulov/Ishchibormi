@@ -299,7 +299,7 @@ const AMAL_TARTIB = ["hidden", "restored", "status", "deleted", "purged"];
  * haqiqiy borishini buzardi. Ro'yxat oq ro'yxat sifatida ham ishlaydi —
  * `<select>` qiymati brauzer vositalari orqali o'zgartirilishi mumkin.
  */
-const QOYILADIGAN = ["recruiting", "filled", "cancelled", "hidden"];
+const QOYILADIGAN = ["recruiting", "filled", "in_progress", "completed", "cancelled"];
 
 /** To'lov turi yorliqlari (Figma 3.5.1 · "Ish shartlari va to'lov"). */
 const TOLOV_TURI: Record<string, string> = {
@@ -486,6 +486,8 @@ function ElonBatafsil() {
 
   const [holatOpen, setHolatOpen] = useState(false);
   const [holatQiy, setHolatQiy] = useState("recruiting");
+  const [holatSabab, setHolatSabab] = useState("");
+  const [holatXabar, setHolatXabar] = useState(true);
   const [arizaOpen, setArizaOpen] = useState(false);
   const [amalOpen, setAmalOpen] = useState(false);
   const [ochirOpen, setOchirOpen] = useState(false);
@@ -539,25 +541,30 @@ function ElonBatafsil() {
 
   /** Holatni o'zgartirish — yashirish, tiklash va oynadagi tanlov uchun bitta yo'l. */
   const holatniQoy = useCallback(
-    async (yangi: string, xatoMatni: string) => {
-      if (band || !id || !QOYILADIGAN.includes(yangi)) return;
+    async (yangi: string, xatoMatni: string, reason?: string, notifyOwner = true) => {
+      if (band || !id || (!QOYILADIGAN.includes(yangi) && yangi !== "hidden")) return;
+      if (yangi === "hidden" && !window.confirm("E'lon yashiriladi va rasmlari butunlay o'chiriladi. Tiklash rasmlarni qaytarmaydi. Davom etilsinmi?")) return;
       setBand(true);
       setAmalXato("");
       try {
         await api.patch(
           `/api/admin/elons/${encodeURIComponent(id)}/status`,
-          { status: yangi },
+          { status: yangi, reason, notifyOwner, expectedStatus: d?.elon.status, expectedUpdatedAt: d?.elon.updatedAt },
           { auth: "admin" } as any,
         );
         setHolatOpen(false);
         await load();
       } catch (e) {
+        if ((e as APIError)?.code === "state_changed") {
+          setHolatOpen(false);
+          await load();
+        }
         setAmalXato((e as APIError)?.message || xatoMatni);
       } finally {
         setBand(false);
       }
     },
-    [band, id, load],
+    [band, id, load, d],
   );
 
   async function ochir(mode: DeleteMode) {
@@ -720,9 +727,11 @@ function ElonBatafsil() {
               onClick={() => {
                 setAmalXato("");
                 setHolatQiy(QOYILADIGAN.includes(e.status) ? e.status : "recruiting");
+                setHolatSabab("");
+                setHolatXabar(true);
                 setHolatOpen(true);
               }}
-              disabled={band || e.isDeleted}
+              disabled={band || e.isDeleted || yashirilgan}
               title={e.isDeleted ? "O'chirilgan e'lon holati o'zgartirilmaydi" : ""}
               {...tugma("ikkilamchi", { ochiq: band || e.isDeleted })}
             >
@@ -1137,13 +1146,7 @@ function ElonBatafsil() {
 
       {/* ── Oynalar ──────────────────────────────────────────────────── */}
 
-      {/* Holatni o'zgartirish. Figma 3.5.1 da tugma bor, oyna chizilmagan —
-          karkas 3.3a/3.5a oynalari bilan bitta komponentdan (AdminModal).
-
-          Ro'yxat serverdagi `elonStatusSettable` bilan bir xil: qolgan
-          holatlar (qoralama, jarayonda, yakunlandi) e'lonning o'z hayotiy
-          davri natijasi va ularni qo'lda qo'yish ishning haqiqiy borishini
-          buzardi. */}
+      {/* Five reasoned status choices; hide/restore stays a separate action. */}
       <AdminModal
         open={holatOpen}
         onClose={() => setHolatOpen(false)}
@@ -1154,9 +1157,9 @@ function ElonBatafsil() {
               Bekor qilish
             </button>
             <button
-              onClick={() => holatniQoy(holatQiy, "Holatni o'zgartirib bo'lmadi")}
-              disabled={band}
-              {...tugma("asosiy", { ochiq: band })}
+              onClick={() => holatniQoy(holatQiy, "Holatni o'zgartirib bo'lmadi", holatSabab.trim(), holatXabar)}
+              disabled={band || !holatSabab.trim() || holatQiy === e.status}
+              {...tugma("asosiy", { ochiq: band || !holatSabab.trim() || holatQiy === e.status })}
             >
               Saqlash
             </button>
@@ -1174,15 +1177,28 @@ function ElonBatafsil() {
             ozgardi={(v) => setHolatQiy(QOYILADIGAN.includes(v) ? v : "recruiting")}
           >
             {QOYILADIGAN.map((s) => (
-              <option key={s} value={s}>
+              <option key={s} value={s} disabled={s === e.status}>
                 {ELON_HOLAT[s].matn}
               </option>
             ))}
           </Tanlov>
+          <label className="flex flex-col gap-1 text-[12px]" style={{ color: KUL }}>
+            Sabab · majburiy
+            <textarea
+              value={holatSabab}
+              onChange={(event) => setHolatSabab(event.target.value)}
+              maxLength={500}
+              rows={3}
+              className="rounded-lg border p-3 text-[13px]"
+              placeholder="Holatni o'zgartirish sababini yozing"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-[13px]" style={{ color: KUL }}>
+            <input type="checkbox" checked={holatXabar} onChange={(event) => setHolatXabar(event.target.checked)} />
+            E&apos;lon egasiga yangi holat haqida xabar yuborish
+          </label>
           <p className="text-[12px] leading-[17px]" style={{ color: OCH_KUL }}>
-            E&apos;lon yashirilgan bo&apos;lsa, «{ELON_HOLAT.recruiting.matn}» tanlash uni
-            yashirishdan OLDINGI holatiga qaytaradi — boshlanib ketgan ish qaytadan ariza
-            qabul qila boshlamaydi.
+            Holat o&apos;zgarishi sababi admin jurnaliga yoziladi. Yashirish va tiklash alohida tugma orqali bajariladi.
           </p>
           {amalXato && (
             <p className="text-[12px] font-medium leading-[17px]" style={{ color: QIZIL }}>

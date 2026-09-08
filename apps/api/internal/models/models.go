@@ -8,18 +8,24 @@ import (
 
 // User -- platform user (both employer and worker)
 type User struct {
-	ID           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	TelegramID   int64              `bson:"telegramId,omitempty" json:"telegramId"`
-	Phone        string             `bson:"phone" json:"phone"`
-	FirstName    string             `bson:"firstName" json:"firstName"`
-	LastName     string             `bson:"lastName" json:"lastName"`
-	AvatarURL    string             `bson:"avatarUrl,omitempty" json:"avatarUrl"`
-	Region       string             `bson:"region,omitempty" json:"region"`
-	District     string             `bson:"district,omitempty" json:"district"`
-	Bio          string             `bson:"bio,omitempty" json:"bio"`
-	Skills       []string           `bson:"skills,omitempty" json:"skills"`
-	Rating       float64            `bson:"rating" json:"rating"`
-	ReviewsCount int                `bson:"reviewsCount" json:"reviewsCount"`
+	ID                  primitive.ObjectID  `bson:"_id,omitempty" json:"id"`
+	TelegramID          int64               `bson:"telegramId,omitempty" json:"telegramId"`
+	Phone               string              `bson:"phone" json:"phone"`
+	FirstName           string              `bson:"firstName" json:"firstName"`
+	LastName            string              `bson:"lastName" json:"lastName"`
+	AvatarURL           string              `bson:"avatarUrl,omitempty" json:"avatarUrl"`
+	AvatarMetadata      *AvatarMetadata     `bson:"avatarMetadata,omitempty" json:"-"`
+	AvatarRevision      int64               `bson:"avatarRevision,omitempty" json:"-"`
+	AvatarDeletedAt     *time.Time          `bson:"avatarDeletedAt,omitempty" json:"avatarDeletedAt,omitempty"`
+	AvatarDeletedBy     primitive.ObjectID  `bson:"avatarDeletedBy,omitempty" json:"-"`
+	AvatarDeletedReason string              `bson:"avatarDeletedReason,omitempty" json:"-"`
+	AvatarDeletionJobs  []AvatarDeletionJob `bson:"avatarDeletionJobs,omitempty" json:"-"`
+	Region              string              `bson:"region,omitempty" json:"region"`
+	District            string              `bson:"district,omitempty" json:"district"`
+	Bio                 string              `bson:"bio,omitempty" json:"bio"`
+	Skills              []string            `bson:"skills,omitempty" json:"skills"`
+	Rating              float64             `bson:"rating" json:"rating"`
+	ReviewsCount        int                 `bson:"reviewsCount" json:"reviewsCount"`
 	// Ikki tomonlama reyting: ishchi sifatida va ish beruvchi sifatida alohida.
 	WorkerRating         float64 `bson:"workerRating" json:"workerRating"`
 	WorkerReviewsCount   int     `bson:"workerReviewsCount" json:"workerReviewsCount"`
@@ -232,6 +238,17 @@ type Elon struct {
 	Status        string `bson:"status" json:"status"` // draft|recruiting|filled|in_progress|completed|cancelled|hidden
 	AcceptedCount int    `bson:"acceptedCount" json:"acceptedCount"`
 	ViewsCount    int    `bson:"viewsCount" json:"viewsCount"`
+	// Owner edits use a revision fence so concurrent saves cannot overwrite a
+	// newer edit or remove images which another request has just retained.
+	OwnerRevision int64      `bson:"ownerRevision,omitempty" json:"-"`
+	CancelReason  string     `bson:"cancelReason,omitempty" json:"cancelReason,omitempty"`
+	CancelledAt   *time.Time `bson:"cancelledAt,omitempty" json:"cancelledAt,omitempty"`
+	// Durable owner follow-up survives an HTTP disconnect or process restart.
+	OwnerFollowupPending bool  `bson:"ownerFollowupPending,omitempty" json:"-"`
+	OwnerFollowupVersion int64 `bson:"ownerFollowupVersion,omitempty" json:"-"`
+	// The last schedule/address edit remains visible to legacy applications
+	// which predate detailed snapshots, even after a later title-only save.
+	OwnerWorkDetailsRevision int64 `bson:"ownerWorkDetailsRevision,omitempty" json:"-"`
 	// HiddenFromStatus — admin e'lonni yashirishdan OLDIN qaysi holatda
 	// bo'lgani. Faqat `status == "hidden"` paytda yoziladi.
 	//
@@ -268,7 +285,11 @@ type Elon struct {
 	OwnerReviewsCount int     `bson:"ownerReviewsCount,omitempty" json:"ownerReviewsCount"`
 	OwnerAvatarURL    string  `bson:"ownerAvatarUrl,omitempty" json:"ownerAvatarUrl"`
 	// Image URLs (stored on S3).
-	Images []string `bson:"images,omitempty" json:"images"`
+	Images          []string            `bson:"images,omitempty" json:"images"`
+	OwnerSnapshot   *ElonOwnerSnapshot  `bson:"ownerSnapshot,omitempty" json:"-"`
+	ImagesRemovedAt *time.Time          `bson:"imagesRemovedAt,omitempty" json:"-"`
+	ModerationJobs  []ElonModerationJob `bson:"adminModerationJobs,omitempty" json:"-"`
+	PurgeEvent      *ElonPurgeEvent     `bson:"adminPurgeEvent,omitempty" json:"-"`
 
 	// IsReviewData marks an elon created by the review account. Such elons are
 	// filtered out of the public feed, search and sitemap, so a real user never
@@ -297,17 +318,21 @@ type Application struct {
 	WorkerAvatarURL    string  `bson:"workerAvatarUrl,omitempty" json:"workerAvatarUrl"`
 	WorkerVerified     bool    `bson:"workerVerified,omitempty" json:"workerVerified"`
 	// Denormalized elon snapshot — ishchi o'z arizalari ro'yxatini ko'rsatishi uchun.
-	ElonCategoryName      string  `bson:"elonCategoryName,omitempty" json:"elonCategoryName"`
-	ElonRegion            string  `bson:"elonRegion,omitempty" json:"elonRegion"`
-	ElonDistrict          string  `bson:"elonDistrict,omitempty" json:"elonDistrict"`
-	OwnerName             string  `bson:"ownerName,omitempty" json:"ownerName"`
-	OwnerRating           float64 `bson:"ownerRating,omitempty" json:"ownerRating"`
-	OwnerAvatarURL        string  `bson:"ownerAvatarUrl,omitempty" json:"ownerAvatarUrl"`
-	Amount                int64   `bson:"amount" json:"amount"`
-	IsNegotiable          bool    `bson:"isNegotiable" json:"isNegotiable"`
-	Status                string  `bson:"status" json:"status"` // pending|accepted|rejected|cancelled|completed
-	EmployerConfirmedDone bool    `bson:"employerConfirmedDone" json:"employerConfirmedDone"`
-	WorkerConfirmedDone   bool    `bson:"workerConfirmedDone" json:"workerConfirmedDone"`
+	ElonCategoryName      string              `bson:"elonCategoryName,omitempty" json:"elonCategoryName"`
+	ElonCategoryID        primitive.ObjectID  `bson:"elonCategoryId,omitempty" json:"-"`
+	ElonRegion            string              `bson:"elonRegion,omitempty" json:"elonRegion"`
+	ElonDistrict          string              `bson:"elonDistrict,omitempty" json:"elonDistrict"`
+	OwnerName             string              `bson:"ownerName,omitempty" json:"ownerName"`
+	OwnerRating           float64             `bson:"ownerRating,omitempty" json:"ownerRating"`
+	OwnerAvatarURL        string              `bson:"ownerAvatarUrl,omitempty" json:"ownerAvatarUrl"`
+	Amount                int64               `bson:"amount" json:"amount"`
+	ElonOwnerRevision     int64               `bson:"elonOwnerRevision,omitempty" json:"-"`
+	ElonWorkDetails       *ListingWorkDetails `bson:"elonWorkDetails,omitempty" json:"-"`
+	ListingRecheckPending bool                `bson:"listingRecheckPending,omitempty" json:"-"`
+	IsNegotiable          bool                `bson:"isNegotiable" json:"isNegotiable"`
+	Status                string              `bson:"status" json:"status"` // pending|accepted|rejected|cancelled|completed
+	EmployerConfirmedDone bool                `bson:"employerConfirmedDone" json:"employerConfirmedDone"`
+	WorkerConfirmedDone   bool                `bson:"workerConfirmedDone" json:"workerConfirmedDone"`
 	// AutoCompleted — ish ikki tomon tasdig'isiz, belgilangan vaqtdan 18 soat
 	// o'tgach avtomatik yakunlangan bo'lsa true. Tarix (arxiv) yozuvi qanday
 	// yopilganini ajratish uchun.
@@ -493,6 +518,16 @@ type AdminAudit struct {
 	Target    string             `bson:"target,omitempty" json:"target"`
 	Detail    string             `bson:"detail,omitempty" json:"detail"`
 	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
+	// Structured listing moderation fields preserve reasons without parsing
+	// human-readable detail text. Older audit rows keep their legacy fallback.
+	Kind        string `bson:"kind,omitempty" json:"kind,omitempty"`
+	FromStatus  string `bson:"fromStatus,omitempty" json:"fromStatus,omitempty"`
+	Status      string `bson:"status,omitempty" json:"status,omitempty"`
+	Reason      string `bson:"reason,omitempty" json:"reason,omitempty"`
+	NotifyOwner *bool  `bson:"notifyOwner,omitempty" json:"notifyOwner,omitempty"`
+	// Until is the original deadline of a moderation_ban. Keeping it in
+	// the audit record preserves the ban after current user fields clear.
+	Until *time.Time `bson:"until,omitempty" json:"until,omitempty"`
 }
 
 // ErrorGroup — bir xil DASTUR xatoligining yig'ma yozuvi ("3.12 · Xatoliklar"

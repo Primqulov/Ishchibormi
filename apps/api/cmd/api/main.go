@@ -206,6 +206,7 @@ func main() {
 	userH.AttachModerator(modGuard)
 	fbH.AttachModerator(modGuard)
 	uploadH := upload.NewHandler(s3svc)
+	uploadH.AvatarUploads = mdb.Collection("avatar_uploads")
 	// Profil rasmi yuklash paytida tekshiriladi.
 	uploadH.AttachModerator(modGuard)
 	adminH := admin.NewHandler(cfg, mdb, notif, s3svc)
@@ -221,10 +222,15 @@ func main() {
 	// Background scheduler: delivers due scheduled broadcasts (checks every
 	// minute). Stops when ctx is cancelled on shutdown.
 	go adminH.RunScheduler(ctx)
+	go adminH.RunAvatarDeletionWorker(ctx)
+	go adminH.RunElonModerationWorker(ctx)
 	// Background scheduler: qabul qilingan ishlarni belgilangan vaqtdan 18 soat
 	// o'tgach (agar ikki tomon ham bekor qilmagan bo'lsa) avtomatik yakunlab,
 	// ish tarixiga (arxivga) o'tkazadi. ctx bekor qilinganda to'xtaydi.
 	go appH.RunAutoCompleteScheduler(ctx)
+	// Retry owner edits/cancellations whose candidate updates or notifications
+	// were interrupted by a disconnect or transient database failure.
+	go elonH.RunOwnerActionWorker(ctx)
 	// Background sweeper: permanently erases accounts whose retention window
 	// (ACCOUNT_RETENTION_DAYS, default 90) has closed — the second stage of
 	// account deletion required by Google Play. Covers both self-service and
@@ -451,6 +457,9 @@ func main() {
 				return
 			}
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			if strings.HasPrefix(r.URL.Path, "/uploads/avatars/") || strings.HasPrefix(r.URL.Path, "/uploads/elons/") {
+				w.Header().Set("Cache-Control", "no-store")
+			}
 			fs.ServeHTTP(w, r)
 		}
 		r.Get("/uploads/*", serveUpload)
@@ -678,6 +687,7 @@ func main() {
 				r.Delete("/users/{id}", adminH.DeleteUser)
 				r.Post("/users/{id}/verify", adminH.VerifyUser)
 				r.Post("/users/{id}/notify", adminH.NotifyUser)
+				r.Delete("/users/{id}/avatar", adminH.DeleteUserAvatar)
 				r.Get("/elons", adminH.ListElons)
 				// Bitta e'lonning batafsil ko'rinishi (Figma 3.5.1) —
 				// `GET /users/{id}` bilan bir xil daraja: superadmin +
@@ -707,6 +717,8 @@ func main() {
 			// Support desk — superadmin + moderator + support.
 			r.Group(func(r chi.Router) {
 				r.Use(httpx.RequireRole("moderator", "support"))
+				r.Get("/users/{id}/avatar", adminH.GetUserAvatar)
+				r.Post("/users/{id}/avatar/download", adminH.RecordAvatarDownload)
 				r.Get("/feedback", fbH.ListAdmin)
 				r.Patch("/feedback/{id}/resolve", fbH.Resolve)
 			})

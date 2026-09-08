@@ -18,6 +18,8 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		{"users", mongo.IndexModel{Keys: bson.D{{Key: "telegramId", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)}},
 		{"users", mongo.IndexModel{Keys: bson.D{{Key: "phone", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)}},
 		{"users", mongo.IndexModel{Keys: bson.D{{Key: "firstName", Value: 1}, {Key: "lastName", Value: 1}}}},
+		{"users", mongo.IndexModel{Keys: bson.D{{Key: "avatarDeletionJobs.nextAttemptAt", Value: 1}}, Options: options.Index().SetSparse(true)}},
+		{"avatar_uploads", mongo.IndexModel{Keys: bson.D{{Key: "userId", Value: 1}}}},
 		// Retention sweep (internal/account.Purger) scans for soft-deleted
 		// accounts past their grace period every 6h. Without this it is a full
 		// collection scan over every user on the platform.
@@ -30,11 +32,18 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 
 		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "status", Value: 1}, {Key: "publishedAt", Value: -1}}}},
 		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "ownerId", Value: 1}, {Key: "status", Value: 1}}}},
+		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "ownerFollowupPending", Value: 1}}, Options: options.Index().SetSparse(true)}},
+		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "adminModerationJobs.nextAttemptAt", Value: 1}}, Options: options.Index().SetSparse(true)}},
+		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "adminModerationJobs.images", Value: 1}}, Options: options.Index().SetSparse(true)}},
+		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "images", Value: 1}}, Options: options.Index().SetSparse(true)}},
+		{"elon_image_assets", mongo.IndexModel{Keys: bson.D{{Key: "ownerId", Value: 1}}}},
+		{"admin_elon_purge_events", mongo.IndexModel{Keys: bson.D{{Key: "nextAttemptAt", Value: 1}}}},
 		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "categoryId", Value: 1}}}},
 		{"elons", mongo.IndexModel{Keys: bson.D{{Key: "title", Value: "text"}, {Key: "description", Value: "text"}}}},
 
 		{"applications", mongo.IndexModel{Keys: bson.D{{Key: "workerId", Value: 1}, {Key: "status", Value: 1}}}},
 		{"applications", mongo.IndexModel{Keys: bson.D{{Key: "elonId", Value: 1}, {Key: "status", Value: 1}}}},
+		{"applications", mongo.IndexModel{Keys: bson.D{{Key: "listingRecheckPending", Value: 1}}, Options: options.Index().SetSparse(true)}},
 		{"applications", mongo.IndexModel{Keys: bson.D{{Key: "employerId", Value: 1}, {Key: "status", Value: 1}}}},
 		{"applications", mongo.IndexModel{Keys: bson.D{{Key: "elonId", Value: 1}, {Key: "workerId", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		// MyApplications/MyElonsApplications/History appliedAt bo'yicha sortlaydi;

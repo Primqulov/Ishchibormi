@@ -83,16 +83,15 @@ func TestElonStatusUpdatePassesThroughWhenNotHidden(t *testing.T) {
 	}
 }
 
-// XAVFSIZLIK: panel faqat to'rtta holatni qo'yishi mumkin. Ish jarayonini
-// bildiruvchi holatlar (draft, in_progress, completed) admin qo'li bilan
-// qo'yilmaydi — ular ishning haqiqiy borishidan kelib chiqadi.
+// Detail moderation permits five reasoned statuses plus the separate hide
+// action. Draft and arbitrary inputs remain unavailable.
 func TestElonStatusSettableWhitelist(t *testing.T) {
-	for _, s := range []string{"hidden", "recruiting", "filled", "cancelled"} {
+	for _, s := range []string{"hidden", "recruiting", "filled", "in_progress", "completed", "cancelled"} {
 		if !elonStatusSettable[s] {
 			t.Errorf("%q qo'yilishi kerak edi", s)
 		}
 	}
-	for _, s := range []string{"draft", "in_progress", "completed", "", "HIDDEN", "deleted", "$set"} {
+	for _, s := range []string{"draft", "", "HIDDEN", "deleted", "$set"} {
 		if elonStatusSettable[s] {
 			t.Errorf("%q panel orqali qo'yilmasligi kerak", s)
 		}

@@ -546,7 +546,7 @@ export interface Elon {
   workTimeTo?: string;
   contactPhone?: string;
   gender?: Gender;
-  status: "draft" | "recruiting" | "filled" | "in_progress" | "completed" | "cancelled" | "hidden";
+  status: "draft" | "recruiting" | "filled" | "confirmed" | "in_progress" | "completed" | "cancelled" | "hidden";
   /**
    * Admin tomonidan foydalanuvchilardan olib tashlanganmi.
    *
@@ -558,6 +558,10 @@ export interface Elon {
   /** Qachon olib tashlangani (ISO). */
   deletedAt?: string;
   acceptedCount: number;
+  viewsCount?: number;
+  cancelledAt?: string;
+  cancelReason?: string;
+  updatedAt?: string;
   publishedAt?: string;
   createdAt: string;
   ownerName?: string;
@@ -573,6 +577,8 @@ export interface Application {
   workerPhone: string;
   workerName?: string;
   workerAvatarUrl?: string;
+  workerRating?: number;
+  workerReviewsCount?: number;
   ownerName?: string;
   ownerAvatarUrl?: string;
   peopleCount?: number;

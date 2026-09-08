@@ -23,7 +23,7 @@ import (
 // keraksiz: kilobaytlik "amal kodi" faqat indeksni behuda tekshirtiradi.
 // Shakli noto'g'ri bo'lsa 400 qaytaramiz, e'tiborsiz qoldirmaymiz: aks holda
 // buzilgan chaqiruvchi filtrsiz — ya'ni BUTUN jurnalni — olib ketardi.
-var actionCodeRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+var actionCodeRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9_.]{0,63}$`)
 
 // targetNames jurnal qatorlaridagi `target` id'larini o'qiladigan yorliqqa
 // aylantiradi: admin → `@username`, turkum → nomi. Qolganlari (foydalanuvchi,
@@ -102,6 +102,14 @@ func (h *Handler) Audit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	filter := bson.M{}
+	if raw := strings.TrimSpace(q.Get("target")); raw != "" {
+		id, err := primitive.ObjectIDFromHex(raw)
+		if err != nil {
+			httpx.Err(w, httpx.NewError(http.StatusBadRequest, "bad_target", "invalid audit target"))
+			return
+		}
+		filter["target"] = id.Hex()
+	}
 	if v := strings.TrimSpace(q.Get("adminId")); v != "" {
 		if oid, err := primitive.ObjectIDFromHex(v); err == nil {
 			filter["adminId"] = oid

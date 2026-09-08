@@ -183,6 +183,16 @@ func (g *Guard) CheckImageErr(ctx context.Context, userID primitive.ObjectID, la
 	return err
 }
 
+// CheckImageStatus keeps upload metadata truthful when checks are disabled,
+// skipped after quota exhaustion, or allowed by fail-open policy.
+func (g *Guard) CheckImageStatus(ctx context.Context, userID primitive.ObjectID, label, code, prefix, mime string, data []byte) (string, error) {
+	outcome, err := g.CheckImage(ctx, userID, label, code, prefix, mime, data)
+	if err == nil && outcome == OutcomeChecked {
+		return "clean", nil
+	}
+	return "unknown", err
+}
+
 // Reject — rad etish xatosini quradi VA buzilishni hisobga qo'shadi.
 //
 // Matn va rasm yo'llari uchun umumiy: ikkalasi ham bitta hisobga qo'shilishi

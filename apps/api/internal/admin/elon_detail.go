@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -39,7 +38,7 @@ qarorlarini tekshirish uchun ochiladi.
 
 # NIMA ATAYLAB YO'Q
 
-1) `json:"-"` maydonlari (`hiddenFromStatus`, `moderationPending`,
+1) `json:"-"` maydonlari (`moderationPending`,
    `ownerBlocked`, `isReviewData`) bu javobga ham CHIQMAYDI. Ular ichki
    moderatsiya mexanizmi va Figma dizaynida ularga blok yo'q — mavjud
    yashirinlik darajasi bu endpoint bilan pasaymaydi.
@@ -125,6 +124,10 @@ type elonReportRow struct {
 
 // elonAdminAction — e'lon ustida bajarilgan bitta admin amali.
 type elonAdminAction struct {
+	ID          primitive.ObjectID `json:"id"`
+	FromStatus  string             `json:"fromStatus,omitempty"`
+	Reason      string             `json:"reason,omitempty"`
+	NotifyOwner *bool              `json:"notifyOwner,omitempty"`
 	// Kind — elonAction* dan biri. Nishon rangi va matni shundan.
 	Kind string `json:"kind"`
 	// Status — amaldan KEYINGI e'lon holati, aniqlansa. Panel shu orqali
@@ -191,14 +194,36 @@ func elonRestoredStatus(detail string) string {
 // it and reports filed against it — in one round-trip.
 func (h *Handler) GetElon(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
+	e, err := h.moderationElon(r)
 	if err != nil {
-		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
+		httpx.Err(w, err)
 		return
 	}
-	var e models.Elon
-	if err := h.Elons.FindOne(ctx, bson.M{"_id": id}).Decode(&e); err != nil {
-		httpx.Err(w, httpx.NewError(404, "not_found", "elon not found"))
+	id := e.ID
+	actions := h.elonAdminActions(ctx, id, httpx.AdminRole(r) == "superadmin")
+	actionCounts, err := h.elonActionCounts(ctx, id)
+	if err != nil {
+		httpx.Err(w, err)
+		return
+	}
+	cleanupPending := false
+	for _, job := range e.ModerationJobs {
+		cleanupPending = cleanupPending || !job.StorageDone
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if e.IsDeleted {
+		// An archived deletion exposes only its identifying header and audit.
+		// Personal/contact/location/application data remain stored, not shown.
+		masked := models.Elon{ID: e.ID, Title: e.Title, CategoryID: e.CategoryID,
+			CategoryName: e.CategoryName, Status: e.Status, IsDeleted: true,
+			DeletedAt: e.DeletedAt, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt, Images: []string{}}
+		httpx.JSON(w, 200, map[string]any{
+			"elon": masked, "owner": nil, "ownerSnapshot": nil,
+			"applications": []elonApplicationRow{}, "applicationCounts": map[string]int{},
+			"reports": []elonReportRow{}, "reportsTotal": 0,
+			"adminActions": actions, "adminActionCounts": actionCounts,
+			"cleanupPending": cleanupPending, "imagesRemovedAt": e.ImagesRemovedAt,
+		})
 		return
 	}
 
@@ -207,21 +232,44 @@ func (h *Handler) GetElon(w http.ResponseWriter, r *http.Request) {
 	// bo'lsa e'londa faqat nusxa `ownerName` qoladi va panel shu holatni
 	// aynan `null` orqali biladi.
 	var owner any
+	if e.Status == "hidden" {
+		e.Images = []string{}
+	}
 	if b := h.elonOwner(ctx, e.OwnerID); b != nil {
 		owner = b
 	}
+	snapshot := e.OwnerSnapshot
+	if snapshot == nil {
+		// Legacy rows never saved the old profile phone/address. Current user
+		// values must not be presented as a historical snapshot.
+		snapshot = &models.ElonOwnerSnapshot{Name: e.OwnerName, AvatarURL: e.OwnerAvatarURL}
+	}
+	var reportsTotal int64
+	if h.Reports != nil {
+		reportsTotal, err = h.Reports.CountDocuments(ctx, bson.M{"targetType": "elon", "targetId": id})
+		if err != nil {
+			httpx.Err(w, err)
+			return
+		}
+	}
 
 	httpx.JSON(w, 200, map[string]any{
-		"elon":  e,
-		"owner": owner,
+		"elon":             e,
+		"owner":            owner,
+		"ownerSnapshot":    snapshot,
+		"hiddenFromStatus": e.HiddenFromStatus,
+		"imagesRemovedAt":  e.ImagesRemovedAt,
+		"cleanupPending":   cleanupPending,
 		// Arizalar: qatorlar chegaralangan, sanoq esa TO'LIQ — kartadagi
 		// «3 ta · 1 qabul qilingan» soni 100 tadan keyin ham to'g'ri
 		// qolishi kerak.
 		"applications":      h.elonApplications(ctx, id),
 		"applicationCounts": h.elonAppCounts(ctx, id),
 		"reports":           h.elonReports(ctx, id),
+		"reportsTotal":      reportsTotal,
 		// Rol faqat superadminga ko'rsatiladi (adminBrief.label izohi).
-		"adminActions": h.elonAdminActions(ctx, id, httpx.AdminRole(r) == "superadmin"),
+		"adminActions":      actions,
+		"adminActionCounts": actionCounts,
 	})
 }
 
@@ -239,7 +287,7 @@ func (h *Handler) elonOwner(ctx context.Context, ownerID primitive.ObjectID) *el
 		options.FindOne().SetProjection(bson.M{
 			"firstName": 1, "lastName": 1, "phone": 1, "avatarUrl": 1,
 			"region": 1, "district": 1, "isPhoneVerified": 1,
-			"isBlocked": 1, "isDeleted": 1, "createdAt": 1,
+			"isBlocked": 1, "moderationBannedUntil": 1, "isDeleted": 1, "createdAt": 1,
 		})).Decode(&u)
 	if err != nil {
 		return nil
@@ -248,7 +296,7 @@ func (h *Handler) elonOwner(ctx context.Context, ownerID primitive.ObjectID) *el
 		ID: u.ID, FirstName: u.FirstName, LastName: u.LastName,
 		Phone: u.Phone, AvatarURL: u.AvatarURL,
 		Region: u.Region, District: u.District,
-		IsPhoneVerified: u.IsPhoneVerified, IsBlocked: u.IsBlocked,
+		IsPhoneVerified: u.IsPhoneVerified, IsBlocked: u.IsBlocked || (u.ModerationBannedUntil != nil && u.ModerationBannedUntil.After(time.Now())),
 		IsDeleted: u.IsDeleted, CreatedAt: u.CreatedAt,
 	}
 	if h.Elons == nil {
@@ -470,10 +518,14 @@ func (h *Handler) elonAdminActions(
 	briefs := h.adminBriefs(ctx, adminIDs)
 	for _, a := range rows {
 		kind, status := elonActionFrom(a.Action, a.Detail)
+		if a.Kind != "" {
+			kind, status = a.Kind, a.Status
+		}
 		if kind == "" {
 			continue
 		}
 		out = append(out, elonAdminAction{
+			ID: a.ID, FromStatus: a.FromStatus, Reason: a.Reason, NotifyOwner: a.NotifyOwner,
 			Kind:   kind,
 			Status: status,
 			At:     a.CreatedAt,
@@ -482,4 +534,38 @@ func (h *Handler) elonAdminActions(
 		})
 	}
 	return out
+}
+
+// Counts include the full audit history, including legacy rows whose kind
+// was encoded in detail. Unrelated exports/user actions never enter this set.
+func (h *Handler) elonActionCounts(ctx context.Context, id primitive.ObjectID) (map[string]int, error) {
+	out := map[string]int{}
+	if h.AuditCol == nil {
+		return out, nil
+	}
+	cur, err := h.AuditCol.Aggregate(ctx, mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"target": id.Hex(), "action": bson.M{"$in": elonAuditActions}}}},
+		{{Key: "$group", Value: bson.M{"_id": bson.M{"action": "$action", "kind": "$kind", "detail": "$detail"}, "count": bson.M{"$sum": 1}}}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	for cur.Next(ctx) {
+		var row struct {
+			ID    struct{ Action, Kind, Detail string } `bson:"_id"`
+			Count int                                   `bson:"count"`
+		}
+		if err := cur.Decode(&row); err != nil {
+			return nil, err
+		}
+		kind := row.ID.Kind
+		if kind == "" {
+			kind, _ = elonActionFrom(row.ID.Action, row.ID.Detail)
+		}
+		if kind != "" {
+			out[kind] += row.Count
+		}
+	}
+	return out, cur.Err()
 }

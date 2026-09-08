@@ -5,10 +5,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ishchibormi/backend/internal/models"
-	"github.com/ishchibormi/backend/internal/upload"
 	"github.com/ishchibormi/backend/pkg/httpx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -86,11 +85,67 @@ var elonStatusKnown = map[string]bool{
 	"completed": true, "cancelled": true, "hidden": true,
 }
 
-// elonStatusSettable — admin PANELIDAN qo'yilishi mumkin bo'lgan holatlar.
-// Qolganlari (draft, in_progress, completed) e'lonning o'z hayotiy davri
-// natijasi — ularni qo'lda qo'yish ishning haqiqiy borishini buzardi.
+// Hidden has a separate confirmation. The other five statuses are deliberate,
+// reasoned choices in the detail status sheet; draft remains unavailable.
 var elonStatusSettable = map[string]bool{
-	"hidden": true, "recruiting": true, "filled": true, "cancelled": true,
+	"hidden": true, "recruiting": true, "filled": true, "in_progress": true,
+	"completed": true, "cancelled": true,
+}
+
+type elonStatusRequest struct {
+	Status            string     `json:"status"`
+	Reason            string     `json:"reason"`
+	NotifyOwner       *bool      `json:"notifyOwner"`
+	ExpectedStatus    string     `json:"expectedStatus"`
+	ExpectedUpdatedAt *time.Time `json:"expectedUpdatedAt"`
+}
+
+func elonAdminAllowed(r *http.Request) bool {
+	return httpx.AdminID(r) != "" && (httpx.AdminRole(r) == "superadmin" || httpx.AdminRole(r) == "moderator")
+}
+
+func elonChangedError() error {
+	return httpx.NewError(http.StatusConflict, "state_changed", "E'lon holati o'zgargan — sahifani yangilang")
+}
+
+func (req *elonStatusRequest) validate(prev models.Elon) error {
+	if !elonStatusSettable[req.Status] {
+		return httpx.NewError(400, "bad_status", "unsupported status")
+	}
+	if (req.ExpectedStatus != "" && req.ExpectedStatus != prev.Status) ||
+		(req.ExpectedUpdatedAt != nil && !req.ExpectedUpdatedAt.Equal(prev.UpdatedAt)) {
+		return elonChangedError()
+	}
+	if prev.IsDeleted {
+		return httpx.NewError(409, "elon_deleted", "o'chirilgan e'lon holatini o'zgartirib bo'lmaydi")
+	}
+	if prev.Status == "hidden" && req.Status != "hidden" && req.Status != "recruiting" {
+		return httpx.NewError(409, "elon_hidden", "yashirilgan e'lonni avval tiklang")
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if utf8.RuneCountInString(req.Reason) > 500 {
+		return httpx.NewError(400, "reason_too_long", "sabab 500 belgidan oshmasligi kerak")
+	}
+	if req.Status != "hidden" && prev.Status != "hidden" && req.Reason == "" {
+		return httpx.NewError(400, "reason_required", "holatni o'zgartirish sababi majburiy")
+	}
+	return nil
+}
+
+// Fences slow owner edits across hide/restore, including an ABA status cycle.
+func elonModerationFilter(e models.Elon) bson.M {
+	return bson.M{
+		"_id": e.ID, "status": e.Status, "isDeleted": bson.M{"$ne": true},
+		"$expr": bson.M{"$eq": bson.A{bson.M{"$ifNull": bson.A{"$ownerRevision", 0}}, e.OwnerRevision}},
+	}
+}
+
+func elonModerationTime(e models.Elon) time.Time {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if !now.After(e.UpdatedAt) {
+		return e.UpdatedAt.UTC().Truncate(time.Millisecond).Add(time.Millisecond)
+	}
+	return now
 }
 
 // elonStatusUpdate — so'ralgan holatdan HAQIQIY yangi holatni hisoblaydi va
@@ -127,121 +182,4 @@ func elonStatusUpdate(prev models.Elon, want string) (status, detail string) {
 	default:
 		return want, want
 	}
-}
-
-// SetElonStatus hides (status=hidden) or restores (status=recruiting) an elon —
-// lightweight moderation without deleting. isDeleted is left untouched.
-//
-// "recruiting" so'ralganda va e'lon YASHIRILGAN bo'lsa bu «Tiklash» amali:
-// e'lon yashirishdan oldingi holatiga qaytadi (elonStatusUpdate ga qarang).
-func (h *Handler) SetElonStatus(w http.ResponseWriter, r *http.Request) {
-	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
-		return
-	}
-	var req struct {
-		Status string `json:"status"`
-	}
-	if err := httpx.Decode(r, &req); err != nil {
-		httpx.Err(w, err)
-		return
-	}
-	if !elonStatusSettable[req.Status] {
-		httpx.Err(w, httpx.NewError(400, "bad_status", "unsupported status"))
-		return
-	}
-
-	var prev models.Elon
-	if err := h.Elons.FindOne(r.Context(), bson.M{"_id": id}).Decode(&prev); err != nil {
-		httpx.Err(w, httpx.NewError(404, "not_found", "elon not found"))
-		return
-	}
-	// O'CHIRILGAN e'lon holati o'zgartirilmaydi.
-	//
-	// O'chirish qaytarilmaydigan amal, «Yashirish/Tiklash» esa qaytariladigan
-	// — ikkisi aralashmasligi kerak. Aks holda «Tiklash» bosgan admin e'lonni
-	// qaytardim deb o'ylardi, holbuki u `isDeleted` sababli foydalanuvchilarga
-	// baribir ko'rinmaydi. Panel bu tugmalarni o'chirilgan qatorda umuman
-	// chizmaydi (Figma 3.5a · 2); bu — server tomonidagi ikkinchi qulf.
-	if prev.IsDeleted {
-		httpx.Err(w, httpx.NewError(409, "elon_deleted",
-			"o'chirilgan e'lon holatini o'zgartirib bo'lmaydi"))
-		return
-	}
-
-	yangi, izoh := elonStatusUpdate(prev, req.Status)
-	set := bson.M{"status": yangi, "updatedAt": time.Now()}
-	upd := bson.M{"$set": set}
-	if yangi == "hidden" {
-		// Takroriy yashirishda eslatma YANGILANMAYDI: aks holda ikkinchi
-		// bosishda u "hidden" ga aylanib, tiklash mumkin bo'lmasdi.
-		if prev.Status != "hidden" {
-			set["hiddenFromStatus"] = prev.Status
-		}
-	} else if prev.HiddenFromStatus != "" {
-		// E'lon endi yashirilgan emas — eslatma keraksiz. Uni qoldirsak,
-		// keyingi tiklash allaqachon eskirgan holatga qaytarardi.
-		upd["$unset"] = bson.M{"hiddenFromStatus": ""}
-	}
-	if _, err := h.Elons.UpdateOne(r.Context(), bson.M{"_id": id}, upd); err != nil {
-		httpx.Err(w, err)
-		return
-	}
-	h.audit(r, "elon_status", id.Hex(), izoh)
-	httpx.JSON(w, 200, map[string]any{"ok": true, "status": yangi})
-}
-
-func (h *Handler) DeleteElon(w http.ResponseWriter, r *http.Request) {
-	id, err := primitive.ObjectIDFromHex(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.Err(w, httpx.NewError(400, "bad_id", "bad id"))
-		return
-	}
-	mode, err := deleteMode(r)
-	if err != nil {
-		httpx.Err(w, err)
-		return
-	}
-	if mode == deleteModePurge {
-		if h.Purger == nil {
-			httpx.Err(w, httpx.NewError(503, "purge_unavailable",
-				"permanent deletion is not configured on this server"))
-			return
-		}
-		// Audit AVVAL: o'chirilgandan keyin e'lon haqida hech narsa qolmaydi.
-		h.audit(r, "elon_delete", id.Hex(), "purge — bazadan butunlay o'chirildi (qaytarib bo'lmaydi)")
-		if err := h.Purger.PurgeElonNow(r.Context(), id); err != nil {
-			httpx.Err(w, err)
-			return
-		}
-		httpx.JSON(w, 200, map[string]any{"ok": true, "mode": deleteModePurge})
-		return
-	}
-
-	var prev models.Elon
-	_ = h.Elons.FindOne(r.Context(), bson.M{"_id": id}).Decode(&prev)
-	_, err = h.Elons.UpdateOne(r.Context(), bson.M{"_id": id}, bson.M{"$set": bson.M{
-		"isDeleted": true, "status": "cancelled", "deletedAt": time.Now(),
-	}})
-	if err != nil {
-		httpx.Err(w, err)
-		return
-	}
-	// Rasmlar yashirishda ham O'CHIRILADI, yozuvning o'zi qolsa ham.
-	//
-	// Sabab: rasm fayli ommaviy manzilda yotadi (/uploads/...). Uni qoldirish
-	// "foydalanuvchilarga umuman ko'rinmasin" degan talabni buzardi — havolani
-	// bir marta ko'rgan odam uni keyin ham ocha olaverardi. Ya'ni yozuv
-	// yashirilgan bo'lsa-yu rasmi ochiq qolsa, yashirish yarim bo'lardi.
-	//
-	// Narxi bor: admin panelida yozuv rasmsiz ko'rinadi. Rasmni ham saqlab
-	// qolish uchun uni ommaviy papkadan chiqarib, admin tokeni bilan
-	// beriladigan alohida yo'l kerak bo'lardi — hozircha maxfiylik ustun
-	// qo'yildi.
-	for _, u := range prev.Images {
-		go upload.DeleteByURL(h.Storage, u)
-	}
-	h.audit(r, "elon_delete", id.Hex(), "hidden — foydalanuvchilardan yashirildi, bazada qoldi")
-	httpx.JSON(w, 200, map[string]any{"ok": true, "mode": deleteModeHidden})
 }

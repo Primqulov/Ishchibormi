@@ -90,7 +90,7 @@ func appsBase() bson.M {
 // boshqa ma'lumot ustida qaror qabul qilishi mumkin edi. Endi ikki shart
 // birga qo'yiladi — mos kelmasa natija ochiq-oydin bo'sh bo'ladi.
 func appsFilter(q url.Values) bson.M {
-	filter := appsBase()
+	filter := appsScopedBase(q)
 	and := []bson.M{}
 	if status := strings.TrimSpace(q.Get("status")); status != "" && appStatusKnown[status] {
 		and = append(and, bson.M{"status": status})
@@ -118,6 +118,16 @@ func appsFilter(q url.Values) bson.M {
 	return filter
 }
 
+func appsScopedBase(q url.Values) bson.M {
+	filter := appsBase()
+	if raw := strings.TrimSpace(q.Get("elonId")); raw != "" {
+		// Invalid IDs must not silently broaden a listing-specific request.
+		id, _ := primitive.ObjectIDFromHex(raw)
+		filter["elonId"] = id
+	}
+	return filter
+}
+
 // appsScope describes the applied filters for the audit log / diagnostics.
 //
 // Xom `r.URL.RawQuery` ATAYLAB ishlatilmaydi: u tekshirilmagan, cheksiz
@@ -125,6 +135,9 @@ func appsFilter(q url.Values) bson.M {
 // Bu yerda faqat OQ RO'YXATdan o'tgan qiymatlar yoziladi.
 func appsScope(q url.Values) string {
 	parts := []string{}
+	if id, err := primitive.ObjectIDFromHex(strings.TrimSpace(q.Get("elonId"))); err == nil {
+		parts = append(parts, "e'lon="+id.Hex())
+	}
 	if s := strings.TrimSpace(q.Get("status")); appStatusKnown[s] {
 		parts = append(parts, "holat="+s)
 	}
@@ -198,12 +211,16 @@ var appRowProjection = bson.M{
 // Javobga faqat tanish beshta kalit tushadi. Bazadagi begona holat satri
 // JSON kaliti bo'lib mijozga o'tib ketmasligi kerak.
 func (h *Handler) appStatusCounts(ctx context.Context) map[string]int {
+	return h.appStatusCountsFor(ctx, appsBase())
+}
+
+func (h *Handler) appStatusCountsFor(ctx context.Context, base bson.M) map[string]int {
 	out := make(map[string]int, len(appStatuses))
 	for _, s := range appStatuses {
 		out[s] = 0
 	}
 	cur, err := h.Apps.Aggregate(ctx, mongo.Pipeline{
-		{{Key: "$match", Value: appsBase()}},
+		{{Key: "$match", Value: base}},
 		{{Key: "$group", Value: bson.M{"_id": "$status", "count": bson.M{"$sum": 1}}}},
 	})
 	if err != nil {
@@ -257,13 +274,14 @@ func (h *Handler) ListApplications(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	total, _ := h.Apps.CountDocuments(ctx, filter)
-	overall, _ := h.Apps.CountDocuments(ctx, appsBase())
+	base := appsScopedBase(r.URL.Query())
+	overall, _ := h.Apps.CountDocuments(ctx, base)
 	httpx.JSON(w, 200, map[string]any{
 		"items":   out,
 		"page":    page,
 		"limit":   limit,
 		"total":   total,
-		"counts":  h.appStatusCounts(ctx),
+		"counts":  h.appStatusCountsFor(ctx, base),
 		"overall": overall,
 	})
 }

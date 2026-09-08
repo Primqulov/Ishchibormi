@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/ishchibormi/backend/internal/elonimages"
+	"github.com/ishchibormi/backend/internal/elonpurge"
 	"github.com/ishchibormi/backend/internal/models"
 	"github.com/ishchibormi/backend/internal/upload"
 	"github.com/ishchibormi/backend/pkg/storage"
@@ -207,28 +209,32 @@ func (p *Purger) PurgeElonNow(ctx context.Context, elonID primitive.ObjectID) er
 	if err := p.elons.FindOne(ctx, bson.M{"_id": elonID}).Decode(&e); err != nil {
 		return err
 	}
-	for _, img := range e.Images {
-		upload.DeleteByURL(p.storage, img)
+	if err := p.purgeElonImages(ctx, e, false); err != nil {
+		return err
 	}
 
 	// Ariza id lari OLDIN yig'iladi: o'chirilgandan keyin ularga ishora
 	// qiladigan bildirishnomalarni topib bo'lmaydi.
 	appIDs := make([]primitive.ObjectID, 0, 8)
-	if cur, err := p.apps.Find(ctx, bson.M{"elonId": elonID},
-		options.Find().SetProjection(bson.M{"_id": 1})); err == nil {
-		for cur.Next(ctx) {
-			var a struct {
-				ID primitive.ObjectID `bson:"_id"`
-			}
-			if cur.Decode(&a) == nil {
-				appIDs = append(appIDs, a.ID)
-			}
-		}
-		_ = cur.Close(ctx)
-	}
-	if _, err := p.apps.DeleteMany(ctx, bson.M{"elonId": elonID}); err != nil {
+	cur, err := p.apps.Find(ctx, bson.M{"elonId": elonID}, options.Find().SetProjection(bson.M{"_id": 1}))
+	if err != nil {
 		return err
 	}
+	defer cur.Close(ctx)
+	for cur.Next(ctx) {
+		var a struct {
+			ID primitive.ObjectID `bson:"_id"`
+		}
+		if err := cur.Decode(&a); err != nil {
+			return err
+		}
+		appIDs = append(appIDs, a.ID)
+	}
+	if err := cur.Err(); err != nil {
+		return err
+	}
+	// Remove dependent links before their source IDs disappear. If either
+	// operation fails, the next attempt can still discover all remaining IDs.
 	if len(appIDs) > 0 {
 		if _, err := p.notifs.DeleteMany(ctx, bson.M{
 			"relatedEntity.type": "application",
@@ -236,6 +242,9 @@ func (p *Purger) PurgeElonNow(ctx context.Context, elonID primitive.ObjectID) er
 		}); err != nil {
 			return err
 		}
+	}
+	if _, err := p.apps.DeleteMany(ctx, bson.M{"elonId": elonID}); err != nil {
+		return err
 	}
 	if _, err := p.notifs.DeleteMany(ctx, bson.M{
 		"relatedEntity.type": "elon", "relatedEntity.id": elonID,
@@ -247,6 +256,11 @@ func (p *Purger) PurgeElonNow(ctx context.Context, elonID primitive.ObjectID) er
 	}); err != nil {
 		return err
 	}
+	if e.PurgeEvent != nil {
+		if err := elonpurge.Queue(ctx, p.elons.Database(), *e.PurgeEvent); err != nil {
+			return err
+		}
+	}
 	if _, err := p.elons.DeleteOne(ctx, bson.M{"_id": elonID}); err != nil {
 		return err
 	}
@@ -255,6 +269,9 @@ func (p *Purger) PurgeElonNow(ctx context.Context, elonID primitive.ObjectID) er
 
 func (p *Purger) purgeUser(ctx context.Context, u models.User) error {
 	uid := u.ID
+	if err := p.purgeAvatarUploads(ctx, u); err != nil {
+		return err
+	}
 
 	// --- Uploaded files -----------------------------------------------------
 	// softDelete already fired these off best-effort at deletion time; repeating
@@ -270,8 +287,15 @@ func (p *Purger) purgeUser(ctx context.Context, u models.User) error {
 				continue
 			}
 			elonIDs = append(elonIDs, e.ID)
-			for _, img := range e.Images {
-				upload.DeleteByURL(p.storage, img)
+			if err := p.purgeElonImages(ctx, e, true); err != nil {
+				_ = cur.Close(ctx)
+				return err
+			}
+			if e.PurgeEvent != nil {
+				if err := elonpurge.Queue(ctx, p.elons.Database(), *e.PurgeEvent); err != nil {
+					_ = cur.Close(ctx)
+					return err
+				}
 			}
 		}
 		_ = cur.Close(ctx)
@@ -328,6 +352,9 @@ func (p *Purger) purgeUser(ctx context.Context, u models.User) error {
 	if _, err := p.elons.DeleteMany(ctx, bson.M{"ownerId": uid}); err != nil {
 		return err
 	}
+	if _, err := p.elons.Database().Collection(elonimages.Collection).DeleteMany(ctx, bson.M{"ownerId": uid}); err != nil {
+		return err
+	}
 	if _, err := p.notifs.DeleteMany(ctx, bson.M{"userId": uid}); err != nil {
 		return err
 	}
@@ -376,6 +403,30 @@ func (p *Purger) purgeUser(ctx context.Context, u models.User) error {
 	// deletedTelegramId in one shot.
 	if _, err := p.users.DeleteOne(ctx, bson.M{"_id": uid}); err != nil {
 		return err
+	}
+	return nil
+}
+
+// A pending moderation cleanup holds the only remaining photo references.
+// Do not discard its retry record while managed files still need removal.
+func (p *Purger) purgeElonImages(ctx context.Context, e models.Elon, wholeOwner bool) error {
+	urls := append([]string(nil), e.Images...)
+	for _, job := range e.ModerationJobs {
+		if job.StorageDone || len(job.Images) == 0 {
+			continue
+		}
+		urls = append(urls, job.Images...)
+	}
+	for _, rawURL := range urls {
+		var err error
+		if wholeOwner {
+			err = elonimages.DeleteForOwner(ctx, p.elons.Database(), p.storage, e.OwnerID, rawURL, time.Now().UTC())
+		} else {
+			err = elonimages.Delete(ctx, p.elons.Database(), p.storage, e.ID, e.OwnerID, rawURL, time.Now().UTC())
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -61,9 +61,8 @@ func (h *Handler) autoCompleteDue(ctx context.Context) {
 		return
 	}
 
-	// Kerakli e'lonlarni bitta so'rov bilan yuklab, xaritaga joylaymiz. Soft
-	// o'chirilgan e'lonlar ham qoladi — ish bajarilgan, e'lon ko'rinmasligi
-	// arxivga ta'sir qilmaydi.
+	// Kerakli e'lonlarni bitta so'rov bilan yuklab, xaritaga joylaymiz. Yopilgan
+	// e'lonning hali accepted bo'lib turgan arizasi quyida o'tkazib yuboriladi.
 	ids := make([]primitive.ObjectID, 0, len(accepted))
 	seen := map[primitive.ObjectID]bool{}
 	for _, a := range accepted {
@@ -99,6 +98,9 @@ func (h *Handler) autoCompleteDue(ctx context.Context) {
 // o'tgan bo'lsa true. Belgilangan vaqt yo'q (bo'sh/noto'g'ri startDate) bo'lsa
 // hech qachon avtomatik yakunlanmaydi. Sof funksiya — testlanadi.
 func autoCompleteReady(e models.Elon, now time.Time) bool {
+	if e.IsDeleted || e.Status == "cancelled" {
+		return false
+	}
 	start, ok := elon.ScheduledStart(e)
 	if !ok {
 		return false
@@ -110,6 +112,11 @@ func autoCompleteReady(e models.Elon, now time.Time) bool {
 // yangilanadi ("accepted" bo'lsa) — shu tik yoki qo'lda confirm-done bilan
 // poyga bo'lsa, faqat bittasi g'olib chiqadi va sanoq ikki marta oshmaydi.
 func (h *Handler) completeAuto(ctx context.Context, a models.Application, now time.Time) {
+	// The scheduler's listing snapshot can predate an owner cancellation. Read
+	// it again at the write boundary, including when candidate cleanup is pending.
+	if err := h.checkCompletionListing(ctx, a.ElonID); err != nil {
+		return
+	}
 	res, err := h.Apps.UpdateOne(ctx,
 		bson.M{"_id": a.ID, "status": "accepted"},
 		bson.M{"$set": bson.M{"status": "completed", "completedAt": now, "autoCompleted": true}},

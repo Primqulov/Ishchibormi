@@ -164,12 +164,13 @@ export default function AdminElons() {
    */
   async function holatniOzgartir(e: Elon, yangi: "hidden" | "recruiting") {
     if (amalBand.includes(e.id)) return;
+    if (yangi === "hidden" && !window.confirm("E'lon yashiriladi va rasmlari butunlay o'chiriladi. Tiklash rasmlarni qaytarmaydi. Davom etilsinmi?")) return;
     setAmalBand((v) => [...v, e.id]);
     setAmalXato("");
     try {
       await api.patch(
         `/api/admin/elons/${encodeURIComponent(e.id)}/status`,
-        { status: yangi },
+        { status: yangi, expectedStatus: e.status, expectedUpdatedAt: e.updatedAt },
         { auth: "admin" } as any,
       );
       await load();
